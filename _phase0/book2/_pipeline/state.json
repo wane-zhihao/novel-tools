@@ -5,10 +5,10 @@
  "target_words": 20000,
  "max_chapters": 12,
  "created_at": "2026-10-23T20:56:44+0800",
- "current_chapter": 0,
- "chapters_committed": 0,
+ "current_chapter": 1,
+ "chapters_committed": 1,
  "words_total": 0,
- "cursor": "C1.N16",
+ "cursor": "C2.N09",
  "nodes": {
   "N01": {
    "status": "done",
@@ -151,15 +151,20 @@
    "attempts": 1
   },
   "C1.N16": {
-   "status": "failed",
-   "at": "2026-10-24T01:02:54+0800",
-   "output": "tracking_commit 失败：ERROR: character_snapshots.陈砚 contains unsupported fields: current_state, holds, taboo（只收 abilities_resources, goal, identity, knowledge, location, open_threads, relationships, state）\n"
+   "status": "done",
+   "at": "2026-10-24T01:23:10+0800",
+   "output": "{\"schema\":\"story-chapter-check/v1\",\"status\":\"ready\",\"chapter\":1,\"length\":{\"schema\":\"story-wordcount-result/v1\",\"metric\":\"visible_chars_v1\",\"chapter\":1,\"case_id\":null,\"target\":2500,\"actual\":2380,\"internal_band\":{\"min\":2200,\"max\":2800,\"status\":\"pass\"},\"user_band\":{\"min\":2125,\"max\":2875,\"status\":\"pass\"},\"signed_error_pct\":-0.048,\"absolute_error_pct\":0.048,\"band_source\":\"default\",\"status\":\"internal_pass\",\"invalid_reason\":null},\"quality\":{\"status\":\"pass\",\"blocking_findings\":[],\"advisories\":[],\"semantic_advisories\":0,\"tool_errors\":[]},\"compression\":null,\"state_revision\":1,\"tracking_committed\":true,\"next_chapter_started\":false,\"available_actions\":[\"commit\"],\"wordcount\":{\"metric\":\"visible_chars_v1\",\"target\":2500,\"actual\":2380,\"status\":\"internal_pass\",\"resolution\":\"within_user_band\",\"body_sha256\":\"54aba4ecaf9c151da5297ead45cd7307a98c514b99350e2db34f694cabcd0f91\"},\"mode\":\"revision\",\"work_dir_removed\":\".story/work/第001章\"}\nWARNING: chapter delta is 2979 bytes; target is <= 1536\n"
+  },
+  "C2.N09": {
+   "status": "running",
+   "attempts": 1,
+   "started_at": "2026-10-24T01:23:10+0800"
   }
  },
  "decisions_taken": [],
  "pending_questions": [],
- "blocked_reason": "C1.N16 内联脚本失败：tracking_commit 失败：ERROR: character_snapshots.陈砚 contains unsupported fields: current_state, holds, taboo（只收 abilities_resources, goal, identity, knowledge, location, open_threads, relationships, state）\n",
- "step_token": null,
- "step_token_node": null,
+ "blocked_reason": null,
+ "step_token": "fe5cfd",
+ "step_token_node": "C2.N09",
  "relay_count": 0
 }

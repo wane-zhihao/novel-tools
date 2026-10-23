@@ -1,24 +1,290 @@
 {
   "book_title": "《联试之书》",
-  "characters": {},
+  "characters": {
+    "王秀兰": {
+      "abilities_resources": [],
+      "goal": "小儿子前途大于大儿子委屈，盼家丑捂住、家门不丢人",
+      "identity": "陈砚之母",
+      "knowledge": [
+        "第一个打脸位在 ch9",
+        "她的偏心是陈磊敢下手的土壤"
+      ],
+      "location": "县机械厂厂前宣传栏",
+      "open_threads": [
+        "家丑能否捂住"
+      ],
+      "relationships": [
+        "陈砚：当众劝认被掰开手并当众反驳",
+        "陈磊：偏疼小儿子"
+      ],
+      "state": "当众劝「认了算了，别连累全家」被大儿子掰开手并当众反驳，愣在原地；偏心账加重（S6 埋设加深）"
+    },
+    "赵德海": {
+      "abilities_resources": [
+        "厂办主任权柄",
+        "经手顶职名单与账目的便利"
+      ],
+      "goal": "捂死自己经手的账目窟窿，先把知情人钉成「侵占公款」，一次绝后患",
+      "identity": "县机械厂厂办主任，顶职名额经手人，幕后大反派",
+      "knowledge": [
+        "只记得对他有利的顺序",
+        "知道账目有窟窿，不知道陈砚记得全顺序",
+        "软肋：越急着限期定罪，越把所有人的记忆往前多逼一步"
+      ],
+      "location": "县机械厂厂前宣传栏",
+      "open_threads": [
+        "三天内把陈砚钉成侵占公款",
+        "捂住院子里经手的账目窟窿"
+      ],
+      "relationships": [
+        "陈砚：从上下级变成限期追缴的死对头",
+        "陈磊：当枪使的棋子"
+      ],
+      "state": "当众定性成功并定下三天期限，但被陈砚当众逐条复述罪状顺序、被「经手人是谁」一问戳中顺序软肋，失了分寸"
+    },
+    "陈广田": {
+      "abilities_resources": [
+        "三十年车间口碑"
+      ],
+      "goal": "保住三十年清誉，盼两个儿子都有出路、家门不丢人",
+      "identity": "陈砚之父，三十年老工人",
+      "knowledge": [
+        "偏疼小儿子是软肋",
+        "污名恰恰落在他最看重的清誉上",
+        "越想「家丑捂下去」越被赵德海拿捏"
+      ],
+      "location": "县机械厂厂前宣传栏人群边缘",
+      "open_threads": [
+        "保住三十年清誉"
+      ],
+      "relationships": [
+        "陈砚：清誉被当众殃及，护誉之心更切",
+        "赵德海：其拿捏陈家的后续筹码（S7 埋于 ch5）"
+      ],
+      "state": "清誉被赵德海当众点名殃及；人群边缘露一面，终究没说上话，先转身离去"
+    },
+    "陈砚": {
+      "abilities_resources": [
+        "三天认账期限",
+        "当众固定的罪名顺序",
+        "笔记本记录",
+        "前世人事时序记忆（未当众展开）"
+      ],
+      "goal": "三天内拿不出反证就是移交追查；凭前世十年记住的「谁、在什么场合、按什么顺序做了什么」找反证、洗清污名、拿回名额",
+      "identity": "县机械厂青工；前世在厂办管了十年档案的理性记录员，重生回顶职公示当天",
+      "knowledge": [
+        "前世十年厂办人事时序记忆（谁、在什么场合、按什么顺序做了什么）",
+        "行为禁忌：不当众认罪、不掀榜、不动武；不当众展开前世记忆细节"
+      ],
+      "location": "县机械厂厂前宣传栏",
+      "open_threads": [
+        "三天内找出反证洗清污名",
+        "拿回被顶掉的名额",
+        "查明公示换名之前的经手人"
+      ],
+      "relationships": [
+        "赵德海：从上下级变成限期追缴的死对头",
+        "陈磊：从兄弟变成当众指证的对手",
+        "王秀兰：当众掰破「大的让小的」的默契",
+        "陈广田：父亲清誉被当众殃及，陈砚护誉之心更切",
+        "孙有田：尚未接触（当年厂办交接的车间老师傅，ch2–ch3 人证位）",
+        "许晚晴：尚未亮相（ch2 关键亮相）"
+      ],
+      "state": "被当众定性「账目对不上、侵占公款嫌疑」，距认账期限只剩三天；不当众亮记忆，只当众固定了赵德海宣布罪状的顺序并记入笔记本"
+    },
+    "陈磊": {
+      "abilities_resources": [
+        "顶职名额暂时挂在榜上",
+        "赵德海的暗中支持（被当枪使而不自知）"
+      ],
+      "goal": "坐稳名额，把哥哥钉死让自己安稳",
+      "identity": "陈砚的亲弟弟，顶职名额的既得挂名者",
+      "knowledge": [
+        "名额来得不正，经手顺序一摆就崩",
+        "不知道陈砚记得当年全部顺序"
+      ],
+      "location": "县机械厂厂前宣传栏",
+      "open_threads": [
+        "能否坐稳榜上名额"
+      ],
+      "relationships": [
+        "陈砚：从兄弟变成当众指证的对手",
+        "赵德海：被其当枪使"
+      ],
+      "state": "顶职名额暂时挂在榜上；当众倒戈指认哥哥「那笔账有问题」，被「经手人是谁」当众问住"
+    }
+  },
   "context": {
-    "active_character_names": [],
-    "continuity_risks": [],
-    "long_term_constraints": [],
-    "next_chapter_commitments": [],
+    "active_character_names": [
+      "陈砚",
+      "陈磊",
+      "赵德海",
+      "王秀兰",
+      "陈广田"
+    ],
+    "continuity_risks": [
+      "三天期限倒计时：ch2 起须逐章递减对齐，ch3 批斗会（S1 兑现）必须落在期限内，期限表述前后不可矛盾",
+      "陈磊名字挂在榜上与 S2 兑现（ch6 公示榜当众改正）之间的连续性：期间每次公示相关场景都要维持「榜上是陈磊」的状态",
+      "「公示换名之前，名单经手人是谁」是 ch3 孙有田时序口述的引线，ch3 回收时口径须与 ch1 当众之问一致",
+      "ch1 当众场景是后续两条线的共同基础：母亲偏心 S6（ch9 兑现）须呼应当众掰手与「我认了，爸的清誉就真没了」；陈广田清誉被殃及是全书愤怒结构第一环，赵德海拿捏父亲（S7，ch5 埋）须以 ch1 当众点名为基础",
+      "ch1 开篇为前 200 字当下冲突（无环境描写），后续章节开篇风格需保持统一，避免「风格不统一」被驳"
+    ],
+    "long_term_constraints": [
+      "金手指=人事时序记忆：记忆对象是人与事，不是文书与账表；翻盘靠对峙现场按时序口述事实链让人证自己崩，不开算账戏",
+      "反派死于顺序而非拳头：陈砚不动武、不咆哮，靠时序口述",
+      "污名结构：羞辱主角本人不够，必须殃及长辈（父亲）清誉（ch1 已兑现第一环）",
+      "危机结构：污名之后必有期限，避无可避（ch1 已兑现：三天期限）",
+      "致富线纪律：政策类数字全书 ≤2 处、每处 ≤1 个且用汉字小数；不排比罗列年份/金额/工分",
+      "文风红线逐章执行：因果显式 ≥1.1/千字、数字密度 ≤2.44/千字、叙述动作词 ≤41/千字、段/千字 33.1–54.1、句长中位 15–27、问句 2.03–11.71/千字，章节间波动本身是硬伤"
+    ],
+    "next_chapter_commitments": [
+      "ch2 陈砚找当年经手人对顺序（「经手人是谁」落地）",
+      "ch2 许晚晴「不附和污名」关键亮相（情感线启动）",
+      "ch2 埋 S3 账目窟窿（ch2 埋 ch52 收，全卷主轴）",
+      "三天倒计时 ch2 递减，ch3 批斗会落期限内兑现 S1",
+      "ch2 只启动找顺序、认人证；翻盘办法当晚仍想不出"
+    ],
     "position": {
-      "scene": "待补充",
-      "story_time": "待补充",
+      "scene": "县机械厂厂前宣传栏（公示栏前，开篇「当众换名」发生地）",
+      "story_time": "1983年初夏，顶职公示当天，晌午至傍晚",
       "volume": "第一卷",
       "volume_start_chapter": 1
     },
-    "recent_chapters": []
+    "recent_chapters": [
+      {
+        "chapter": 1,
+        "summary": "陈砚重生回顶职公示当天，名字被换成弟弟陈磊；赵德海当众定性他账目对不上并殃及父亲清誉，定三天期限。陈砚问出经手人是谁并记下罪名顺序，把羞辱现场变取证现场。"
+      }
+    ]
   },
-  "foreshadow": {},
+  "foreshadow": {
+    "F001": {
+      "id": "F001",
+      "importance": "高",
+      "planned_resolution_chapter": 3,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "限期认账：不认就除名；倒计时逐章递减，ch3 落期限内",
+      "updated_chapter": 1
+    },
+    "F002": {
+      "id": "F002",
+      "importance": "高",
+      "planned_resolution_chapter": 6,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "顶职名额归属：公示撤不撤、陈磊退不退；换名当众发生，埋而不收",
+      "updated_chapter": 1
+    },
+    "F003": {
+      "id": "F003",
+      "importance": "中",
+      "planned_resolution_chapter": 9,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "母亲偏心：凭什么是大的让；当众掰破默契，偏心账加重",
+      "updated_chapter": 1
+    }
+  },
   "imported_through_chapter": 0,
-  "last_committed_chapter": 0,
+  "last_committed_chapter": 1,
   "schema_version": 4,
-  "state_revision": 0,
-  "timeline": {},
-  "wordcount_records": {}
+  "state_revision": 2,
+  "timeline": {
+    "E001": {
+      "characters": [
+        "陈砚",
+        "陈磊",
+        "赵德海"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E001",
+      "objective_fact": "名单换名：陈砚变陈磊，公示于厂前宣传栏，榜前挤满人",
+      "reader_knowledge": "读者已知",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "1983年初夏·晌午",
+      "updated_chapter": 1
+    },
+    "E002": {
+      "characters": [
+        "赵德海",
+        "陈砚",
+        "陈广田"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E002",
+      "objective_fact": "赵德海当众宣布陈砚账目「对不上」，定性侵占公款嫌疑，殃及父亲清誉",
+      "reader_knowledge": "读者已知",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "同日晌午",
+      "updated_chapter": 1
+    },
+    "E003": {
+      "characters": [
+        "陈磊",
+        "陈砚"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E003",
+      "objective_fact": "陈磊当众倒戈，指认哥哥「那笔账有问题」",
+      "reader_knowledge": "读者已知",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "同日晌午",
+      "updated_chapter": 1
+    },
+    "E004": {
+      "characters": [
+        "王秀兰",
+        "陈砚"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E004",
+      "objective_fact": "王秀兰当众劝认，被陈砚掰开手：「我认了，爸的清誉就真没了。」",
+      "reader_knowledge": "读者已知",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "同日晌午",
+      "updated_chapter": 1
+    },
+    "E005": {
+      "characters": [
+        "陈砚",
+        "赵德海"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E005",
+      "objective_fact": "陈砚当众发问「换名之前经手人是谁」并逐条复述罪名顺序记入笔记本；赵德海顺势定三天期限，羞辱现场变取证现场",
+      "reader_knowledge": "读者已知",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "同日晌午",
+      "updated_chapter": 1
+    },
+    "E006": {
+      "characters": [
+        "陈砚"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E006",
+      "objective_fact": "人群散去；陈砚在公示栏前按顺序记下今天的一切，距认账期限三天",
+      "reader_knowledge": "读者已知",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "同日傍晚",
+      "updated_chapter": 1
+    }
+  },
+  "wordcount_records": {
+    "1": {
+      "actual": 2380,
+      "body_sha256": "54aba4ecaf9c151da5297ead45cd7307a98c514b99350e2db34f694cabcd0f91",
+      "metric": "visible_chars_v1",
+      "resolution": "within_user_band",
+      "status": "internal_pass",
+      "target": 2500
+    }
+  }
 }

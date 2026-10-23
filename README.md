@@ -60,7 +60,7 @@ Novel Platform/
 ## 当前进度
 
 - [x] 两轮红队审查 + 宿主选型 + 方案 v2.1 定稿
-- [ ] **Phase 0**：带真 subagent 测单轮纪律阈值 K（进行中）
-- [ ] 一期：autopilot.py 完整实现 + 全局节点 N01–N09d
-- [ ] 二期：章节循环 C{n}.N09–N16
+- [x] **Phase 0**：带真 subagent 测单轮纪律阈值 K（实测 6 轮零中断，报告见 `references/phase0-report.md`）
+- [x] 一期：autopilot.py 完整实现 + 全局节点 N01–N09d（联试 `book2` 实跑通过：N03–N09d 含闸门 block→返工→pass 全回路）
+- [~] 二期：章节循环 C{n}.N09–N16（**C01 全节点已闭环**：场景卡→N10/N11 脚本内联→正文→N13 平台闸门（含内容拦截→定点改写→复过）→N15 judge pass→N16 原子封板；游标现处 C2.N09，前 3 章目标 1/3）
 - [ ] 三期：N17–N21 + Dashboard

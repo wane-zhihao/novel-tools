@@ -105,20 +105,20 @@ def _chapter_check(book: Path, chapter: int) -> tuple[int, str]:
 
 
 def _commit_chapter(book: Path, chapter: int) -> tuple[int, str]:
-    """C{n}.N16：原子封板 = tracking commit + storyctl chapter commit（两个都要调）。"""
+    """C{n}.N16：原子封板。
+
+    只调 storyctl.py chapter commit——它内部依次做：chapter check 质量复检 →
+    构建字数记录 → tracking.apply_transaction 落追踪状态 → 清理本章工作目录。
+    注意：不能再另调 tracking_commit.py commit——storyctl 已经内部 apply 过事务，
+    双调会「append chapter must be N+1」二次 apply 失败（联试实测）。
+    """
     cfg = _cfg()
     txn = book / ".story" / "work" / f"第{chapter:03d}章" / "tracking.json"
     if not txn.is_file():
         return 2, f"找不到追踪事务 {txn}——writer 必须在 N12 按 shapes 填好它"
-    rc1, o1 = run_script([cfg["PYTHON"], cfg["TRACKING_COMMIT"], "commit",
-                          "--project", str(book), "--input", str(txn)], book)
-    if rc1 != 0:
-        return rc1, f"tracking_commit 失败：{o1[-500:]}"
-    rc2, o2 = run_script([cfg["PYTHON"], cfg["STORYCTL"], "chapter", "commit",
-                          "--project", str(book), "--chapter", str(chapter)], book)
-    if rc2 != 0:
-        return rc2, f"storyctl chapter commit 失败：{o2[-500:]}"
-    return 0, o1[-300:] + "\n" + o2[-300:]
+    cmd = [cfg["PYTHON"], cfg["STORYCTL"], "chapter", "commit",
+           "--project", str(book), "--chapter", str(chapter), "--input", str(txn)]
+    return run_script(cmd, book, timeout=300)
 
 
 def _merge_full(book: Path) -> tuple[int, str]:
