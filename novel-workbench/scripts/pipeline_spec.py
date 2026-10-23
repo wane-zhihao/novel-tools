@@ -7,6 +7,11 @@
   llm     → 需 subagent 创作，落盘后调 done
   verify  → 需 subagent 红队审查，落盘 judgments JSON 后调 done
 
+模型分工（复刻 autonovel 的「审写分离」，防自评自夸）：
+  writer 用 model="default" 或 "lite"  —— 写正文靠长上下文与速度，量大
+  judge  用 model="reasoning"           —— 审稿要挑刺，需更强推理
+主会话 spawn subagent 时必须按 spec["model"] 传参，不得统一用默认值。
+
 章节循环用复合键 C{n}.Nxx，避免扁平字典写第 2 章时覆盖第 1 章状态。
 """
 from __future__ import annotations
@@ -26,7 +31,7 @@ GLOBAL_NODES: dict[str, dict] = {
         "note": "qimao/harness/style-anchor.json 已 calibrated（42 章正例）",
     },
     "N03": {
-        "id": "N03", "kind": "llm", "role": "scout", "name": "选题报告",
+        "id": "N03", "kind": "llm", "model": "default", "role": "scout", "name": "选题报告",
         "evidence": "大纲/选题报告.md", "min_size": 600,
         "prompt": (
             "你是七猫系选题参谋。请读取：\n"
@@ -40,7 +45,7 @@ GLOBAL_NODES: dict[str, dict] = {
         ),
     },
     "N04": {
-        "id": "N04", "kind": "verify", "role": "judge", "name": "选题闸门",
+        "id": "N04", "kind": "verify", "model": "reasoning", "role": "judge", "name": "选题闸门",
         "evidence": "_pipeline/judgments_N04.json", "min_size": 200,
         "prompt": (
             "你是七猫签约评审（红队模式）。只读 {BOOK}/大纲/选题报告.md，"
@@ -52,7 +57,7 @@ GLOBAL_NODES: dict[str, dict] = {
         ),
     },
     "N05": {
-        "id": "N05", "kind": "llm", "role": "writer", "name": "设定",
+        "id": "N05", "kind": "llm", "model": "default", "role": "writer", "name": "设定",
         "evidence": "设定/题材定位.md", "min_size": 300,
         "prompt": (
             "读取 {BOOK}/大纲/选题报告.md 的结论一节，产出 5 个设定文件：\n"
@@ -64,7 +69,7 @@ GLOBAL_NODES: dict[str, dict] = {
         ),
     },
     "N06": {
-        "id": "N06", "kind": "verify", "role": "judge", "name": "设定校验",
+        "id": "N06", "kind": "verify", "model": "reasoning", "role": "judge", "name": "设定校验",
         "evidence": "_pipeline/judgments_N06.json", "min_size": 200,
         "prompt": (
             "只读 {BOOK}/设定/ 下 5 个文件。核查：五个文件是否齐全、角色是否有明确动机、"
@@ -74,7 +79,7 @@ GLOBAL_NODES: dict[str, dict] = {
         ),
     },
     "N07": {
-        "id": "N07", "kind": "llm", "role": "writer", "name": "卷纲",
+        "id": "N07", "kind": "llm", "model": "default", "role": "writer", "name": "卷纲",
         "evidence": "大纲/卷纲_第一卷.md", "min_size": 800,
         "prompt": (
             "读取 {BOOK}/设定/ 全部文件，产出 {BOOK}/大纲/卷纲_第一卷.md：\n"
@@ -85,7 +90,7 @@ GLOBAL_NODES: dict[str, dict] = {
         ),
     },
     "N08": {
-        "id": "N08", "kind": "verify", "role": "judge", "name": "主线闸门",
+        "id": "N08", "kind": "verify", "model": "reasoning", "role": "judge", "name": "主线闸门",
         "evidence": "_pipeline/judgments_N08.json", "min_size": 200,
         "prompt": (
             "只读 {BOOK}/大纲/卷纲_第一卷.md。核心判据只有一条：\n"
@@ -96,7 +101,7 @@ GLOBAL_NODES: dict[str, dict] = {
         ),
     },
     "N09d": {
-        "id": "N09d", "kind": "llm", "role": "writer", "name": "前12章目录骨架",
+        "id": "N09d", "kind": "llm", "model": "default", "role": "writer", "name": "前12章目录骨架",
         "evidence": "大纲/目录_前12章.md", "min_size": 500,
         "prompt": (
             "读取 {BOOK}/大纲/卷纲_第一卷.md，产出 {BOOK}/大纲/目录_前12章.md：\n"
@@ -121,7 +126,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
     prev = n - 1
     base = {
         f"C{n}.N09": {
-            "id": f"C{n}.N09", "kind": "llm", "role": "writer", "name": "单章场景卡",
+            "id": f"C{n}.N09", "kind": "llm", "model": "default", "role": "writer", "name": "单章场景卡",
             "evidence": f"大纲/细纲_第{n:03d}章.md", "min_size": 500,
             "prompt": (
                 f"读取 {b}/大纲/目录_前12章.md 第 {n} 行、{b}/大纲/卷纲_第一卷.md、"
@@ -150,7 +155,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
             "evidence": "追踪/上下文.md", "min_size": 1,
         },
         f"C{n}.N12": {
-            "id": f"C{n}.N12", "kind": "llm", "role": "writer", "name": "写正文+填追踪事务",
+            "id": f"C{n}.N12", "kind": "llm", "model": "default", "role": "writer", "name": "写正文+填追踪事务",
             "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1800,
             "prompt": (
                 f"读取：\n"
@@ -172,7 +177,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
             "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1,
         },
         f"C{n}.N14": {
-            "id": f"C{n}.N14", "kind": "llm", "role": "writer", "name": "定点改写",
+            "id": f"C{n}.N14", "kind": "llm", "model": "default", "role": "writer", "name": "定点改写",
             "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1800,
             "prompt": (
                 f"读取 {b}/_pipeline/findings_C{n}.json（N13 脚本报错与 N15 审查意见已统一汇入）。\n"
@@ -183,7 +188,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
             ),
         },
         f"C{n}.N15": {
-            "id": f"C{n}.N15", "kind": "verify", "role": "judge", "name": "阶段质量闸门",
+            "id": f"C{n}.N15", "kind": "verify", "model": "reasoning", "role": "judge", "name": "阶段质量闸门",
             "evidence": f"_pipeline/judgments_C{n}.N15.json", "min_size": 200,
             "skippable": True,
             "prompt": _n15_prompt(n, prev, b),

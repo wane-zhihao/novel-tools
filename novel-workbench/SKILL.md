@@ -36,13 +36,31 @@ metadata:
 while True:
     r = run("python <repo>/novel-workbench/scripts/autopilot.py next --book <book>")
     if r.done: break
-    if r.kind == "llm":
-        spawn_subagent(role=r.subagent_role, prompt=r.subagent_prompt)   # 只传 prompt
-    elif r.kind == "verify":
-        spawn_subagent(role="judge", prompt=r.subagent_prompt)
+    if r.kind in ("llm", "verify"):
+        spawn_subagent(
+            role=r.subagent_role,
+            prompt=r.subagent_prompt,
+            model=r.subagent_model,        # ← 必须传！writer=default/lite, judge=reasoning
+        )
     # script 节点已被 autopilot 内联跑完，到这里一定是 llm/verify
     run(r.done_cmd_for_orchestrator_only)
 ```
+
+## 审写模型分离（防自评自夸）
+
+`next` 返回的 `subagent_model` 是**硬要求**，不是建议：
+
+| 角色 | model | 节点 |
+|---|---|---|
+| writer / scout | `default` 或 `lite` | N03 N05 N07 N09d C.N09 C.N12 C.N14 |
+| **judge** | **`reasoning`** | N04 N06 N08 C.N15 N20 |
+
+**为什么**：同一个模型写又同一个模型审，会系统性地高估自己的稿子。
+autonovel 的做法是 Opus 审 Sonnet 写，注释原话 *"Intentionally different to avoid self-congratulation"*。
+我们用 `reasoning` 审 `default` 写，机制等价。
+
+**验证要求**：落地后必须实测——同一章稿子分别交给 `default` 和 `reasoning` 判，
+若两者结论高度一致，说明路由差异不足，需换具体 model ID。
 
 ## 环境
 

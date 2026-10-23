@@ -46,6 +46,7 @@ IRON_RULES = [
     "只把 subagent_prompt 转交 subagent；done_cmd 与 step_token 绝不出现在 subagent 可见内容里",
     "subagent 只准返回 ≤100 字回执，禁止返回大段正文",
     "只有脚本硬失败 / 闸门 BLOCK / 用户明确喊停 三种情况允许停",
+    "spawn subagent 必须按 subagent_model 传 model 参数——writer 用 default/lite，judge 用 reasoning，不得统一用默认值",
 ]
 
 
@@ -250,6 +251,7 @@ def cmd_next(a) -> int:
             f'"{PYTHON}" "{HERE / "autopilot.py"}" done --book "{a.book}" '
             f'--node {spec["id"]} --token {token} --evidence {spec["evidence"]}',
         "subagent_role": spec["role"],
+        "subagent_model": spec.get("model", "default"),
         "subagent_prompt": render_prompt(spec["prompt"], book),
     }, ensure_ascii=False))
     return 0

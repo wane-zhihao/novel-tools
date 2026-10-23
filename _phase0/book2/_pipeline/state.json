@@ -77,14 +77,14 @@
   },
   "N08": {
    "status": "running",
-   "attempts": 1,
-   "started_at": "2026-10-23T22:51:35+0800"
+   "attempts": 2,
+   "started_at": "2026-10-23T23:13:37+0800"
   }
  },
  "decisions_taken": [],
  "pending_questions": [],
  "blocked_reason": null,
- "step_token": "6be896",
+ "step_token": "8b9f65",
  "step_token_node": "N08",
  "relay_count": 0
 }
