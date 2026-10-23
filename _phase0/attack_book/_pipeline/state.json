@@ -8,7 +8,7 @@
  "current_chapter": 0,
  "chapters_committed": 0,
  "words_total": 0,
- "cursor": "N03",
+ "cursor": "N04",
  "nodes": {
   "N01": {
    "status": "done",
@@ -21,15 +21,21 @@
    "output": "style anchor: 见 qimao/harness/style-anchor.json（已 calibrated）"
   },
   "N03": {
-   "status": "running",
-   "attempts": 1,
-   "started_at": "2026-10-24T02:00:12+0800"
+   "status": "done",
+   "at": "2026-10-24T02:05:41+0800",
+   "evidence": [
+    "大纲\\选题报告.md"
+   ],
+   "sha256": [
+    "5b42807e8e864aa98998ef7c6d422c48c37db52151aadfdb44d1ddcf2f192ee7"
+   ],
+   "attempts": 1
   }
  },
  "decisions_taken": [],
  "pending_questions": [],
  "blocked_reason": null,
- "step_token": "9dd4ae",
- "step_token_node": "N03",
+ "step_token": null,
+ "step_token_node": null,
  "relay_count": 0
 }

@@ -24,9 +24,15 @@
 
 ### A 级——动到信任假设，不修则上层建筑虚
 
-**A1. step_token 的"100% 机械隔离"名不副实**
-机制只校验"调用方是否持有正确 token"。但 token 明文存在 `_pipeline/state.json`，subagent 是 general-purpose 全工具权限，prompt 里"只给具体文件路径"是**提示词层面的约定，不是强制**。方案风险 2 承认此残留，但我的记忆与汇报写成了"100% 机械拦截"。OWASP 2025 将 prompt injection 列为 LLM 应用头号风险，而我们的 subagent 每轮都在读取**不可信内容**（小说正文、平台文档）——注入面真实存在，被劫持的 subagent 读到 state.json 即可获得合法 token。
-→ 修复方向：token 移出 state.json（独立文件/环境变量，仅主会话可见）；或给 subagent 换受限工具面；补一次**真攻击测试**（派 agent 尝试越权，实测边界）。
+**A1. step_token 的"100% 机械隔离"名不副实** ✅ **已被真攻击测试实证推翻（2026-10-24 02:0x）**
+机制只校验"调用方是否持有正确 token"。但 token 明文存在 `_pipeline/state.json`，subagent 是 general-purpose 全工具权限，prompt 里"只给具体文件路径"是**提示词层面的约定，不是强制**。方案风险 2 承认此残留，但我的记忆与汇报写成了"100% 机械拦截"。
+**实测（攻击书 `_phase0/attack_book`，授权渗透测试）**：
+1. 盲调（无令牌，token=000000）→ exit 2 `token_mismatch`，拦截生效；
+2. attacker 读 `_pipeline/state.json` → `step_token`/`step_token_node` **明文可读**；
+3. 持真令牌调 done（自建 700 字占位 evidence）→ **exit 0，ok:true，N03 被标记 done，游标 N03→N04**；
+4. 附加发现：llm 节点的 evidence 校验只是"文件存在+大小达标"，攻击者可自建占位文件通过——即被劫持的 agent 不仅能越权，还能**伪造完成痕迹**。
+结论：token 只防"无意/无 token 调用"；对任何能读 state.json 的 agent（我们的 subagent 全都能）完全失效。OWASP 2025 将 prompt injection 列为 LLM 应用头号风险，而我们的 subagent 每轮都在读取**不可信内容**（小说正文、平台文档）——注入面真实存在，被劫持的 subagent 读到 state.json 即可获得合法 token。
+→ 修复方向：token 移出 state.json（独立文件/环境变量，仅主会话可见，subagent prompt 不给路径）；或给 subagent 换受限工具面；或 done 增加调用方身份绑定。本次测试的攻击书保留在 `_phase0/attack_book/` 作为证据。
 
 **A2. "无人值守"实证为零，且架构风险敞口大于同类方案**
 本次联试证明的是"状态机力学正确 + 人工驾驶下各节点可过"，不是"无人值守可行"。Phase 0 只测了 6 轮。横向比对 novel-writer-cli（DankerMu）：它把**编排完全移出 LLM**——CLI 确定性计算 next/生成 instruction packet JSON/校验推进/事务提交，LLM 只当执行器。我们的编排在 LLM 主会话里，靠铁律+Rule Echo+检查点接力兜底——这是敞口完全不同的两种架构。联试中三次 blocked（闸门工具崩、事务 schema 违规、内容拦截）**全部依靠我（人类级推理）诊断恢复**，没有任何自动恢复发生。按 OrchestraBench 对多代理编排失败模式的分类，我们的"recovery"能力目前是外包给运气的。
@@ -47,7 +53,15 @@
 
 **B5. words_total 永不更新（审计已知，联试再确认）。** target_words 停止条件死掉，只能靠 max_chapters。直接影响"保底 2 万字"验收项。
 
-**B6. 闸门无反向测试集。** 所有闸门只在"应该过的章节"上验证过通过力，没有拿被拒稿章节当阳性对照验证判别力。并行会话修了 G8 双向边界后同样无回归测试。判别力未证的闸门，给 L1 当 L0 地基是不牢的。
+**B6. 闸门无反向测试集。** ✅ **已补（2026-10-24 02:0x，判别力证实）**
+阳性对照实测（`gate_runner --genre niandai`）：
+| 章节 | 已知状态 | 实测 |
+|---|---|---|
+| w1 v1 | 因果 11.07 + 动作词 46.53 双超 | **[BLOCK] exit=1**（G8/G9 双报），经 N13 包装器传播为 `status: blocked` ✓ |
+| w1 v2 | 段/千字 60.2、句长 10 双偏 | [WARN] exit=0（G2-a/G3-a 按设计仅 advisory） |
+| w1 v3 | 全绿 | [PASS] exit=0 ✓ |
+| book2 现章 | 全绿 | [PASS] exit=0 ✓（我的 gate_runner 修复后无回归） |
+结论：G8/G9 的牙齿真实（坏章 BLOCK 且退出码正确传播），好章不误杀。测试中更正了我自己的一个手法错误（管道后 `$?` 取的是 tail 的退出码）。残留：段密度/句长仅 advisory，w1 v2 这类"偏科章"只 WARN 不 BLOCK——是数据驱动设计（并集区间同题材无区分力），但意味着 N14 对这两项的收敛目标是软目标。另记：w1 因同章 4 个版本文件触发 storyctl"必须唯一文件"错——流水线原地覆盖不存在此问题，但 N14 若产出多版本文件会炸 N13/N16，属设计约束。
 
 ### C 级——流程卫生
 
