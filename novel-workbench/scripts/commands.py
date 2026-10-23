@@ -15,7 +15,7 @@ import json
 from pathlib import Path
 
 from autopilot import (HERE, IRON_RULES, load_state, save_state, sha256_of, now,
-                       new_token, cursor_spec, norm_cjk)
+                       clear_token, cursor_spec, norm_cjk, token_ok)
 from pipeline_spec import GLOBAL_NODES, chapter_nodes, next_cursor
 from inline_runner import run_node_script, verify_quote
 
@@ -37,7 +37,7 @@ def cmd_done(a) -> int:
     st = load_state(book)
     if not st:
         print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
-    if not st.get("step_token") or st.get("step_token") != a.token or st.get("step_token_node") != a.node:
+    if not token_ok(book, a.node, a.token):
         print(json.dumps({"error": "token_mismatch",
                           "hint": "可能是 subagent 越权调用，或 node 与令牌不匹配"},
                          ensure_ascii=False))
@@ -91,8 +91,7 @@ def cmd_done(a) -> int:
         "sha256": hashes,
         "attempts": st["nodes"].get(a.node, {}).get("attempts", 1),
     }
-    st["step_token"] = None
-    st["step_token_node"] = None
+    clear_token(book)
     st["cursor"] = next_cursor(st)
     save_state(book, st)
     print(json.dumps({"ok": True, "node": a.node, "next": st["cursor"],
@@ -105,14 +104,13 @@ def cmd_skip(a) -> int:
     st = load_state(book)
     if not st:
         return 2
-    if not st.get("step_token") or st.get("step_token") != a.token:
+    if not token_ok(book, a.node, a.token):
         print(json.dumps({"error": "token_mismatch"}, ensure_ascii=False)); return 2
     spec = cursor_spec(st, book)
     if spec is None or not spec.get("skippable"):
         print(json.dumps({"error": "not_skippable", "node": a.node}, ensure_ascii=False)); return 2
     st["nodes"][a.node] = {"status": "skipped", "at": now(), "reason": a.reason}
-    st["step_token"] = None
-    st["step_token_node"] = None
+    clear_token(book)
     st["cursor"] = next_cursor(st)
     save_state(book, st)
     print(json.dumps({"ok": True, "node": a.node, "skipped": True, "next": st["cursor"]},
@@ -138,8 +136,7 @@ def cmd_resume(a) -> int:
     if not st:
         print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
     st["blocked_reason"] = None
-    st["step_token"] = None
-    st["step_token_node"] = None
+    clear_token(book)
     # 清掉所有 running —— 中断的节点必须重做
     for k, v in st["nodes"].items():
         if v.get("status") == "running":

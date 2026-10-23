@@ -5,7 +5,8 @@
 设计要点（见 references/ 与 C:\\Users\\Wane-\\.workbuddy-ai\\plans\\cosmic-nebula-babbage-MnzvwCoC.md）：
   1. 瘦主控：主会话只调本脚本，禁读正文；next 输出含路径的 subagent_prompt
   2. 脚本内联：所有 script 节点由本脚本内部 subprocess.run 执行，LLM 物理上无法篡改参数
-  3. step_token：一次性握手令牌，subagent 越权调用被 100% 机械拦截
+  3. step_token：一次性握手令牌（存 _pipeline/.step_token，与 state.json 分离），
+     拦截无令牌调用；能读 state 的 agent 拿不到令牌（安全审查 A1 修复）
   4. 先审后封：commit 必须是单章生命周期的最后一个动作
   5. 进度只信磁盘：resume 重新扫盘重建，不信任内存
 
@@ -102,6 +103,9 @@ def load_state(book: Path) -> dict:
 def save_state(book: Path, st: dict) -> None:
     p = state_path(book)
     p.parent.mkdir(parents=True, exist_ok=True)
+    # 旧版把令牌写在 state 里；现在令牌在 _pipeline/.step_token，落盘时清掉残留字段
+    st.pop("step_token", None)
+    st.pop("step_token_node", None)
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     tmp.replace(p)          # 原子替换，避免中断写出半截文件
@@ -119,13 +123,47 @@ def norm_cjk(s: str) -> str:
 
 
 # ─── 令牌 ─────────────────────────────────────────────────────────────────────
+# 令牌与 state.json 分离：安全审查（adversarial-review A1）实证，subagent 读
+# state.json 即可拿到明文令牌并越权 done。令牌改存 _pipeline/.step_token 独立
+# 文件，state.json 不再含任何令牌字段。
 
 def new_token() -> str:
     return f"{random.randrange(16 ** TOKEN_LEN):0{TOKEN_LEN}x}"
 
 
-def token_ok(st: dict, node: str, token: str) -> bool:
-    return bool(token) and st.get("step_token") == token and st.get("step_token_node") == node
+def token_path(book: Path) -> Path:
+    return book / "_pipeline" / ".step_token"
+
+
+def write_token(book: Path, token: str, node: str) -> None:
+    p = token_path(book)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"token": token, "node": node, "issued_at": now()},
+                              ensure_ascii=False), encoding="utf-8")
+    tmp.replace(p)
+
+
+def read_token(book: Path) -> dict:
+    p = token_path(book)
+    if not p.is_file():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def clear_token(book: Path) -> None:
+    try:
+        token_path(book).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def token_ok(book: Path, node: str, token: str) -> bool:
+    held = read_token(book)
+    return bool(token) and held.get("token") == token and held.get("node") == node
 
 
 # ─── 节点表（PART 3 填充） ────────────────────────────────────────────────────
@@ -164,8 +202,6 @@ def cmd_init(a) -> int:
         "decisions_taken": [],
         "pending_questions": [],
         "blocked_reason": None,
-        "step_token": None,
-        "step_token_node": None,
         "relay_count": 0,
     }
     save_state(book, st)
@@ -231,13 +267,12 @@ def cmd_next(a) -> int:
     spec = cursor_spec(st, book)
     if spec is None:
         print(json.dumps({"done": True}, ensure_ascii=False)); return 0
-    if st["nodes"].get(spec["id"], {}).get("status") == "running" and st.get("step_token"):
+    if st["nodes"].get(spec["id"], {}).get("status") == "running" and read_token(book).get("token"):
         print(json.dumps({"error": "node_running", "node": spec["id"],
                           "hint": "先调 done 完成当前节点"}, ensure_ascii=False))
         return 2
     token = new_token()
-    st["step_token"] = token
-    st["step_token_node"] = spec["id"]
+    write_token(book, token, spec["id"])
     st["nodes"][spec["id"]] = {"status": "running", "attempts":
                                st["nodes"].get(spec["id"], {}).get("attempts", 0) + 1,
                                "started_at": now()}
