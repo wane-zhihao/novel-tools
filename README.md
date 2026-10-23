@@ -28,6 +28,9 @@
 ```
 Novel Platform/
 ├── README.md                    本文件
+├── references/
+│   ├── plan-v2.1.md             **实现方案 v2.1**（含两轮红队审查的 10 项修补，代码的设计依据）
+│   └── phase0-report.md         Phase 0 纪律阈值实测报告
 ├── novel-workbench/             Skill（可被 WorkBuddy 加载）
 │   ├── SKILL.md                 入口 + 铁律
 │   ├── config.json              四个绝对根目录（指向旧数据）
@@ -40,6 +43,10 @@ Novel Platform/
 │       └── autopilot.py         正式状态机 + 内联驱动器
 └── _phase0/                     Phase 0 测试目录
 ```
+
+> **Plan 溯源**：`references/plan-v2.1.md` 从 `C:\Users\Wane-\.workbuddy-ai\plans\cosmic-nebula-babbage-MnzvwCoC.md`
+> 复制而来（sha256 已校验一致）。原文件保留在原地不动——按"旧资料留原处"的约定。
+> 本仓库的代码以这份方案为唯一设计依据；方案若改，改这里，不要改原处。
 
 ## 关键设计（详见方案）
 
