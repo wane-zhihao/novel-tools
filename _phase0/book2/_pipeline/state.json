@@ -8,7 +8,7 @@
  "current_chapter": 0,
  "chapters_committed": 0,
  "words_total": 0,
- "cursor": "C1.N12",
+ "cursor": "C1.N13",
  "nodes": {
   "N01": {
    "status": "done",
@@ -119,15 +119,26 @@
    "output": "xt.position 的 story_time 与 scene 留空，填本章结束时的故事时间与场景（上一章结束时见 previous_position；换卷时连同 volume 与 volume_start_chapter 一起改）。只填 delta 里本章的变化；context 其余字段已是当前值，要撤下的长期约束或连贯性风险从 context 删掉并把原文放进 delta.retired_context_items（仅 append）；本章有变化的核心角色把下面的当前快照整份改好放进 character_snapshots，并在 character_changes 写一句变化。每类条目照 shapes 的形状写，不要从脚本源码或 state 文件里另找格式。\", \"limits_chars\": {\"delta.result\": 160, \"character_changes[].change\": 120, \"foreshadow_changes[].summary\": 120, \"timeline_events[].objective_fact / reader_knowledge\": 160, \"context.position.story_time / scene\": 80, \"character_snapshots.*.goal / state\": 100, \"逐章记录总量\": 1024}, \"shapes\": {\"delta.character_changes[]\": {\"name\": \"角色名\", \"change\": \"一句话：本章起了什么变化\"}, \"delta.foreshadow_changes[]\": {\"action\": \"upsert（撤掉整条写 delete，只带 id）\", \"id\": \"F007\", \"summary\": \"伏笔一句话\", \"planted_chapter\": 1, \"planned_resolution_chapter\": \"计划回收章的整数，未定写 null\", \"status\": \"已埋|已回收|已过期|放弃\", \"importance\": \"高|中|低\"}, \"delta.timeline_events[]\": {\"action\": \"upsert（撤掉整条写 delete，只带 id）\", \"id\": \"E012\", \"story_time\": \"故事内时间\", \"objective_fact\": \"客观发生了什么\", \"reader_knowledge\": \"读者此刻知道/以为什么\", \"reveal_status\": \"未揭示|部分揭示|已揭示\", \"reveal_chapter\": \"已揭示或部分揭示时写揭示章的整数（不晚于 1），未揭示写 null\", \"characters\": [\"角色名\"]}, \"character_snapshots.{角色名}\": {\"identity\": \"一句话\", \"location\": \"一句话\", \"goal\": \"一句话\", \"state\": \"一句话\", \"abilities_resources\": [\"一条一句\"], \"relationships\": [\"一条一句\"], \"knowledge\": [\"一条一句\"], \"open_threads\": [\"一条一句\"]}}, \"current_snapshots\": {}, \"previous_position\": {\"story_time\": \"待补充\", \"scene\": \"待补充\"}}\n"
   },
   "C1.N12": {
-   "status": "running",
-   "attempts": 1,
-   "started_at": "2026-10-23T23:32:11+0800"
+   "status": "done",
+   "at": "2026-10-24T00:37:40+0800",
+   "evidence": [
+    "正文\\第001章_榜上换了名.md"
+   ],
+   "sha256": [
+    "69b00d10cfd3780ae84a7f6b48d01a18a4a911681cc4ab3932883edf04fd953e"
+   ],
+   "attempts": 1
+  },
+  "C1.N13": {
+   "status": "failed",
+   "at": "2026-10-24T00:37:46+0800",
+   "output": "动作 beat/短句，拖长音→省略或动作，插入说明→逗号/冒号；勿一律改句号。\\\",\\\"excerpt\\\":\\\"为他记得这个顺序——顶职名单今天换名\\\",\\\"review\\\":\\\"mechanical\\\"},{\\\"source\\\":\\\"ai-pattern\\\",\\\"file\\\":\\\"F:\\\\\\\\WorkBuddy AI\\\\\\\\Novel Platform\\\\\\\\_phase0\\\\\\\\book2\\\\\\\\正文\\\\\\\\第001章_榜上换了名.md\\\",\\\"line\\\":19,\\\"column\\\":17,\\\"type\\\":\\\"voice-contrast\\\",\\\"severity\\\":\\\"blocking\\\",\\\"message\\\":\\\"音量反差腔：「声音不大/不高…却/但…」是 AI 高频反差模板；删掉音量铺垫，直接写声音落进场子的具体效果（谁停了手、哪排安静了）。\\\",\\\"excerpt\\\":\\\"声音不高，人人却\\\",\\\"review\\\":\\\"mechanical\\\"},{\\\"source\\\":\\\"ai-pattern\\\",\\\"file\\\":\\\"F:\\\\\\\\WorkBuddy AI\\\\\\\\Novel Platform\\\\\\\\_phase0\\\\\\\\book2\\\\\\\\正文\\\\\\\\第001章_榜上换了名.md\\\",\\\"line\\\":19,\\\"column\\\":35,\\\"type\\\":\\\"em-dash\\\",\\\"severity\\\":\\\"blocking\\\",\\\"message\\\":\\\"破折号按功能改写：打断→动作 beat/短句，拖长音→省略或动作，插入说明→逗号/冒号；勿一律改句号。\\\",\\\"excerpt\\\":\\\"得清，\\\\\\\"至于陈砚——他经手的账目，对\\\",\\\"review\\\":\\\"mechanical\\\"},{\\\"source\\\":\\\"ai-pattern\\\",\\\"file\\\":\\\"F:\\\\\\\\WorkBuddy AI\\\\\\\\Novel Platform\\\\\\\\_phase0\\\\\\\\book2\\\\\\\\正文\\\\\\\\第001章_榜上换了名.md\\\",\\\"line\\\":93,\\\"column\\\":9,\\\"type\\\":\\\"reverse-not-is\\\",\\\"severity\\\":\\\"blocking\\\",\\\"message\\\":\\\"反序对比腔：「是A，不是B」与「不是A，是B」同族；删掉后置否定，直接写 A 的具体表现，或用细节让读者自己对比。\\\",\\\"excerpt\\\":\\\"是顺序，不是账目\\\",\\\"review\\\":\\\"mechanical\\\"},{\\\"source\\\":\\\"ai-pattern\\\",\\\"file\\\":\\\"F:\\\\\\\\WorkBuddy AI\\\\\\\\Novel Platform\\\\\\\\_phase0\\\\\\\\book2\\\\\\\\正文\\\\\\\\第001章_榜上换了名.md\\\",\\\"line\\\":99,\\\"column\\\":9,\\\"type\\\":\"}, \"gate\": {\"exit\": 1, \"file\": \"F:\\\\WorkBuddy AI\\\\Novel Platform\\\\_phase0\\\\book2\\\\正文\\\\第001章_榜上换了名.md\", \"output\": \"Traceback (most recent call last):\\n  File \\\"F:\\\\小说\\\\platforms\\\\_core\\\\tools\\\\gate_runner.py\\\", line 178, in <module>\\n    sys.exit(main())\\n             ~~~~^^\\n  File \\\"F:\\\\小说\\\\platforms\\\\_core\\\\tools\\\\gate_runner.py\\\", line 134, in main\\n    findings = evaluate(metrics, gates, a.genre, load_genre_ranges(a.platform))\\n                                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\\n  File \\\"F:\\\\小说\\\\platforms\\\\_core\\\\tools\\\\gate_runner.py\\\", line 68, in load_genre_ranges\\n    for metric, rng in (blk or {}).items():\\n                       ^^^^^^^^^^^^^^^^^\\nAttributeError: 'str' object has no attribute 'items'\"}}\n"
   }
  },
  "decisions_taken": [],
  "pending_questions": [],
  "blocked_reason": null,
- "step_token": "4d057b",
- "step_token_node": "C1.N12",
+ "step_token": null,
+ "step_token_node": null,
  "relay_count": 0
 }
