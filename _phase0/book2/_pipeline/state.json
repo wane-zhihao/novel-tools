@@ -8,7 +8,7 @@
  "current_chapter": 0,
  "chapters_committed": 0,
  "words_total": 0,
- "cursor": "C1.N13",
+ "cursor": "C1.N16",
  "nodes": {
   "N01": {
    "status": "done",
@@ -130,14 +130,35 @@
    "attempts": 1
   },
   "C1.N13": {
+   "status": "done",
+   "at": "2026-10-24T00:49:52+0800",
+   "output": "lable_actions\":[\"commit\"]}\n\n═══ 平台闸门（因果显式度 / 叙述动作词密度）═══\n[PASS] 第001章_榜上换了名.md  (qimao)\n  visible_chars=2051  paragraphs_per_1000=45.2  sent_len_median=16.0  causal_per_1000=3.9  narration_action_density=30.13  action_density=31.2  number_per_1000=0.0  question_per_1000=2.44  multi_actor_sent_ratio=0.098\n\n═══ 合并结论 ═══\nstatus: ready\n_detail_json: {\"storyctl\": {\"exit\": 0, \"output\": \"{\\\"schema\\\":\\\"story-chapter-check/v1\\\",\\\"status\\\":\\\"ready\\\",\\\"chapter\\\":1,\\\"length\\\":{\\\"schema\\\":\\\"story-wordcount-result/v1\\\",\\\"metric\\\":\\\"visible_chars_v1\\\",\\\"chapter\\\":1,\\\"case_id\\\":null,\\\"target\\\":2500,\\\"actual\\\":2380,\\\"internal_band\\\":{\\\"min\\\":2200,\\\"max\\\":2800,\\\"status\\\":\\\"pass\\\"},\\\"user_band\\\":{\\\"min\\\":2125,\\\"max\\\":2875,\\\"status\\\":\\\"pass\\\"},\\\"signed_error_pct\\\":-0.048,\\\"absolute_error_pct\\\":0.048,\\\"band_source\\\":\\\"default\\\",\\\"status\\\":\\\"internal_pass\\\",\\\"invalid_reason\\\":null},\\\"quality\\\":{\\\"status\\\":\\\"pass\\\",\\\"blocking_findings\\\":[],\\\"advisories\\\":[],\\\"semantic_advisories\\\":0,\\\"tool_errors\\\":[]},\\\"compression\\\":null,\\\"state_revision\\\":0,\\\"tracking_committed\\\":false,\\\"next_chapter_started\\\":false,\\\"available_actions\\\":[\\\"commit\\\"]}\"}, \"gate\": {\"exit\": 0, \"file\": \"F:\\\\WorkBuddy AI\\\\Novel Platform\\\\_phase0\\\\book2\\\\正文\\\\第001章_榜上换了名.md\", \"output\": \"[PASS] 第001章_榜上换了名.md  (qimao)\\n  visible_chars=2051  paragraphs_per_1000=45.2  sent_len_median=16.0  causal_per_1000=3.9  narration_action_density=30.13  action_density=31.2  number_per_1000=0.0  question_per_1000=2.44  multi_actor_sent_ratio=0.098\"}}\n"
+  },
+  "C1.N14": {
+   "status": "skipped",
+   "at": "2026-10-24T00:51:43+0800",
+   "reason": "N13 闸门通过：storyctl ready（2380字 0 findings）+ gate PASS，无 findings_C1.json，按方案跳过改写直达 N15"
+  },
+  "C1.N15": {
+   "status": "done",
+   "at": "2026-10-24T00:59:31+0800",
+   "evidence": [
+    "_pipeline\\judgments_C1.N15.json"
+   ],
+   "sha256": [
+    "f366770c1d95a276813a3ddc57291a8aa3186a53b266e7effc31234fc4f0c525"
+   ],
+   "attempts": 1
+  },
+  "C1.N16": {
    "status": "failed",
-   "at": "2026-10-24T00:37:46+0800",
-   "output": "动作 beat/短句，拖长音→省略或动作，插入说明→逗号/冒号；勿一律改句号。\\\",\\\"excerpt\\\":\\\"为他记得这个顺序——顶职名单今天换名\\\",\\\"review\\\":\\\"mechanical\\\"},{\\\"source\\\":\\\"ai-pattern\\\",\\\"file\\\":\\\"F:\\\\\\\\WorkBuddy AI\\\\\\\\Novel Platform\\\\\\\\_phase0\\\\\\\\book2\\\\\\\\正文\\\\\\\\第001章_榜上换了名.md\\\",\\\"line\\\":19,\\\"column\\\":17,\\\"type\\\":\\\"voice-contrast\\\",\\\"severity\\\":\\\"blocking\\\",\\\"message\\\":\\\"音量反差腔：「声音不大/不高…却/但…」是 AI 高频反差模板；删掉音量铺垫，直接写声音落进场子的具体效果（谁停了手、哪排安静了）。\\\",\\\"excerpt\\\":\\\"声音不高，人人却\\\",\\\"review\\\":\\\"mechanical\\\"},{\\\"source\\\":\\\"ai-pattern\\\",\\\"file\\\":\\\"F:\\\\\\\\WorkBuddy AI\\\\\\\\Novel Platform\\\\\\\\_phase0\\\\\\\\book2\\\\\\\\正文\\\\\\\\第001章_榜上换了名.md\\\",\\\"line\\\":19,\\\"column\\\":35,\\\"type\\\":\\\"em-dash\\\",\\\"severity\\\":\\\"blocking\\\",\\\"message\\\":\\\"破折号按功能改写：打断→动作 beat/短句，拖长音→省略或动作，插入说明→逗号/冒号；勿一律改句号。\\\",\\\"excerpt\\\":\\\"得清，\\\\\\\"至于陈砚——他经手的账目，对\\\",\\\"review\\\":\\\"mechanical\\\"},{\\\"source\\\":\\\"ai-pattern\\\",\\\"file\\\":\\\"F:\\\\\\\\WorkBuddy AI\\\\\\\\Novel Platform\\\\\\\\_phase0\\\\\\\\book2\\\\\\\\正文\\\\\\\\第001章_榜上换了名.md\\\",\\\"line\\\":93,\\\"column\\\":9,\\\"type\\\":\\\"reverse-not-is\\\",\\\"severity\\\":\\\"blocking\\\",\\\"message\\\":\\\"反序对比腔：「是A，不是B」与「不是A，是B」同族；删掉后置否定，直接写 A 的具体表现，或用细节让读者自己对比。\\\",\\\"excerpt\\\":\\\"是顺序，不是账目\\\",\\\"review\\\":\\\"mechanical\\\"},{\\\"source\\\":\\\"ai-pattern\\\",\\\"file\\\":\\\"F:\\\\\\\\WorkBuddy AI\\\\\\\\Novel Platform\\\\\\\\_phase0\\\\\\\\book2\\\\\\\\正文\\\\\\\\第001章_榜上换了名.md\\\",\\\"line\\\":99,\\\"column\\\":9,\\\"type\\\":\"}, \"gate\": {\"exit\": 1, \"file\": \"F:\\\\WorkBuddy AI\\\\Novel Platform\\\\_phase0\\\\book2\\\\正文\\\\第001章_榜上换了名.md\", \"output\": \"Traceback (most recent call last):\\n  File \\\"F:\\\\小说\\\\platforms\\\\_core\\\\tools\\\\gate_runner.py\\\", line 178, in <module>\\n    sys.exit(main())\\n             ~~~~^^\\n  File \\\"F:\\\\小说\\\\platforms\\\\_core\\\\tools\\\\gate_runner.py\\\", line 134, in main\\n    findings = evaluate(metrics, gates, a.genre, load_genre_ranges(a.platform))\\n                                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\\n  File \\\"F:\\\\小说\\\\platforms\\\\_core\\\\tools\\\\gate_runner.py\\\", line 68, in load_genre_ranges\\n    for metric, rng in (blk or {}).items():\\n                       ^^^^^^^^^^^^^^^^^\\nAttributeError: 'str' object has no attribute 'items'\"}}\n"
+   "at": "2026-10-24T01:02:54+0800",
+   "output": "tracking_commit 失败：ERROR: character_snapshots.陈砚 contains unsupported fields: current_state, holds, taboo（只收 abilities_resources, goal, identity, knowledge, location, open_threads, relationships, state）\n"
   }
  },
  "decisions_taken": [],
  "pending_questions": [],
- "blocked_reason": null,
+ "blocked_reason": "C1.N16 内联脚本失败：tracking_commit 失败：ERROR: character_snapshots.陈砚 contains unsupported fields: current_state, holds, taboo（只收 abilities_resources, goal, identity, knowledge, location, open_threads, relationships, state）\n",
  "step_token": null,
  "step_token_node": null,
  "relay_count": 0

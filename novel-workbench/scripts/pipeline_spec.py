@@ -186,7 +186,9 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 "  · 字数 ≥2000\n\n"
                 "【开篇铁律】第 1 章前 200 字必须是当下冲突，不许环境描写、不许回忆倒叙。\n"
                 "【衔接】无缝接上上一章末尾 600 字的语气与场景。\n"
-                "【追踪】按 shapes **完整填好** tracking.json 事务（delta / 角色快照 / 伏笔 / 时间线 / context.position）\n\n"
+                "【追踪】按 shapes **完整填好** tracking.json 事务（delta / 角色快照 / 伏笔 / 时间线 / context.position）；"
+                "字段条数上限：continuity_risks ≤5、active_character_names ≤6、long_term_constraints ≤6、"
+                "next_chapter_commitments ≤5、recent_chapters ≤3——超出会被 tracking_commit 拒收、N16 封板失败\n\n"
                 "交付前按 writing-contract.md 第三节自检清单逐项过一遍，任一项不过先自己改。\n"
                 "回执 ≤100 字，格式 {\"written\":\"...\",\"words\":N}"
             ),
@@ -198,6 +200,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
         f"C{n}.N14": {
             "id": f"C{n}.N14", "kind": "llm", "model": "default", "role": "writer", "name": "定点改写",
             "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1800,
+            "skippable": True,  # N13 通过（无 findings）时按方案跳过，直达 N15
             "prompt": (
                 f"读取 {b}/_pipeline/findings_C{n}.json（N13 脚本报错与 N15 审查意见已统一汇入）。\n"
                 f"读取 {{SKILL}}/references/writing-contract.md 的「四个可操作手法」。\n"
@@ -252,10 +255,11 @@ def _n15_prompt(n: int, prev: int, b: str) -> str:
     else:
         return ("本条自动跳过——非里程碑章，靠确定性闸门把关。请直接调 skip。")
 
+    prev_range = f"第 1–{prev} 章" if prev >= 1 else "无前序章（本章是第 1 章）"
     return (
         f"你是七猫签约评审（红队模式）。只读 {src}。\n"
         f"审查范围：{scope}\n\n"
-        "**铁律：你的修复指令只能作用于第 {n} 章**——第 1–{prev} 章已在各自章末封板，"
+        f"**铁律：你的修复指令只能作用于第 {n} 章**——{prev_range}已在各自章末封板，"
         "严禁要求推翻它们。若问题只能靠改前序章解决，请判 block 并说明。\n\n"
         "先输出「最可能被七猫编辑拒稿的 3 个理由」，再做裁决。\n"
         f"写入 {b}/_pipeline/judgments_C{n}.N15.json：\n"
