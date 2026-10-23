@@ -8,7 +8,7 @@
  "current_chapter": 0,
  "chapters_committed": 0,
  "words_total": 0,
- "cursor": "N08",
+ "cursor": "C1.N12",
  "nodes": {
   "N01": {
    "status": "done",
@@ -76,15 +76,58 @@
    "attempts": 1
   },
   "N08": {
+   "status": "done",
+   "at": "2026-10-23T23:21:30+0800",
+   "evidence": [
+    "_pipeline\\judgments_N08.json"
+   ],
+   "sha256": [
+    "e17fd528fe7352b82600719f222c17841ffc421e7ab6ba4406c0296df109e942"
+   ],
+   "attempts": 2
+  },
+  "N09d": {
+   "status": "done",
+   "at": "2026-10-23T23:25:13+0800",
+   "evidence": [
+    "大纲\\目录_前12章.md"
+   ],
+   "sha256": [
+    "9e45487e17f787df08a77bb8d0c2fd61285d8d3232260fea210262ebd75abe96"
+   ],
+   "attempts": 1
+  },
+  "C1.N09": {
+   "status": "done",
+   "at": "2026-10-23T23:32:07+0800",
+   "evidence": [
+    "大纲\\细纲_第001章.md"
+   ],
+   "sha256": [
+    "231701fb87cf975d842b38996dc22d8697d9d79e5d78b0540fd43fe4c4b64336"
+   ],
+   "attempts": 1
+  },
+  "C1.N10": {
+   "status": "done",
+   "at": "2026-10-23T23:32:09+0800",
+   "output": "\"表头：# | 情节点 | 功能标签 | 执行边界（禁＋放）\",\n      \"expected\": \"情节细化使用表格：# / 情节点（谁做了什么） / 功能标签 / 执行边界（禁＋放）；需要时可在功能标签后加「分辨率」列\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只把情节点序列改成这张表，逐点补功能标签与执行边界；不增删情节点本身。\"\n    },\n    {\n      \"id\": \"outline.plotpoint-release\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"5 个情节点里 5 个写了「放」\",\n      \"expected\": \"执行边界写成「禁＋放」两半，每章至少一个点写了「放」——放行是解除限制，不是义务\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"给最该出彩的一两个点补「放」半边（谁可以出声、谁可以失态、允不允许当场标价），不改情节点本身。\"\n    },\n    {\n      \"id\": \"outline.setting-refs-exist\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"4 处项目内引用全部存在\",\n      \"expected\": \"细纲引用的每个项目内 .md 文件都真实存在——不许把槽位指向查无实据的权威文件\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"修正引用路径；或按新增物三级先把缺的设定落档（「写了要报」直接补并登记、「先问作者」进排纲底稿的供给自查提案），再在细纲引用。\"\n    },\n    {\n      \"id\": \"outline.wordcount-target\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"字数目标：2500；字数口径 visible_chars_v1：true\",\n      \"expected\": \"字数目标为 500-20000 的正整数（可写「2300 字」「约 2300」「2,300」，可带括号备注），并声明 字数口径：visible_chars_v1；作者给了上下限时另写一行「字数范围：2000-2600」\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只补字数目标、字数范围或字数口径行，不调整情节安排。\"\n    }\n  ],\n  \"failures\": [],\n  \"advisories\": [],\n  \"repair_scope\": []\n}\n"
+  },
+  "C1.N11": {
+   "status": "done",
+   "at": "2026-10-23T23:32:11+0800",
+   "output": "xt.position 的 story_time 与 scene 留空，填本章结束时的故事时间与场景（上一章结束时见 previous_position；换卷时连同 volume 与 volume_start_chapter 一起改）。只填 delta 里本章的变化；context 其余字段已是当前值，要撤下的长期约束或连贯性风险从 context 删掉并把原文放进 delta.retired_context_items（仅 append）；本章有变化的核心角色把下面的当前快照整份改好放进 character_snapshots，并在 character_changes 写一句变化。每类条目照 shapes 的形状写，不要从脚本源码或 state 文件里另找格式。\", \"limits_chars\": {\"delta.result\": 160, \"character_changes[].change\": 120, \"foreshadow_changes[].summary\": 120, \"timeline_events[].objective_fact / reader_knowledge\": 160, \"context.position.story_time / scene\": 80, \"character_snapshots.*.goal / state\": 100, \"逐章记录总量\": 1024}, \"shapes\": {\"delta.character_changes[]\": {\"name\": \"角色名\", \"change\": \"一句话：本章起了什么变化\"}, \"delta.foreshadow_changes[]\": {\"action\": \"upsert（撤掉整条写 delete，只带 id）\", \"id\": \"F007\", \"summary\": \"伏笔一句话\", \"planted_chapter\": 1, \"planned_resolution_chapter\": \"计划回收章的整数，未定写 null\", \"status\": \"已埋|已回收|已过期|放弃\", \"importance\": \"高|中|低\"}, \"delta.timeline_events[]\": {\"action\": \"upsert（撤掉整条写 delete，只带 id）\", \"id\": \"E012\", \"story_time\": \"故事内时间\", \"objective_fact\": \"客观发生了什么\", \"reader_knowledge\": \"读者此刻知道/以为什么\", \"reveal_status\": \"未揭示|部分揭示|已揭示\", \"reveal_chapter\": \"已揭示或部分揭示时写揭示章的整数（不晚于 1），未揭示写 null\", \"characters\": [\"角色名\"]}, \"character_snapshots.{角色名}\": {\"identity\": \"一句话\", \"location\": \"一句话\", \"goal\": \"一句话\", \"state\": \"一句话\", \"abilities_resources\": [\"一条一句\"], \"relationships\": [\"一条一句\"], \"knowledge\": [\"一条一句\"], \"open_threads\": [\"一条一句\"]}}, \"current_snapshots\": {}, \"previous_position\": {\"story_time\": \"待补充\", \"scene\": \"待补充\"}}\n"
+  },
+  "C1.N12": {
    "status": "running",
-   "attempts": 2,
-   "started_at": "2026-10-23T23:13:37+0800"
+   "attempts": 1,
+   "started_at": "2026-10-23T23:32:11+0800"
   }
  },
  "decisions_taken": [],
  "pending_questions": [],
  "blocked_reason": null,
- "step_token": "8b9f65",
- "step_token_node": "N08",
+ "step_token": "4d057b",
+ "step_token_node": "C1.N12",
  "relay_count": 0
 }

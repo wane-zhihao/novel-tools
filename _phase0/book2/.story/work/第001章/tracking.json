@@ -1,0 +1,29 @@
+{
+ "schema_version": 1,
+ "mode": "append",
+ "chapter": 1,
+ "chapter_title": "榜上换了名",
+ "expected_state_revision": 0,
+ "delta": {
+  "result": "",
+  "character_changes": [],
+  "foreshadow_changes": [],
+  "timeline_events": [],
+  "constraints": [],
+  "next_chapter_commitments": [],
+  "retired_context_items": [],
+  "retired_characters": []
+ },
+ "context": {
+  "position": {
+   "volume": "第一卷",
+   "volume_start_chapter": 1,
+   "story_time": "",
+   "scene": ""
+  },
+  "long_term_constraints": [],
+  "active_character_names": [],
+  "continuity_risks": []
+ },
+ "character_snapshots": {}
+}

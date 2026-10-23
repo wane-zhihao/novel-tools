@@ -70,6 +70,7 @@ def render_prompt(template: str, book: Path) -> str:
     return (template
             .replace("{QIMAO}", CFG["QIMAO_PLATFORM_DIR"])
             .replace("{STORY_LONG_WRITE}", CFG["STORY_LONG_WRITE"])
+            .replace("{SKILL}", str(SKILL_DIR))
             .replace("{BOOK}", str(book)))
 
 

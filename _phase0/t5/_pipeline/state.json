@@ -1,0 +1,73 @@
+{
+ "schema_version": 2,
+ "book": "《测》",
+ "genre": "niandai",
+ "target_words": 20000,
+ "max_chapters": 12,
+ "created_at": "2026-10-23T23:34:44+0800",
+ "current_chapter": 0,
+ "chapters_committed": 0,
+ "words_total": 0,
+ "cursor": "C1.N12",
+ "nodes": {
+  "N01": {
+   "status": "done",
+   "at": "x"
+  },
+  "N02": {
+   "status": "done",
+   "at": "x"
+  },
+  "N03": {
+   "status": "done",
+   "at": "x"
+  },
+  "N04": {
+   "status": "done",
+   "at": "x"
+  },
+  "N05": {
+   "status": "done",
+   "at": "x"
+  },
+  "N06": {
+   "status": "done",
+   "at": "x"
+  },
+  "N07": {
+   "status": "done",
+   "at": "x"
+  },
+  "N08": {
+   "status": "done",
+   "at": "x"
+  },
+  "N09d": {
+   "status": "done",
+   "at": "x"
+  },
+  "C1.N09": {
+   "status": "done",
+   "at": "x"
+  },
+  "C1.N10": {
+   "status": "done",
+   "at": "x"
+  },
+  "C1.N11": {
+   "status": "done",
+   "at": "x"
+  },
+  "C1.N12": {
+   "status": "running",
+   "attempts": 1,
+   "started_at": "2026-10-23T23:34:47+0800"
+  }
+ },
+ "decisions_taken": [],
+ "pending_questions": [],
+ "blocked_reason": null,
+ "step_token": "6946a4",
+ "step_token_node": "C1.N12",
+ "relay_count": 0
+}
