@@ -1,0 +1,39 @@
+{
+  "chapter": 1,
+  "source": "N13 脚本检查 + 年代题材基准对照",
+  "verdict": "revise",
+  "findings": [
+    {
+      "id": "G2-a",
+      "metric": "paragraphs_per_1000",
+      "actual": 60.2,
+      "expected": "33.1–54.1（年代题材基准，非并集区间）",
+      "direction": "偏高",
+      "handled_by": "手法5 反向：合段",
+      "detail": "每段平均 16.6 字，切得太碎。把同一场景、同一时间、同一动作链的相邻短段合并，目标回到每段 18–30 字。不要跨场景合并。"
+    },
+    {
+      "id": "G3-a",
+      "metric": "sent_len_median",
+      "actual": 10.0,
+      "expected": "15–27（年代题材）",
+      "direction": "偏低",
+      "handled_by": "手法6 句长控制",
+      "detail": "全是短句，阅读顿挫感过强。叙述句写长到 25–40 字（用逗号串多个分句，承载因果与环境），对话句保持 5–15 字。"
+    },
+    {
+      "id": "G6-a",
+      "metric": "visible_chars",
+      "actual": 1778,
+      "expected": "≥2000",
+      "direction": "不足",
+      "handled_by": "加一个回合的博弈",
+      "detail": "不要加形容词注水。加一个实质回合：老周压他，他顶回去，老周再压，他拿出一个证据。"
+    }
+  ],
+  "keep": {
+    "causal_per_1000": "3.94（在 1.0–6.0 内，不要动）",
+    "narration_action_density": "28.12（在 10.01–41.14 内，不要动）",
+    "question_per_1000": "6.19（在 2.03–11.71 内，不要动）"
+  }
+}
