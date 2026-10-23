@@ -1,0 +1,24 @@
+{
+  "book_title": "《攻击测试书》",
+  "characters": {},
+  "context": {
+    "active_character_names": [],
+    "continuity_risks": [],
+    "long_term_constraints": [],
+    "next_chapter_commitments": [],
+    "position": {
+      "scene": "待补充",
+      "story_time": "待补充",
+      "volume": "第一卷",
+      "volume_start_chapter": 1
+    },
+    "recent_chapters": []
+  },
+  "foreshadow": {},
+  "imported_through_chapter": 0,
+  "last_committed_chapter": 0,
+  "schema_version": 4,
+  "state_revision": 0,
+  "timeline": {},
+  "wordcount_records": {}
+}
