@@ -1,0 +1,85 @@
+{
+ "schema_version": 2,
+ "book": "book",
+ "started_at": "2026-10-23T19:39:49+0800",
+ "nodes": {
+  "S01": {
+   "status": "done",
+   "at": "2026-10-23T19:39:50+0800"
+  },
+  "L02": {
+   "status": "done",
+   "evidence": [
+    "F:\\WorkBuddy AI\\Novel Platform\\_phase0\\book\\_pipeline\\out_L02.txt"
+   ],
+   "at": "2026-10-23T19:42:32+0800"
+  },
+  "L03": {
+   "status": "done",
+   "evidence": [
+    "F:\\WorkBuddy AI\\Novel Platform\\_phase0\\book\\_pipeline\\out_L03.txt"
+   ],
+   "at": "2026-10-23T19:44:44+0800"
+  },
+  "S04": {
+   "status": "done",
+   "at": "2026-10-23T19:44:46+0800"
+  },
+  "L05": {
+   "status": "done",
+   "evidence": [
+    "F:\\WorkBuddy AI\\Novel Platform\\_phase0\\book\\_pipeline\\out_L05.txt"
+   ],
+   "at": "2026-10-23T19:46:09+0800"
+  },
+  "L06": {
+   "status": "done",
+   "evidence": [
+    "F:\\WorkBuddy AI\\Novel Platform\\_phase0\\book\\_pipeline\\out_L06.txt"
+   ],
+   "at": "2026-10-23T19:47:36+0800"
+  },
+  "S07": {
+   "status": "done",
+   "at": "2026-10-23T19:47:37+0800"
+  },
+  "L08": {
+   "status": "done",
+   "evidence": [
+    "F:\\WorkBuddy AI\\Novel Platform\\_phase0\\book\\_pipeline\\out_L08.txt"
+   ],
+   "at": "2026-10-23T19:48:54+0800"
+  },
+  "L09": {
+   "status": "done",
+   "evidence": [
+    "F:\\WorkBuddy AI\\Novel Platform\\_phase0\\book\\_pipeline\\out_L09.txt"
+   ],
+   "at": "2026-10-23T19:50:31+0800"
+  },
+  "S10": {
+   "status": "done",
+   "at": "2026-10-23T19:50:32+0800"
+  },
+  "L11": {
+   "status": "running"
+  },
+  "L12": {
+   "status": "pending"
+  },
+  "S13": {
+   "status": "pending"
+  },
+  "L14": {
+   "status": "pending"
+  },
+  "L15": {
+   "status": "pending"
+  }
+ },
+ "cursor": "L11",
+ "step_token": "912e81",
+ "llm_rounds": 6,
+ "script_rounds": 4,
+ "step_token_node": "L11"
+}
