@@ -31,17 +31,18 @@ Novel Platform/
 ├── references/
 │   ├── plan-v2.1.md             **实现方案 v2.1**（含两轮红队审查的 10 项修补，代码的设计依据）
 │   └── phase0-report.md         Phase 0 纪律阈值实测报告
-├── novel-workbench/             Skill（可被 WorkBuddy 加载）
+├── novel-workbench/             Skill（~/.workbuddy-ai/skills/novel-workbench 是指向这里的 junction）
 │   ├── SKILL.md                 入口 + 铁律
-│   ├── config.json              四个绝对根目录（指向旧数据）
+│   ├── config.json              绝对路径根目录（指向旧数据与上游技能）
 │   ├── references/
-│   │   ├── pipeline.md          节点表 v2.1
-│   │   ├── decisions.md         无人值守默认决策表
-│   │   └── agents/              writer / judge / scout 角色提示词
+│   │   └── decisions.md         无人值守默认决策表
 │   └── scripts/
 │       ├── mock_autopilot.py    Phase 0 纪律阈值实测
-│       └── autopilot.py         正式状态机 + 内联驱动器
-└── _phase0/                     Phase 0 测试目录
+│       ├── autopilot.py          状态机入口（init/next/done/skip/block/status/resume）
+│       ├── commands.py           done / skip / block / resume 实现
+│       ├── inline_runner.py      script 节点内联执行 + 原文引用硬校验
+│       └── pipeline_spec.py      节点表（流程唯一真相）
+└── _phase0/                     Phase 0 测试目录（mock 状态机实测产物）
 ```
 
 > **Plan 溯源**：`references/plan-v2.1.md` 从 `C:\Users\Wane-\.workbuddy-ai\plans\cosmic-nebula-babbage-MnzvwCoC.md`

@@ -60,6 +60,18 @@ PYTHON = CFG["PYTHON"]
 NODE_BIN = CFG.get("NODE", "")
 
 
+def render_prompt(template: str, book: Path) -> str:
+    """渲染 prompt 模板里的路径占位符。
+
+    节点表只存模板（与具体书无关）；{QIMAO} / {STORY_LONG_WRITE} / {BOOK}
+    在 next 输出时才替换成真实绝对路径——换一本书跑，同一份节点表不用改。
+    """
+    return (template
+            .replace("{QIMAO}", CFG["QIMAO_PLATFORM_DIR"])
+            .replace("{STORY_LONG_WRITE}", CFG["STORY_LONG_WRITE"])
+            .replace("{BOOK}", str(book)))
+
+
 def utf8_env() -> dict:
     """暗坑7：Windows 下 Python 默认 stdio 用 GBK，遇中文必崩。"""
     return {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
@@ -238,7 +250,7 @@ def cmd_next(a) -> int:
             f'"{PYTHON}" "{HERE / "autopilot.py"}" done --book "{a.book}" '
             f'--node {spec["id"]} --token {token} --evidence {spec["evidence"]}',
         "subagent_role": spec["role"],
-        "subagent_prompt": spec["prompt"],
+        "subagent_prompt": render_prompt(spec["prompt"], book),
     }, ensure_ascii=False))
     return 0
 

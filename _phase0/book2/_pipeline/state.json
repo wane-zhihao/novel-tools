@@ -1,0 +1,90 @@
+{
+ "schema_version": 2,
+ "book": "《联试之书》",
+ "genre": "niandai",
+ "target_words": 20000,
+ "max_chapters": 12,
+ "created_at": "2026-10-23T20:56:44+0800",
+ "current_chapter": 0,
+ "chapters_committed": 0,
+ "words_total": 0,
+ "cursor": "N08",
+ "nodes": {
+  "N01": {
+   "status": "done",
+   "at": "2026-10-23T20:56:46+0800",
+   "output": "{\"last_committed_chapter\": 0, \"state_revision\": 0}\n"
+  },
+  "N02": {
+   "status": "done",
+   "at": "2026-10-23T20:56:46+0800",
+   "output": "style anchor: 见 qimao/harness/style-anchor.json（已 calibrated）"
+  },
+  "N03": {
+   "status": "done",
+   "at": "2026-10-23T21:06:29+0800",
+   "evidence": [
+    "大纲\\选题报告.md"
+   ],
+   "sha256": [
+    "d74019d3e38e9d290fce7a8d313fe2267f61ff897c059e7bbfe6532cca36d95d"
+   ],
+   "attempts": 1
+  },
+  "N04": {
+   "status": "done",
+   "at": "2026-10-23T21:39:24+0800",
+   "evidence": [
+    "_pipeline\\judgments_N04.json"
+   ],
+   "sha256": [
+    "0777cf27683f063abc7400816b65f324577fea09a1e582b8b06d49146c36cfb0"
+   ],
+   "attempts": 1
+  },
+  "N05": {
+   "status": "done",
+   "at": "2026-10-23T21:43:32+0800",
+   "evidence": [
+    "设定\\题材定位.md"
+   ],
+   "sha256": [
+    "41cef68fba1e3920f17ff2c4786c6ed8a3c59fcbf932d85fa8f78679503e26f4"
+   ],
+   "attempts": 1
+  },
+  "N06": {
+   "status": "done",
+   "at": "2026-10-23T21:47:34+0800",
+   "evidence": [
+    "_pipeline\\judgments_N06.json"
+   ],
+   "sha256": [
+    "32de4d3ccf9c429f69577467ee683a6ee33073cf90058ae55f3a047c315f22ff"
+   ],
+   "attempts": 1
+  },
+  "N07": {
+   "status": "done",
+   "at": "2026-10-23T21:55:28+0800",
+   "evidence": [
+    "大纲\\卷纲_第一卷.md"
+   ],
+   "sha256": [
+    "ea7875eb04ee7857d45018c4b15a5d701986e7e5afd7e957cd1ee87c7ce40fa9"
+   ],
+   "attempts": 1
+  },
+  "N08": {
+   "status": "running",
+   "attempts": 1,
+   "started_at": "2026-10-23T22:51:35+0800"
+  }
+ },
+ "decisions_taken": [],
+ "pending_questions": [],
+ "blocked_reason": null,
+ "step_token": "6be896",
+ "step_token_node": "N08",
+ "relay_count": 0
+}

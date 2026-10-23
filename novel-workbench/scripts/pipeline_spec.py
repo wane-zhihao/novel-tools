@@ -111,32 +111,45 @@ GLOBAL_NODES: dict[str, dict] = {
 # ─── 章节循环节点 C{n}.N09–N16 ────────────────────────────────────────────────
 
 def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
-    """第 n 章的 8 个节点。n 从 1 开始。"""
+    """第 n 章的 8 个节点。n 从 1 开始。
+
+    prompt 里的 {QIMAO} / {STORY_LONG_WRITE} / {BOOK} 是占位符，
+    由 autopilot.render_prompt() 在 next 输出时替换成真实绝对路径
+    （f-string 里写 {{QIMAO}} 才是字面量）。
+    """
     b = str(book)
-    q = "{QIMAO}"
     prev = n - 1
     base = {
-        "C{n}.N09": {
+        f"C{n}.N09": {
             "id": f"C{n}.N09", "kind": "llm", "role": "writer", "name": "单章场景卡",
             "evidence": f"大纲/细纲_第{n:03d}章.md", "min_size": 500,
             "prompt": (
                 f"读取 {b}/大纲/目录_前12章.md 第 {n} 行、{b}/大纲/卷纲_第一卷.md、"
-                f"{b}/设定/角色.md，产出 {b}/大纲/细纲_第{n:03d}章.md。\n"
-                "必须是**场景卡**，3–6 拍，每拍五字段：地点 / 人物 / 冲突 / 情绪 / 出口。\n"
-                "硬约束：第 1 拍的前 200 字内必须有冲突；全章只推进一条主线；"
-                "章末出口必须是钩子（读者已知终点、不知过程）。\n"
-                "另需九个必填字段供 check-outline-contract.js 验收。回执 ≤100 字。"
+                f"{b}/设定/角色.md，并读权威细纲模板 "
+                f"{{STORY_LONG_WRITE}}/references/workflow-outline.md，"
+                f"产出 {b}/大纲/细纲_第{n:03d}章.md。\n"
+                "硬约束（check-outline-contract.js 逐项机械验收，缺一项即打回）：\n"
+                "1. 九个必填字段各占一行，格式「- 字段名：值」：核心事件 / 字数目标（如 2200字）/ "
+                "字数口径（visible_chars_v1）/ 单元ID/位置 / 目标情绪 / 主角目标/关键选择 / "
+                "章首钩子 / 爽点 / 本章禁止提前释放；\n"
+                "2. 「目标情绪」「主角目标/关键选择」必须写实际内容，不接受 [待补充]；\n"
+                "3. 四个小节标题（### 开头）：内容概括 / 情节安排 / 人物关系和出场顺序 / 情节细化；\n"
+                "4. 内容概括写全五段：起因 / 发展 / 转折 / 高潮 / 结尾；\n"
+                "5. 情节细化用表格，表头为：# / 情节点 / 功能标签 / 执行边界（禁＋放）；\n"
+                "6. 反引号引用的项目内 .md 路径必须真实存在，不许杜撰。\n"
+                "内容硬规则：3–6 拍；第 1 拍的前 200 字内必须有冲突；全章只推进一条主线；"
+                "章末出口必须是钩子。回执 ≤100 字。"
             ),
         },
-        "C{n}.N10": {
+        f"C{n}.N10": {
             "id": f"C{n}.N10", "kind": "script", "name": "细纲闸门",
             "evidence": f"大纲/细纲_第{n:03d}章.md", "min_size": 1,
         },
-        "C{n}.N11": {
+        f"C{n}.N11": {
             "id": f"C{n}.N11", "kind": "script", "name": "章节上下文组装",
             "evidence": "追踪/上下文.md", "min_size": 1,
         },
-        "C{n}.N12": {
+        f"C{n}.N12": {
             "id": f"C{n}.N12", "kind": "llm", "role": "writer", "name": "写正文+填追踪事务",
             "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1800,
             "prompt": (
@@ -144,7 +157,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 f"  {b}/大纲/细纲_第{n:03d}章.md          （场景卡）\n"
                 f"  {b}/追踪/上下文.md                    （7 栏上下文 + shapes + 上一章末尾 600 字锚点）\n"
                 f"  {b}/.story/work/第{n:03d}章/tracking.json   （预填事务，按 shapes 填）\n"
-                f"  {QIMAO}/harness/style-anchor.json    （文风锚，取 2 段正例切片）\n"
+                f"  {{QIMAO}}/harness/style-anchor.json    （文风锚，取 2 段正例切片）\n"
                 f"写出 {b}/正文/第{n:03d}章_<标题>.md，单章 **≥2000 字**。\n"
                 "硬约束：\n"
                 "  · 因果显式——多用「因为/于是/这才」，七猫年代文因果连接词密度须 ≥1.0/千字\n"
@@ -154,11 +167,11 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 "回执 ≤100 字，格式 {\"written\":\"...\",\"words\":N}"
             ),
         },
-        "C{n}.N13": {
+        f"C{n}.N13": {
             "id": f"C{n}.N13", "kind": "script", "name": "合并检查+平台闸门",
             "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1,
         },
-        "C{n}.N14": {
+        f"C{n}.N14": {
             "id": f"C{n}.N14", "kind": "llm", "role": "writer", "name": "定点改写",
             "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1800,
             "prompt": (
@@ -169,13 +182,13 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 "回执 ≤100 字。"
             ),
         },
-        "C{n}.N15": {
+        f"C{n}.N15": {
             "id": f"C{n}.N15", "kind": "verify", "role": "judge", "name": "阶段质量闸门",
             "evidence": f"_pipeline/judgments_C{n}.N15.json", "min_size": 200,
             "skippable": True,
             "prompt": _n15_prompt(n, prev, b),
         },
-        "C{n}.N16": {
+        f"C{n}.N16": {
             "id": f"C{n}.N16", "kind": "script", "name": "章末原子封板",
             "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1,
         },

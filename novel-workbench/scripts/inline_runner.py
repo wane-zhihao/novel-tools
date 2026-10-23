@@ -40,6 +40,41 @@ def run_script(cmd: list[str], cwd: Path, timeout: int = 180) -> tuple[int, str]
 
 # ─── 各 script 节点的具体动作 ─────────────────────────────────────────────────
 
+def _tracking_init(book: Path, st: dict) -> tuple[int, str]:
+    """N01：初始化追踪状态（tracking_commit.py init）。
+
+    上游 draft / check / commit 全部要求 追踪/_tracking-state.json 存在，
+    没有它 C{n}.N11 第一步就 "tracking state is missing; run init first"。
+    init 永不覆盖：已初始化过就跳过。
+    """
+    cfg = _cfg()
+    if (book / "追踪" / "_tracking-state.json").is_file():
+        return 0, "tracking state 已存在，跳过 init"
+    doc = {
+        "schema_version": 1,
+        "book_title": st.get("book") or book.name,
+        "last_chapter": 0,
+        "context": {
+            "position": {"volume": "第一卷", "volume_start_chapter": 1,
+                         "story_time": "待补充", "scene": "待补充"},
+            "long_term_constraints": [],
+            "active_character_names": [],
+            "continuity_risks": [],
+            "recent_chapters": [],
+            "next_chapter_commitments": [],
+        },
+        "character_snapshots": {},
+        "foreshadow": [],
+        "timeline_events": [],
+    }
+    inp = book / "_pipeline" / "tracking_init.json"
+    inp.parent.mkdir(parents=True, exist_ok=True)
+    inp.write_text(json.dumps(doc, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    cmd = [cfg["PYTHON"], cfg["TRACKING_COMMIT"], "init",
+           "--project", str(book), "--input", str(inp)]
+    return run_script(cmd, book)
+
+
 def _tracking_draft(book: Path, chapter: int) -> tuple[int, str]:
     """C{n}.N11：生成预填追踪事务 + shapes，供 writer 填写。"""
     cfg = _cfg()
@@ -106,7 +141,7 @@ def run_node_script(book: Path, st: dict, spec: dict) -> tuple[int, str]:
     nid = spec["id"]
     ch = st["current_chapter"] + 1
     if nid == "N01":
-        return 0, "init ok"
+        return _tracking_init(book, st)
     if nid.endswith(".N10"):
         return _outline_gate(book, ch)
     if nid.endswith(".N11"):
@@ -119,7 +154,8 @@ def run_node_script(book: Path, st: dict, spec: dict) -> tuple[int, str]:
         return _merge_full(book)
     if nid == "N02":
         return 0, "style anchor: 见 qimao/harness/style-anchor.json（已 calibrated）"
-    return 0, f"{nid} 无内联动作（占位）"
+    # 未实现的 script 节点必须硬失败：静默放行会让「确定性闸门」形同虚设
+    return 2, f"{nid} 未实现内联动作——拒绝放行，请先实现再跑"
 
 
 # ─── verify 节点的原文引用硬校验（暗坑6） ─────────────────────────────────────
