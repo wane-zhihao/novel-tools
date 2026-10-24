@@ -1,7 +1,16 @@
 import { api } from "../lib/api.js";
-import { el, clear, fmtDate, fmtShortDate, toast } from "../lib/dom.js";
+import { el, clear, fmtDate, fmtNumber, fmtShortDate, toast } from "../lib/dom.js";
 
-export async function renderSubmit({ bookId, go }) {
+// B19：SKILL.md「投稿前人工确认 4 条」固定展示，投前逐条勾
+const HUMAN_CONFIRM = [
+  "只联系一个编辑；这本书只有一次签约评估机会",
+  "前 200 字冲突 / 前 600 字升级 / 前 6000 字主线 / 三章内反转",
+  "文档不拆成多封邮件，按编辑要求附大纲与设定",
+  "回填编辑反馈到投稿记录——那是下一轮校准的唯一真数据",
+];
+const FALLBACK_PACKAGE_FILES = ["全文.md", "体检报告.md", "投稿邮件.md", "投稿记录.md"];
+
+export async function renderSubmit({ bookId, go, state }) {
   const view = document.querySelector("#view");
   view.classList.remove("wide");
   clear(view).append(el("p", { class: "empty", text: "正在做投前检查…" }));
@@ -54,6 +63,26 @@ export async function renderSubmit({ bookId, go }) {
       })));
   page.append(checklist);
 
+  const confirmPanel = el("section", { class: "panel" },
+    el("div", { class: "panel-head" },
+      el("h2", { text: "人工确认（投前逐条勾）" }),
+      el("span", { class: "chip", text: "来自 SKILL.md" })),
+    el("div", { class: "checklist" },
+      ...HUMAN_CONFIRM.map((text, index) => {
+        const key = `workbench:submit-confirm:${bookId}:${index}`;
+        const box = el("input", { type: "checkbox", "aria-label": text });
+        try {
+          box.checked = localStorage.getItem(key) === "1";
+        } catch {}
+        box.addEventListener("change", () => {
+          try {
+            localStorage.setItem(key, box.checked ? "1" : "0");
+          } catch {}
+        });
+        return el("label", { class: "check confirm-item" }, box, el("span", { text }));
+      })));
+  page.append(confirmPanel);
+
   const packageBox = el("section", { class: "panel", hidden: "hidden" });
   page.append(packageBox);
 
@@ -69,8 +98,52 @@ export async function renderSubmit({ bookId, go }) {
       el("div", { class: "panel-head" },
         el("h2", { text: "投稿包已生成" }),
         el("span", { class: "chip chip-ok", text: result.manuscript_version })),
-      el("p", { class: "page-sub", text: result.path }),
       el("p", { class: "muted small", text: "包含全文、体检报告、投稿邮件与大纲；MANIFEST 记录了每个文件的 sha。" }));
+
+    // B19：列出包内文件（以后端 manifest 为准；缺失时按约定四文件展示）
+    const files = result.manifest?.files?.length
+      ? result.manifest.files
+      : FALLBACK_PACKAGE_FILES.map((name) => ({ name }));
+    packageBox.append(
+      el("h3", { class: "section-title", text: "包内文件" }),
+      el("div", { class: "card-list" },
+        ...files.map((file) => el("div", { class: "list-row" },
+          el("strong", { text: file.name }),
+          el("span", { class: "muted small", text: file.bytes != null ? `${fmtNumber(file.bytes)} 字节` : "未找到（按约定应存在）" })))));
+
+    // B19：复制路径（含降级）+ 在资源管理器中打开
+    const book = (state?.books ?? []).find((item) => Number(item.id) === Number(bookId));
+    const absolutePath = book?.path ? `${book.path.replaceAll("\\", "/")}/${result.path.replaceAll("\\", "/")}` : result.path;
+    const pathInput = el("input", { class: "mono", readonly: "readonly", value: absolutePath, "aria-label": "投稿包路径", style: "flex:1;min-width:220px" });
+    const copyButton = el("button", {
+      class: "button button-small", type: "button", text: "复制路径",
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(absolutePath);
+          toast("路径已复制");
+        } catch {
+          pathInput.select();
+          toast("剪贴板不可用，已选中路径，按 Ctrl+C 复制");
+        }
+      },
+    });
+    const revealButton = el("button", {
+      class: "button button-small", type: "button", text: "在资源管理器中打开",
+      onclick: async () => {
+        revealButton.disabled = true;
+        try {
+          await api(`/api/books/${bookId}/submissions/${encodeURIComponent(result.path.split("/").at(-1))}/reveal`, {
+            method: "POST", body: { file: "全文.md" },
+          });
+        } catch (error) {
+          toast(error.message, "error");
+        } finally {
+          revealButton.disabled = false;
+        }
+      },
+    });
+    packageBox.append(el("div", { class: "inline-fields", style: "margin-top:12px" }, pathInput, copyButton, revealButton));
+
     const form = el("form", { class: "form-grid", style: "display:flex;flex-direction:column;gap:12px;margin-top:14px" },
       el("div", { class: "field-row" },
         el("label", { class: "field" }, el("span", { text: "渠道" }), el("input", { name: "channel", value: "七猫", required: "required" })),

@@ -165,9 +165,11 @@ node novel-workbench/server/cli.mjs run --book <书目录> --json
 
 - Provider：`mock`（默认，不联网）与 OpenAI 兼容（DeepSeek / Kimi / 智谱 / Ollama / OpenRouter）。
   每个角色独立配置 provider、model、temperature、timeout、max_attempts。
-- 工具循环只暴露 `read_file / write_file / list_dir`，路径锁死在书目录；
-  禁止改写 `state.json`、`.step_token`、`workbench.json`、`run.json`。
-- 令牌由运行时自己从 `_pipeline/.step_token` 读取并调 `done`，不出进程、不进结果、不进日志。
+- 工具循环只暴露 `read_file / write_file / list_dir`，路径锁死在书目录（拒绝 `~` 路径段，防 Windows 8.3 短名伪装）；
+  控制文件（state/.step_token/workbench/run/agents）默认不可读，禁止改写；`submissions.json`、`snapshots/`、`findings_*` 禁写；
+  `judgments_*` 只有 judge 角色可写（writer 覆写裁决记录可翻转历史结论）。
+- 令牌由运行时自己从 `_pipeline/.step_token` 读取并调 `done`，不进结果、不进日志；经子进程 argv 传递
+  （本机进程管理器可见——单机威胁模型内的已知残留，2026-10-25 审查 A1/C1）。
 - `done` 返回引用校验失败时，把失败原因回喂给 judge 重写（受 `max_attempts` 限制）；
   N15/N20 的 block 按状态机路由（N14 / N20f），第三次连续失败才停机。
 - 停止：Ctrl+C（AbortSignal）；预算：`budgets.llm_rounds`、`budgets.node_timeout_s`；`--max-steps` 限制本轮节点数。
@@ -199,7 +201,7 @@ node novel-workbench/server/index.mjs --port 43120 --root <书库根目录> --op
 | `PUT /api/books/:id/submissions/:sid` | 更新编辑反馈、下一步动作 |
 | `GET /api/agents`、`PUT /api/agents` | 全局或按书读取/写入 Agent 配置 |
 
-- 安全：只接受回环 Host；写请求的 Origin 必须是本机；配置文件拒绝任何明文密钥字段；
+- 安全：只接受回环 Host；写请求的 Origin 必须与服务端同源（主机名+端口严格匹配，附 Sec-Fetch-Site 校验）；配置文件拒绝任何明文密钥字段；
   静态文件路径锁死在 `novel-workbench/web/`。
 - 运行互斥：同一本书同时只允许一个运行；`next` 另有跨驱动锁；开始即写 `runs` 行，
   重启后残留运行标为 `interrupted`；事件最多保留 600 条并定期落库。
@@ -246,7 +248,7 @@ npm start --prefix novel-workbench
 - 必填：Python、story-long-write 技能目录、autopilot；gate_runner / 平台目录缺失时只告警。
 - 环境变量包括 `WORKBENCH_BOOKS_ROOTS`、`WORKBENCH_PYTHON`、`WORKBENCH_STORY_LONG_WRITE`、
   `WORKBENCH_GATE_RUNNER`、`WORKBENCH_PLATFORM_DIR` 等。
-- 版本：`novel-workbench/package.json`（当前 0.6.0）；`GET /api/health` 返回版本、DB schema 版本与 `needs_setup`。
+- 版本：`novel-workbench/package.json`（当前 0.7.0）；`GET /api/health` 返回版本、DB schema 版本与 `needs_setup`。
 - 数据库迁移随启动自动执行；业务数据在数据目录，删掉 DB 可从文件重建，不影响书稿。
 - 模型密钥：环境变量优先；也可在 UI 设置页填写，Windows 用 DPAPI（CurrentUser）加密存
   `<dataDir>/secrets.json`，接口只返回是否已配置与来源。首次运行默认 mock，不需要密钥。
@@ -255,8 +257,12 @@ npm start --prefix novel-workbench
 
 - **瘦主控 + 文件指针协议**：主会话只调 `autopilot.py`，禁读正文；`next` 输出含路径的 `subagent_prompt`
 - **补丁1 脚本内联**：所有 `script` 节点由 `autopilot.py` 内部 `subprocess.run` 执行，LLM 物理上无法篡改脚本参数
-- **`step_token` 一次性令牌**：subagent 越权调用被 100% 机械拦截
+- **`step_token` 一次性令牌**：提高 subagent 越权调用成本的速度 bump——2026-10-25 审查 A1 实证"100% 机械隔离"不成立
+  （能读 `_pipeline/` 的 agent 可拿令牌、`next` 会向调用方发令牌），已撤回该声称；配套防线：done 的 evidence-spec
+  模式比对、控制文件读写保护、judgments 角色感知
 - **先审后封**：`commit` 必须是单章生命周期的最后一个动作
+- **N14 后复检**：N14 改写完成先回 N13 复跑平台闸门，通过才进 N15；仍 blocking 记一轮 fix_rounds（与 N15/N16 失败同一预算），
+  超预算回滚 Blocker 最少的快照后终停（plan 5.2.2 + 补丁4，2026-10-25 落地）
 - **P5 诊断汇流**：N18/N19/N20 全是只读探针，问题统一汇入 `endgame_findings.json`，由 N20f 单点修补
 - **失败可回退**：N15/N16 失败回 N14 定点改写（上限 2 轮），N20 block 回 N20f（上限 2 轮），第三次停机交人工
 
@@ -302,5 +308,15 @@ node "C:\Users\Wane-\.qoder\skills\story\scripts\dashboard-server.mjs" \
   - P1：N13 状态矩阵、N21 不可投阻断、证据新鲜度、N16 幂等、全局配置迁出仓库、DPAPI 密钥、token 预算/节点超时、测试去环境化
   - P2：运行持久化与中断标记、唯一临时名 + next 锁、UI 竞态/输入边界/网络 token、版本与发版卫生
 - [x] **v2 正文中心**：书房/写作台/自动保存/版本 diff 回滚/故事库/投稿 CRM/三字段开书/移动端底栏；旧控制台保留为制作台
+- [x] **对抗性审查整改波（2026-10-25，见 `references/adversarial-review-2026-10-25.md`）**
+  - P0 安全止损：8.3 短名写穿修复（`~` 段拒绝 + realpath.native 归一化）、agents.json/submissions.json 写保护、
+    judgments 角色感知（仅 judge 可写）、控制文件读保护、Origin 同源严格匹配 + Sec-Fetch-Site、
+    done 的 evidence-spec 模式比对、block/resume 在途令牌与 --force 鉴权、攻击回归测试 6 用例
+  - P1 状态机：N14→N13 复检（有界轮次 + Blocker 最少快照回滚）、resume 轮次返还 + tracking 交叉校验、
+    done/skip 跨驱动锁、gate rc 断言 + stderr 分离、words_total 真实书回写验证与漂移报告、llm_rounds 按 chat 计、
+    Windows stop 杀进程树
+  - P2 产品回路：v2↔制作台双向出口、空态二分（加载失败≠空书房）、移动端 44px/保存态常驻/toast 避让、
+    设计令牌对齐、改视图版本按 source 分组、投稿包 reveal 端点 + 人工确认 checklist
+  - P3 运行时：sync 指纹逐文件比对、rebuild 版本历史重建、事件增量落库、provider 错误脱敏
 - [ ] 逐章暂停审阅（AI 写完先等作者接受；当前默认自动跑 + 事后回滚）
 - [ ] 真实新书端到端（等用户放行；`_phase0/book2` 暂停，不续跑）

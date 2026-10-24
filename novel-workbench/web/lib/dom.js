@@ -52,8 +52,16 @@ export function toast(message, tone = "info") {
   const region = document.querySelector("#toastRegion");
   if (!region) return;
   const node = el("div", { class: "toast", "data-tone": tone, text: message });
+  if (tone === "error") {
+    // 错误类常驻至手动关闭（P2：不再 4.2 秒自消后线索丢失）
+    node.append(el("button", {
+      class: "toast-close", type: "button", "aria-label": "关闭", text: "×",
+      onclick: () => node.remove(),
+    }));
+  } else {
+    setTimeout(() => node.remove(), 4200);
+  }
   region.append(node);
-  setTimeout(() => node.remove(), 4200);
 }
 
 export function escapeHtml(value) {

@@ -1,4 +1,15 @@
 :root {
+  /* ── 与 v2 书房（styles.css）对齐的设计令牌（P2-B17，改动最小化） ── */
+  --seal: #a8442a;         /* v2 --seal：主色 */
+  --seal-ink: #8f3720;     /* v2 --seal-ink */
+  --seal-wash: #f7e9e2;    /* v2 --seal-wash */
+  --control-height: 44px;  /* v2 .button 触控高度 */
+  --control-pad: 0 18px;   /* v2 .button 内边距 */
+  --control-radius: 10px;  /* v2 .button 圆角 */
+  --control-font: 14px;    /* v2 .button 字号 */
+  --body-font: 15px;       /* v2 body 正文字号 */
+  --chip-height: 26px;     /* v2 .chip 高度 */
+
   --bg: #f6f1e7;
   --surface: #fffdf8;
   --surface-2: #f1eadf;
@@ -7,9 +18,9 @@
   --ink-2: #5f564b;
   --ink-3: #8b8072;
   --line: #e2d8c8;
-  --accent: #9a4f2b;
-  --accent-ink: #7d3d1f;
-  --accent-wash: #f7e9dd;
+  --accent: var(--seal);
+  --accent-ink: var(--seal-ink);
+  --accent-wash: var(--seal-wash);
   --ok: #2f6b45;
   --ok-wash: #e6f2ea;
   --warn: #8a5a12;
@@ -26,6 +37,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --seal: #d0785a;
+    --seal-ink: #e39a7d;
+    --seal-wash: #35241d;
     --bg: #12100d;
     --surface: #1c1814;
     --surface-2: #24201a;
@@ -34,9 +48,6 @@
     --ink-2: #b9ab99;
     --ink-3: #8b7f70;
     --line: #342c23;
-    --accent: #d58a5b;
-    --accent-ink: #e9a878;
-    --accent-wash: #31241b;
     --ok: #7fbf98;
     --ok-wash: #1e2f24;
     --warn: #e0b260;
@@ -56,7 +67,7 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: var(--body-font);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
@@ -136,6 +147,7 @@ a { color: var(--accent-ink); }
 .brand-copy { display: flex; flex-direction: column; line-height: 1.3; }
 .brand-copy strong { font-family: var(--serif); font-size: 17px; letter-spacing: 0.06em; }
 .brand-copy small { color: var(--ink-3); font-size: 11px; letter-spacing: 0.04em; }
+.back-home { margin-left: auto; }
 
 .sidebar-actions { display: flex; gap: 8px; }
 
@@ -241,12 +253,13 @@ a { color: var(--accent-ink); }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
-  border-radius: 999px;
+  min-height: var(--control-height);
+  padding: var(--control-pad);
+  border-radius: var(--control-radius);
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--control-font);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease;
   white-space: nowrap;
@@ -270,7 +283,7 @@ a { color: var(--accent-ink); }
 
 .button-quiet { background: transparent; }
 
-.button-small { padding: 5px 10px; font-size: 12px; }
+.button-small { min-height: var(--control-height); padding: 0 12px; font-size: 13px; }
 
 .icon-button {
   display: inline-grid;
@@ -336,6 +349,7 @@ a { color: var(--accent-ink); }
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-height: var(--chip-height);
   padding: 2px 8px;
   border-radius: 999px;
   border: 1px solid var(--line);

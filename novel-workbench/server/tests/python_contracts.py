@@ -66,6 +66,7 @@ def probe(path):
         "QIMAO_GENRE_BASE": str(fake / "genre.json"),
         "GATE_RUNNER": str(fake / "gate_runner.py"),
         "STYLE_PROBE": str(fake / "style_probe.py"),
+        "QIMAO_STYLE_ANCHOR": str(fake / "style_anchor.json"),
     }
     path = root / "pipeline.json"
     write(path, json.dumps(config, ensure_ascii=False))
@@ -139,6 +140,155 @@ def test_next_lock(root: Path) -> None:
     release_next_lock(again)
 
 
+# ─── 2026-10-25 P0/P1 波新增契约 ─────────────────────────────────────────────
+
+class Args:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def make_state_book(root: Path, name: str, **overrides) -> Path:
+    book = make_book(root / name)
+    st = {
+        "schema_version": 2, "book": "测试书", "genre": "niandai",
+        "target_words": 20000, "max_chapters": 12,
+        "created_at": "2026-10-25T00:00:00+0800",
+        "current_chapter": 0, "chapters_committed": 0, "words_total": 0,
+        "cursor": "N03", "nodes": {}, "decisions_taken": [],
+        "pending_questions": [], "blocked_reason": None, "relay_count": 0,
+    }
+    st.update(overrides)
+    write(book / "_pipeline" / "state.json", json.dumps(st, ensure_ascii=False))
+    return book
+
+
+def test_evidence_pattern_mismatch(root: Path) -> None:
+    """审查 A2：持令牌者不能指认任意大文件冒充本节点产物。"""
+    from commands import cmd_done
+    from autopilot import write_token
+    book = make_state_book(root, "a2")
+    write_token(book, "tok-a2", "N03")
+    # 尺寸够但不匹配 spec 期望模式（大纲/选题报告.md）
+    write(book / "设定" / "冒充.md", "冒" * 800)
+    rc = cmd_done(Args(book=str(book), node="N03", token="tok-a2",
+                       evidence=["设定/冒充.md"]))
+    assert rc == 2, "evidence 不匹配 spec 模式必须被拒"
+    # 匹配模式 → 放行
+    write(book / "大纲" / "选题报告.md", "选题" * 300)
+    rc = cmd_done(Args(book=str(book), node="N03", token="tok-a2",
+                       evidence=["大纲/选题报告.md"]))
+    assert rc == 0, f"匹配模式的证据应放行：rc={rc}"
+
+
+def test_block_and_resume_need_token(root: Path) -> None:
+    """审查 B5：在途 block 要令牌；人工阻断态 resume 要 --force。"""
+    from commands import cmd_block, cmd_resume
+    from autopilot import write_token, load_state, clear_token
+    book = make_state_book(root, "b5")
+    write_token(book, "tok-b5", "N03")
+    rc = cmd_block(Args(book=str(book), reason="测试停机", token=""))
+    assert rc == 2, "有节点在途时无令牌 block 必须被拒"
+    rc = cmd_block(Args(book=str(book), reason="测试停机", token="tok-b5"))
+    assert rc == 1, "持令牌 block 应生效"
+
+    st = load_state(book)
+    assert st["blocked_reason"] == "测试停机"
+    # 令牌仍在途：无令牌/无 force 的 resume 被拒
+    rc = cmd_resume(Args(book=str(book), token="", force=False))
+    assert rc == 2, "有节点在途时无令牌 resume 必须被拒"
+    # 清掉在途令牌（空闲态）后：人工阻断态仍需 --force
+    clear_token(book)
+    rc = cmd_resume(Args(book=str(book), token="", force=False))
+    assert rc == 2, "人工阻断态无 --force 的 resume 必须被拒"
+    rc = cmd_resume(Args(book=str(book), token="", force=True))
+    assert rc == 0, f"--force resume 应放行：rc={rc}"
+    st = load_state(book)
+    assert st["blocked_reason"] is None
+
+
+def test_resume_resets_rounds(root: Path) -> None:
+    """审查 B2：终停后 resume 必须返还修复预算，否则第一次再 block 即再次终停。"""
+    from commands import cmd_resume
+    from autopilot import load_state
+    book = make_state_book(root, "b2", fix_rounds={"1": 2}, n20_rounds=2,
+                           blocked_reason="终停待人工")
+    rc = cmd_resume(Args(book=str(book), token="", force=True))
+    assert rc == 0
+    st = load_state(book)
+    assert st["fix_rounds"] == {}, st["fix_rounds"]
+    assert st["n20_rounds"] == 0, st["n20_rounds"]
+
+
+def test_n14_done_rechecks_n13(root: Path) -> None:
+    """审查 B1 / plan 5.2.2：N14 真实改写后必须先过 N13 复检。"""
+    from commands import cmd_done
+    from autopilot import write_token, load_state
+    book = make_state_book(root, "b1", cursor="C1.N14")
+    write_token(book, "tok-b1", "C1.N14")
+    rc = cmd_done(Args(book=str(book), node="C1.N14", token="tok-b1",
+                       evidence=["正文/第001章_测试.md"]))
+    assert rc == 0, f"N14 done 应放行：rc={rc}"
+    st = load_state(book)
+    assert st["cursor"] == "C1.N13", st["cursor"]
+    assert st.get("recheck_chapter") == 1
+
+
+def test_n13_recheck_routes(root: Path) -> None:
+    """复检通过 → N15；仍 blocking → 记一轮 fix_rounds 回 N14（有界）。"""
+    from commands import cmd_done
+    from autopilot import write_token, load_state, cmd_next
+    from inline_runner import restore_best_snapshot
+
+    # 通过路径：fake storyctl ready + gate 无 findings
+    os.environ["FAKE_STORY_STATUS"] = "ready"
+    book = make_state_book(root, "b1-pass", cursor="C1.N14")
+    write_token(book, "tok-p", "C1.N14")
+    assert cmd_done(Args(book=str(book), node="C1.N14", token="tok-p",
+                         evidence=["正文/第001章_测试.md"])) == 0
+    import io
+    import contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cmd_next(Args(book=str(book)))
+    assert rc == 0, buf.getvalue()
+    st = load_state(book)
+    assert st.get("recheck_chapter") is None, "复检标志必须被消费"
+    assert st["cursor"] == "C1.N15", f"复检通过应进 N15：{st['cursor']}"
+
+    # 仍 blocking：fake storyctl blocked → fix_rounds+1，回 N14
+    os.environ["FAKE_STORY_STATUS"] = "blocked"
+    book = make_state_book(root, "b1-block", cursor="C1.N14")
+    write_token(book, "tok-b", "C1.N14")
+    assert cmd_done(Args(book=str(book), node="C1.N14", token="tok-b",
+                         evidence=["正文/第001章_测试.md"])) == 0
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = cmd_next(Args(book=str(book)))
+    assert rc == 0, buf.getvalue()
+    st = load_state(book)
+    assert st["cursor"] == "C1.N14", st["cursor"]
+    assert st.get("fix_rounds", {}).get("1") == 1, st.get("fix_rounds")
+    os.environ.pop("FAKE_STORY_STATUS", None)
+
+
+def test_rollback_best_snapshot(root: Path) -> None:
+    """审查 B3：终停时回滚 Blocker 最少的快照（plan 补丁4）。"""
+    from inline_runner import restore_best_snapshot
+    book = make_book(root / "b3")
+    snaps = book / "_pipeline" / "snapshots"
+    for tag, blocking in (("C1_before_N14_r1", 3), ("C1_before_N14_r2", 1)):
+        (snaps / tag).mkdir(parents=True, exist_ok=True)
+        write(snaps / tag / "第001章_测试.md", f"快照 {tag}")
+    write(snaps / "manifest_C1.json", json.dumps({
+        "C1_before_N14_r1": {"blocking_count": 3},
+        "C1_before_N14_r2": {"blocking_count": 1},
+    }, ensure_ascii=False))
+    restored = restore_best_snapshot(book, 1)
+    assert restored == "C1_before_N14_r2", restored
+    assert "快照 C1_before_N14_r2" in (book / "正文" / "第001章_测试.md").read_text(encoding="utf-8")
+    assert (book / "_pipeline" / "rollback_log.json").is_file()
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="wb-py-contracts-") as tmp:
         root = Path(tmp)
@@ -147,6 +297,12 @@ def main() -> int:
         test_n16_idempotent(root)
         test_n21_blocked(root)
         test_next_lock(root)
+        test_evidence_pattern_mismatch(root)
+        test_block_and_resume_need_token(root)
+        test_resume_resets_rounds(root)
+        test_n14_done_rechecks_n13(root)
+        test_n13_recheck_routes(root)
+        test_rollback_best_snapshot(root)
     print("PY_CONTRACTS_OK")
     return 0
 

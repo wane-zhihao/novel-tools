@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createProvider, ProviderError } from "./providers.mjs";
@@ -31,7 +31,7 @@ function sanitize(text) {
 
 function runCommand(command, args, { cwd, timeoutMs, signal, env = {} } = {}) {
   return new Promise((accept) => {
-    execFile(
+    const child = execFile(
       command,
       args,
       {
@@ -52,9 +52,18 @@ function runCommand(command, args, { cwd, timeoutMs, signal, env = {} } = {}) {
               ? 124
               : 1
           : 0;
+        // 审查 B9：execFile 的 signal/timeout 只终止直接子进程；autopilot 再
+        // spawn 的 storyctl/gate_runner 在 Windows 上会成为孤儿继续写书目录。
+        // 这里补杀整个进程树。
+        if ((timedOut || signal?.aborted) && process.platform === "win32" && child.pid) {
+          try {
+            execFileSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
+          } catch {}
+        }
         accept({ code, stdout: stdout ?? "", stderr: stderr ?? "", timedOut });
       },
     );
+    return child;
   });
 }
 
@@ -123,7 +132,7 @@ function systemPrompt(role) {
     "规则：",
     "1. 严格按用户消息里的节点指令执行，不改变范围、不跳过要求。",
     "2. 参考文件用 read_file 读取；所有产出必须用 write_file 写到指令指定路径，写完整内容而不是补丁。",
-    "3. 禁止改写 _pipeline/state.json、_pipeline/.step_token、_pipeline/workbench.json、_pipeline/run.json。",
+    "3. 禁止改写 _pipeline/state.json、_pipeline/.step_token、_pipeline/workbench.json、_pipeline/run.json、_pipeline/agents.json、_pipeline/submissions.json、_pipeline/snapshots/，也不可读取它们。",
     "4. 完成后只回一句 ≤100 字回执，不要复述正文。",
   ];
   if (role === "judge") {
@@ -194,7 +203,7 @@ export class AgentRuntime {
   async resume() {
     const result = await runCommand(
       this.paths.python,
-      [this.paths.autopilot, "resume", "--book", this.bookDir],
+      [this.paths.autopilot, "resume", "--book", this.bookDir, "--force"],
       {
         cwd: this.bookDir,
         timeoutMs: 60_000,
@@ -279,6 +288,12 @@ export class AgentRuntime {
     let toolSteps = 0;
     for (let step = 0; step < maxToolSteps; step += 1) {
       this.assertRunning();
+      // 审查 B8：llm_rounds 按 chat 次数计——一次 attempt 内工具循环最多 48 次
+      // chat，按 attempt 计会让预算形同虚设。
+      if (this.llmRounds >= this.budgets.llm_rounds) {
+        throw new BudgetExceededError(`LLM 轮次超过预算 ${this.budgets.llm_rounds}`);
+      }
+      this.llmRounds += 1;
       const reply = await provider.chat({
         model: roleConfig.model,
         messages,
@@ -333,12 +348,13 @@ export class AgentRuntime {
       : (Array.isArray(instruction.evidence) ? instruction.evidence : []);
     const maxAttempts = roleConfig.max_attempts ?? 2;
     this.currentNode = instruction.node;
+    // 审查 A6：工具面按角色收放——只有 judge 可写 judgments_*，writer/scout 不可。
+    this.tools.setRole(role);
     let feedback = "";
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       this.assertRunning();
       if (this.llmRounds >= this.budgets.llm_rounds) return { status: "budget" };
-      this.llmRounds += 1;
       this.emit({
         type: "node_started",
         node: instruction.node,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspect } from "node:util";
 import test from "node:test";
 import { OpenAIProvider, MockProvider, createProvider } from "../agent/providers.mjs";
 import { createToolExecutor } from "../agent/tools.mjs";
@@ -110,7 +111,8 @@ test("mock judge 写出的引用可在正文中原样找到", async () => {
     });
     assert.equal(reply.toolCalls.length, 1);
     const args = JSON.parse(reply.toolCalls[0].arguments);
-    const tools = createToolExecutor({ bookDir });
+    // 审查 A6：judgments_* 只有 judge 角色可写——与 runtime 按节点注入角色一致
+    const tools = createToolExecutor({ bookDir, role: "judge" });
     assert.equal(tools.execute("write_file", args).ok, true);
 
     const doc = JSON.parse(readFileSync(join(bookDir, "_pipeline", "judgments_C1.N15.json"), "utf8"));
@@ -146,4 +148,42 @@ test("mock writer 按证据路径逐次写文件后收尾", async () => {
   } finally {
     rmSync(bookDir, { recursive: true, force: true });
   }
+});
+
+test("provider 错误消息脱敏，原始响应体只进 console.error 本地日志", async () => {
+  const logs = [];
+  const originalError = console.error;
+  console.error = (...args) => logs.push(args.map((arg) => (typeof arg === "string" ? arg : inspect(arg))).join(" "));
+  try {
+    const provider = new OpenAIProvider({
+      baseUrl: "https://example.test/v1",
+      apiKey: "sk-test",
+      maxRetries: 0,
+      fetchImpl: async () => ({
+        ok: false,
+        status: 401,
+        text: async () => JSON.stringify({
+          error: {
+            message: "Incorrect API key provided: sk-abcdef1234567890. See https://api.example.com/docs?key=xyz987654321 for details.",
+          },
+        }),
+        json: async () => ({}),
+      }),
+    });
+    await assert.rejects(
+      () => provider.chat({ model: "m", messages: [{ role: "user", content: "hi" }] }),
+      (error) => {
+        assert.match(error.message, /HTTP 401/);
+        assert.ok(!error.message.includes("sk-abcdef1234567890"), "密钥不得进入错误消息");
+        assert.ok(!error.message.includes("xyz987654321"), "URL query 令牌不得进入错误消息");
+        assert.ok(error.message.length < 400, "错误消息必须有界");
+        return true;
+      },
+    );
+  } finally {
+    console.error = originalError;
+  }
+  // 详细原始错误只进本地日志，供排障
+  assert.ok(logs.join("\n").includes("sk-abcdef1234567890"), "原始响应体应进本地日志");
+  assert.ok(logs.join("\n").includes("xyz987654321"), "原始 URL query 应进本地日志");
 });

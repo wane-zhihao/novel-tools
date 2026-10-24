@@ -7,6 +7,9 @@ import { recordVersion } from "./versions.mjs";
 
 const ACTIVE = new Set(["running", "stopping"]);
 const MAX_EVENTS = 600;
+// B12：事件按 seq 增量落库；内存只保留近窗，早期事件从 run_events 补读，不再永久丢失
+const EVENT_FLUSH_SIZE = 20;
+const EVENTS_JSON_FLUSH = 100;
 
 export class RunConflictError extends Error {
   constructor(message) {
@@ -64,6 +67,7 @@ export class RunManager {
       result: null,
       seq: 0,
       events: [],
+      pendingEvents: [],
       controller: new AbortController(),
     };
     this.runs.set(bookId, run);
@@ -157,14 +161,43 @@ export class RunManager {
 
   push(run, event) {
     run.seq += 1;
-    run.events.push({ seq: run.seq, at: new Date().toISOString(), ...event });
+    const record = { seq: run.seq, at: new Date().toISOString(), ...event };
+    run.events.push(record);
     if (run.events.length > MAX_EVENTS) run.events.splice(0, run.events.length - MAX_EVENTS);
-    if (run.seq % 20 === 0) {
+    run.pendingEvents.push(record);
+    if (run.pendingEvents.length >= EVENT_FLUSH_SIZE) this.flushEvents(run);
+    if (run.seq % EVENTS_JSON_FLUSH === 0) this.flushEventsJson(run);
+  }
+
+  /** 增量落库：每批 EVENT_FLUSH_SIZE 条 INSERT，崩溃最多丢一批未落库事件（内存仍有） */
+  flushEvents(run) {
+    if (!run.pendingEvents.length) return;
+    const batch = run.pendingEvents;
+    run.pendingEvents = [];
+    const insert = this.db.prepare(
+      "INSERT OR REPLACE INTO run_events (run_id, seq, event_json, created_at) VALUES (?, ?, ?, ?)",
+    );
+    try {
+      this.db.exec("BEGIN");
+      for (const record of batch) {
+        insert.run(run.id, record.seq, JSON.stringify(record), record.at);
+      }
+      this.db.exec("COMMIT");
+    } catch {
       try {
-        this.db.prepare("UPDATE runs SET events_json = ? WHERE run_id = ?")
-          .run(JSON.stringify(run.events.slice(-200)), run.id);
+        this.db.exec("ROLLBACK");
       } catch {}
+      // 落库失败不阻断执行；把这批放回，下次重试
+      run.pendingEvents = [...batch, ...run.pendingEvents];
     }
+  }
+
+  /** events_json 供 /api/runs 与重启后的 last-run 回退读取，周期性刷新近窗 */
+  flushEventsJson(run) {
+    try {
+      this.db.prepare("UPDATE runs SET events_json = ? WHERE run_id = ?")
+        .run(JSON.stringify(run.events), run.id);
+    } catch {}
   }
 
   stop(bookId) {
@@ -179,6 +212,21 @@ export class RunManager {
   snapshot(bookId, since = 0) {
     const run = this.runs.get(bookId);
     if (!run) return null;
+    const from = Number.isInteger(since) && since > 0 ? since : 0;
+    const memory = run.events.filter((event) => event.seq > from);
+    // 内存起点之前的早期事件从 run_events 补读，长跑不再丢 run_started 等历史
+    const firstInMemory = run.events.length ? run.events[0].seq : Number.MAX_SAFE_INTEGER;
+    let events = memory;
+    if (from < firstInMemory) {
+      try {
+        const older = this.db.prepare(
+          "SELECT event_json FROM run_events WHERE run_id = ? AND seq > ? AND seq < ? ORDER BY seq",
+        ).all(run.id, from, firstInMemory);
+        if (older.length) {
+          events = [...older.map((row) => JSON.parse(row.event_json)), ...memory];
+        }
+      } catch {}
+    }
     return {
       id: run.id,
       book_id: run.bookId,
@@ -189,12 +237,23 @@ export class RunManager {
       error: run.error,
       result: run.result,
       seq: run.seq,
-      events: run.events.filter((event) => event.seq > since),
+      events,
     };
   }
 
   persist(run) {
+    this.flushEvents(run);
     const lastNode = run.result?.steps?.at(-1)?.node ?? null;
+    // events_json 写全量历史（run_events 即真相），重启后 UI 回退读取也不丢早期事件
+    let eventsJson;
+    try {
+      const rows = this.db.prepare(
+        "SELECT event_json FROM run_events WHERE run_id = ? ORDER BY seq",
+      ).all(run.id);
+      eventsJson = `[${rows.map((row) => row.event_json).join(",")}]`;
+    } catch {
+      eventsJson = JSON.stringify(run.events);
+    }
     const result = this.db.prepare(`
       UPDATE runs SET
         exit_code = ?, node = ?, executed_at = ?, result_json = ?, status = ?, events_json = ?
@@ -205,7 +264,7 @@ export class RunManager {
       run.finishedAt,
       JSON.stringify(run.result ?? { error: run.error }),
       run.status,
-      JSON.stringify(run.events.slice(-200)),
+      eventsJson,
       run.id,
     );
     if (!result.changes) {
@@ -215,7 +274,7 @@ export class RunManager {
       `).run(
         run.bookId, "agent_run", null, run.status === "done" ? 0 : 1, lastNode, run.mode,
         run.startedAt, run.finishedAt, JSON.stringify(run.result ?? { error: run.error }),
-        run.id, run.status, JSON.stringify(run.events.slice(-200)),
+        run.id, run.status, eventsJson,
       );
     }
   }

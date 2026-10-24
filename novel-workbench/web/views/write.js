@@ -252,7 +252,8 @@ export async function renderWrite({ bookId, chapter, go, state }) {
         onclick: () => go(`#/books/${bookId}/write/${chapter + 1}`),
       }),
       el("button", {
-        class: "button button-small", type: "button", text: "检查与完成",
+        class: "button button-small", type: "button", text: "去制作台：闸门与定稿",
+        title: "将离开书房，打开制作台查看闸门结论并重新定稿",
         onclick: () => { window.location.href = `/studio.html#/books/${bookId}`; },
       })));
 

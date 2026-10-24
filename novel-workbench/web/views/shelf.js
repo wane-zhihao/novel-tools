@@ -1,10 +1,21 @@
 import { api } from "../lib/api.js";
 import { el, clear, fmtNumber, fmtDate, toast } from "../lib/dom.js";
 
-export async function renderShelf({ state, go, openNewBook }) {
+export async function renderShelf({ state, go, openNewBook, retry }) {
   const view = document.querySelector("#view");
   view.classList.remove("wide");
   clear(view);
+  if (state.books === null) {
+    // B15：加载失败 ≠ 空书房
+    view.append(el("div", { class: "shelf" },
+      el("div", { class: "empty" },
+        el("strong", { text: "书库没连上" }),
+        el("p", { text: state.loadError ?? "读取书库失败。先重试；若持续失败，请确认工作台服务正在运行。" }),
+        el("div", { class: "inline-fields" },
+          el("button", { class: "button button-primary", type: "button", onclick: () => retry?.(), text: "重试" }),
+          el("button", { class: "button button-quiet", type: "button", onclick: () => location.reload(), text: "刷新页面" })))));
+    return;
+  }
   if (!state.books.length) {
     view.append(el("div", { class: "shelf" },
       el("div", { class: "empty" },
@@ -45,6 +56,8 @@ export async function renderShelf({ state, go, openNewBook }) {
       el("div", { class: "hero-stat" }, el("span", { text: "已封板" }), el("b", { text: `${book.chapters_committed} 章` })),
       el("div", { class: "hero-stat" }, el("span", { text: "字数" }), el("b", { text: fmtNumber(book.words_total) })),
       el("div", { class: "hero-stat" }, el("span", { text: "目标" }), el("b", { text: fmtNumber(book.target_words) })),
+      el("div", { class: "progress", "aria-label": "章节进度" },
+        el("i", { style: `width:${Math.min(100, Math.round((book.chapters_committed / Math.max(1, book.max_chapters)) * 100))}%` })),
       state.health?.engine?.ai
         ? el("span", { class: "chip chip-ok", text: "AI 已连接" })
         : el("span", { class: "chip", text: "AI 未连接 · 正文照常写" })));
@@ -67,7 +80,7 @@ export async function renderShelf({ state, go, openNewBook }) {
         el("span", { class: "book-cover", text: (item.title ?? "书").replace(/[《》]/g, "").slice(0, 1) }),
         el("span", { class: "book-info" },
           el("strong", { text: item.title ?? "未命名" }),
-          el("span", { text: `${item.chapters_committed} 章 · ${fmtNumber(item.words_total)} 字` }),
+          el("span", { text: `${fmtNumber(item.words_total)} 字` }),
           item.blocked_reason ? el("span", { class: "danger-text", text: "有需要处理的问题" }) : null)))));
 
   view.append(el("div", { class: "shelf" }, hero, todos, bookGrid));

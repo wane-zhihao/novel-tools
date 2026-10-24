@@ -19,6 +19,15 @@ function label(source) {
   return source || "版本";
 }
 
+// B18：手动保存的版本默认折叠，不淹没 AI 改动
+function isManual(source) {
+  return source === "manual" || source === "manual-before";
+}
+
+function optionText(version) {
+  return `${label(version.source)} · ${fmtDate(version.created_at)}`;
+}
+
 export async function renderRevise({ bookId, go }) {
   const view = document.querySelector("#view");
   view.classList.remove("wide");
@@ -44,8 +53,12 @@ export async function renderRevise({ bookId, go }) {
 
   let chapter = (withVersions.find((item) => item.versions >= 2) ?? withVersions.at(-1)).number;
   let versions = [];
-  let selected = null;
-  let compare = null;
+  let leftId = null;
+  let rightId = null;
+  let manualOpen = false;
+  let diffToken = 0;
+  // 章节 tab 上的 "AI 版本 N 个"：读取过该章后才知分组数，先缓存
+  const chapterVersionInfo = new Map();
 
   const page = el("div", { class: "revise" },
     el("header", { class: "revise-head" },
@@ -54,18 +67,24 @@ export async function renderRevise({ bookId, go }) {
         el("p", { class: "page-sub", text: "默认自动跑；每次写入都留版本。看不过去就一键回滚。" }))));
   const chapterTabs = el("div", { class: "tabs" });
   const versionList = el("div", { class: "version-list" });
-  const diffHead = el("div", { class: "diff-head", text: "选择两个版本查看差异" });
+  const diffHead = el("div", { class: "diff-head" });
   const diffBody = el("div", { class: "diff" });
   const diffPanel = el("div", { class: "diff-panel" }, diffHead, diffBody);
   page.append(chapterTabs, el("div", { class: "version-layout" }, versionList, diffPanel));
   view.replaceChildren(page);
 
   function paintTabs() {
-    clear(chapterTabs).append(...withVersions.map((item) => el("button", {
-      class: "tab", type: "button", "aria-selected": item.number === chapter ? "true" : "false",
-      text: `第 ${item.number} 章 · ${item.versions} 版`,
-      onclick: () => { chapter = item.number; selected = null; compare = null; load(); },
-    })));
+    clear(chapterTabs).append(...withVersions.map((item) => {
+      const info = chapterVersionInfo.get(item.number);
+      const text = info
+        ? (info.ai > 0 ? `第 ${item.number} 章 · AI 版本 ${info.ai} 个` : `第 ${item.number} 章 · 手动 ${info.manual} 个`)
+        : `第 ${item.number} 章 · ${item.versions} 版`;
+      return el("button", {
+        class: "tab", type: "button", "aria-selected": item.number === chapter ? "true" : "false",
+        text,
+        onclick: () => { chapter = item.number; leftId = null; rightId = null; load(); },
+      });
+    }));
   }
 
   async function load() {
@@ -79,51 +98,106 @@ export async function renderRevise({ bookId, go }) {
       return;
     }
     if (!versions.length) {
+      leftId = null;
+      rightId = null;
       clear(versionList).append(el("p", { class: "muted small", text: "这一章还没有版本。" }));
+      paintVersions();
+      await paintDiff();
       return;
     }
-    selected = selected && versions.some((version) => version.id === selected) ? selected : versions[0].id;
-    compare = versions.at(-1).id === selected ? versions[1]?.id ?? null : versions.at(-1).id;
+    const ai = versions.filter((version) => !isManual(version.source));
+    const manual = versions.filter((version) => isManual(version.source));
+    chapterVersionInfo.set(chapter, { ai: ai.length, manual: manual.length });
+    manualOpen = false;
+    // 默认对比最近两个 AI 版本；AI 不足两个时退回全量
+    const base = ai.length >= 2 ? ai : versions;
+    leftId = base[1]?.id ?? null;
+    rightId = base[0]?.id ?? null;
+    paintTabs();
     paintVersions();
     await paintDiff();
   }
 
   function paintVersions() {
-    clear(versionList).append(...versions.map((version) => el("button", {
+    clear(versionList);
+    const ai = versions.filter((version) => !isManual(version.source));
+    const manual = versions.filter((version) => isManual(version.source));
+    const item = (version) => el("button", {
       class: "version-item", type: "button",
-      "aria-current": version.id === selected ? "true" : "false",
-      onclick: () => { selected = version.id; paintVersions(); paintDiff(); },
+      "aria-current": String(version.id) === String(rightId) ? "true" : "false",
+      title: "点按选为对比右侧（较新版本）",
+      onclick: () => pickRight(version.id),
     },
       el("strong", { text: label(version.source) }),
-      el("span", { text: `${fmtDate(version.created_at)} · ${fmtNumber(version.words)} 字` }))));
+      el("span", { text: `${fmtDate(version.created_at)} · ${fmtNumber(version.words)} 字` }));
+    versionList.append(...ai.map(item));
+    if (manual.length) {
+      versionList.append(el("details", { class: "version-group", open: manualOpen ? true : null },
+        el("summary", { text: `手动保存 ${manual.length} 个` }),
+        ...manual.map(item)));
+    }
+  }
+
+  function pickRight(id) {
+    rightId = id;
+    if (String(leftId) === String(rightId)) {
+      const other = versions.find((version) => String(version.id) !== String(id));
+      leftId = other?.id ?? null;
+    }
+    paintVersions();
+    paintDiff();
+  }
+
+  function versionSelect(value, onPick) {
+    return el("select", {
+      "aria-label": "选择对比版本",
+      onchange: (event) => onPick(event.target.value),
+    }, ...versions.map((version) => el("option", {
+      value: String(version.id),
+      selected: String(version.id) === String(value) ? true : null,
+      text: optionText(version),
+    })));
   }
 
   async function paintDiff() {
+    const token = ++diffToken;
     clear(diffBody);
-    if (!selected) {
-      diffHead.textContent = "选择两个版本查看差异";
+    const left = versions.find((version) => String(version.id) === String(leftId)) ?? null;
+    const right = versions.find((version) => String(version.id) === String(rightId)) ?? null;
+    if (versions.length < 2 || !left || !right) {
+      diffHead.replaceChildren(el("span", {
+        text: versions.length < 2 ? "只有一个版本，暂无对比" : "选择两个版本查看差异",
+      }));
       return;
     }
-    const other = versions.find((version) => version.id !== selected);
-    if (!other) {
-      diffHead.textContent = "只有一个版本，暂无对比";
-      return;
-    }
-    const current = versions.find((version) => version.id === selected);
-    const [leftVersion, rightVersion] = current.id < other.id ? [current, other] : [other, current];
+    const [leftVersion, rightVersion] = Number(left.id) < Number(right.id) ? [left, right] : [right, left];
     diffHead.replaceChildren(
-      el("span", { text: `${label(leftVersion?.source)} → ${label(rightVersion?.source)}` }),
+      el("div", { class: "diff-pickers" },
+        versionSelect(leftVersion.id, (value) => {
+          if (String(value) !== String(rightId)) leftId = Number(value);
+          paintVersions();
+          paintDiff();
+        }),
+        el("span", { class: "diff-arrow", text: "→" }),
+        versionSelect(rightVersion.id, (value) => {
+          if (String(value) !== String(leftId)) rightId = Number(value);
+          paintVersions();
+          paintDiff();
+        })),
+      el("span", { text: `${label(leftVersion.source)} → ${label(rightVersion.source)}` }),
       el("button", {
         class: "button button-small button-danger", type: "button", text: "回滚到较早版本",
         onclick: () => restore(leftVersion),
       }));
     try {
       const data = await api(`/api/books/${bookId}/versions/${leftVersion.id}/diff/${rightVersion.id}`);
+      if (token !== diffToken) return;
       diffBody.append(...data.lines.map((line) => el("div", { class: `diff-line ${line.type}` },
         el("span", { class: "mark", text: line.type === "add" ? "+" : line.type === "del" ? "−" : " " }),
         el("span", { text: line.text || " " }))));
       diffHead.append(el("span", { class: "chip", text: `+${data.stats.added} / −${data.stats.removed}` }));
     } catch (error) {
+      if (token !== diffToken) return;
       diffBody.append(el("p", { class: "danger-text", text: error.message }));
     }
   }
@@ -134,8 +208,8 @@ export async function renderRevise({ bookId, go }) {
     try {
       await api(`/api/books/${bookId}/versions/${version.id}/restore`, { method: "POST", body: {} });
       toast("已回滚。这一章会标记为待重新定稿。");
-      selected = null;
-      compare = null;
+      leftId = null;
+      rightId = null;
       await load();
     } catch (error) {
       toast(error.message, "error");

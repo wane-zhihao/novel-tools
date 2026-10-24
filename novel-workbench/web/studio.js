@@ -401,6 +401,7 @@ function renderBookView() {
     }),
     el("button", { class: "button button-quiet", type: "button", onclick: () => refreshBook(), text: "刷新" }),
     el("button", { class: "button button-quiet", type: "button", onclick: () => navigate(`#/books/${book.id}/submissions`), text: "投稿记录" }),
+    el("a", { class: "button button-quiet", href: "/index.html", title: "回到书房（日常写作界面）", text: "回书房" }),
   );
 
   view.append(

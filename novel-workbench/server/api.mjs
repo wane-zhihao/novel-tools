@@ -401,7 +401,7 @@ export function createApi({
     const paths = resolveRuntimePaths({ dataDir });
     const result = await runPython(
       paths.python,
-      [paths.autopilot, "resume", "--book", row.path],
+      [paths.autopilot, "resume", "--book", row.path, "--force"],
       {
         cwd: row.path,
         timeoutMs: 60_000,
@@ -916,6 +916,69 @@ export function createApi({
     }
   }
 
+  function revealPath(target, isDir) {
+    return new Promise((accept) => {
+      // 无头/测试环境可用 WORKBENCH_REVEAL_CMD 覆盖打开命令，避免弹出资源管理器
+      const override = process.env.WORKBENCH_REVEAL_CMD;
+      let command;
+      let args;
+      if (override) {
+        command = override;
+        args = [...parseJson(process.env.WORKBENCH_REVEAL_ARGS ?? "[]", []), target];
+      } else if (process.platform === "win32") {
+        command = "explorer";
+        // Windows：目录直接打开；文件用 /select 打开所在目录并选中
+        args = [isDir ? target : `/select,${target}`];
+      } else if (process.platform === "darwin") {
+        command = "open";
+        args = [target];
+      } else {
+        command = "xdg-open";
+        args = [target];
+      }
+      execFile(command, args, { windowsHide: true }, (error) => {
+        // explorer 成功时也可能返回非 0 退出码，调用方按平台判断
+        accept({ command, error: error?.message ?? null });
+      });
+    });
+  }
+
+  // B19：在资源管理器中打开投稿包（仅本机请求，路径必须在校验过的书目录内）
+  async function handleSubmissionReveal(request, response, url, id, packageName) {
+    const row = getBookRow(id);
+    let name;
+    try {
+      name = decodeURIComponent(packageName);
+    } catch {
+      throw new HttpError(400, "invalid_encoding", "路径编码非法");
+    }
+    if (!name || /[\\/]/.test(name) || name.includes("..") || name.startsWith(".")) {
+      throw new HttpError(400, "invalid_package", "投稿包名不合法");
+    }
+    const dir = resolve(join(row.path, "_pipeline", "submissions", name));
+    if (!isInside(row.path, dir) || !existsSync(dir)) {
+      throw new HttpError(404, "package_not_found", "投稿包目录不存在");
+    }
+    const body = await readJsonBody(request);
+    let target = dir;
+    if (typeof body.file === "string" && body.file) {
+      if (/[\\/]/.test(body.file) || body.file.includes("..") || body.file.startsWith(".")) {
+        throw new HttpError(400, "invalid_file", "文件名不合法");
+      }
+      const candidate = resolve(join(dir, body.file));
+      if (!isInside(dir, candidate) || !existsSync(candidate)) {
+        throw new HttpError(404, "file_not_found", "文件不在投稿包内");
+      }
+      target = candidate;
+    }
+    const result = await revealPath(target, target === dir);
+    if (result.error && process.platform !== "win32") {
+      throw new HttpError(500, "reveal_failed", `打开失败：${result.error}`);
+    }
+    recordEvent(row.id, "submission_revealed", { package: name, file: body.file ?? null });
+    sendJson(response, 200, { opened: true, path: target, command: result.command });
+  }
+
   function handleStatic(request, response, url) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       throw new HttpError(405, "method_not_allowed", "不支持的方法");
@@ -1084,6 +1147,11 @@ export function createApi({
         throw new HttpError(400, "invalid_encoding", "路径编码非法");
       }
       return handleSubmissionEvents(request, response, url, Number(match[1]), submissionId);
+    }
+    match = /^\/api\/books\/(\d+)\/submissions\/([^/]+)\/reveal$/.exec(path);
+    if (match) {
+      if (request.method !== "POST") throw new HttpError(405, "method_not_allowed", "不支持的方法");
+      return handleSubmissionReveal(request, response, url, Number(match[1]), match[2]);
     }
     match = /^\/api\/books\/(\d+)\/submissions$/.exec(path);
     if (match) return handleSubmissions(request, response, url, Number(match[1]));

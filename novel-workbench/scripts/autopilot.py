@@ -250,6 +250,7 @@ from pipeline_spec import (          # noqa: E402
 from inline_runner import (          # noqa: E402
     run_node_script, verify_quote, chapter_has_blocking, append_chapter_findings,
     snapshot_chapter, snapshot_body, MILESTONE_CHAPTERS, extract_json,
+    record_snapshot_manifest, restore_best_snapshot,
 )
 
 
@@ -296,6 +297,18 @@ def cmd_status(a) -> int:
     write_workbench_manifest(book)
     nodes = st["nodes"]
     done = sum(1 for v in nodes.values() if v.get("status") == "done")
+    # 审查 B7：words_total 与 tracking 账本漂移时显式报告（旧书的 state 可能
+    # 是修复前数据），不静默。
+    drift = None
+    try:
+        tracking = json.loads((book / "追踪" / "_tracking-state.json").read_text(encoding="utf-8"))
+        records = tracking.get("wordcount_records") or {}
+        expected = sum(int(v.get("actual") or 0) for v in records.values()
+                       if isinstance(v, dict))
+        if expected != st["words_total"]:
+            drift = {"state": st["words_total"], "tracking": expected}
+    except (OSError, ValueError):
+        pass
     print(json.dumps({
         "book": st["book"], "genre": st["genre"],
         "cursor": st["cursor"], "current_chapter": st["current_chapter"],
@@ -307,6 +320,7 @@ def cmd_status(a) -> int:
         "fix_rounds": st.get("fix_rounds") or {},
         "n20_rounds": st.get("n20_rounds", 0),
         "llm_rounds": st.get("llm_rounds", 0),
+        "words_total_drift": drift,
     }, ensure_ascii=False))
     return 0
 
@@ -408,6 +422,7 @@ def cmd_next(a) -> int:
         guard += 1
         if guard > 200:
             print(json.dumps({"error": "inline_loop_guard"}, ensure_ascii=False)); return 2
+        ch = st["current_chapter"] + 1
         spec = cursor_spec(st, book)
         if spec is None:
             print(json.dumps({"done": True, "chapters_committed": st["chapters_committed"],
@@ -455,7 +470,30 @@ def cmd_next(a) -> int:
                               "output": out[-800:]}, ensure_ascii=False))
             return 1
         st["nodes"][spec["id"]] = {"status": "done", "at": now(), "output": out[-1500:]}
-        st["cursor"] = next_cursor(st)
+        if spec["id"].endswith(".N13") and st.get("recheck_chapter") == ch:
+            # 审查 B1：N14 改写后的复检。通过 → N15；仍 blocking → 记一轮
+            # fix_rounds 回 N14（与 N15/N16 失败路径同一预算），超预算则回滚
+            # Blocker 最少的快照后终停（plan 5.2.2 + 补丁4）。
+            st.pop("recheck_chapter", None)
+            if chapter_has_blocking(book, ch):
+                rounds = int(st.get("fix_rounds", {}).get(str(ch), 0))
+                if rounds >= 2:
+                    restored = restore_best_snapshot(book, ch)
+                    note = f"；已回滚至快照 {restored}" if restored else ""
+                    st["blocked_reason"] = f"C{ch}.N14 复检第 {rounds + 1} 轮仍 blocking{note}"
+                    st["nodes"][spec["id"]] = {"status": "failed", "at": now(),
+                                                "output": out[-2000:]}
+                    save_state(book, st)
+                    print(json.dumps({"error": "recheck_blocked", "node": spec["id"],
+                                      "reason": st["blocked_reason"]}, ensure_ascii=False))
+                    return 1
+                st["fix_rounds"] = {**(st.get("fix_rounds") or {}), str(ch): rounds + 1}
+                st["cursor"] = f"C{ch}.N14"
+                save_state(book, st)
+                continue
+            st["cursor"] = f"C{ch}.N15"
+        else:
+            st["cursor"] = next_cursor(st)
         if spec["id"].endswith(".N16") and st["chapters_committed"] % 3 == 0:
             _write_relay(book, st)
         save_state(book, st)
@@ -471,7 +509,9 @@ def cmd_next(a) -> int:
 
     ch = st["current_chapter"] + 1
     if spec["id"].endswith(".N14"):
-        snapshot_chapter(book, ch, f"C{ch}_before_N14_r{st.get('fix_rounds', {}).get(str(ch), 0) + 1}")
+        tag = f"C{ch}_before_N14_r{st.get('fix_rounds', {}).get(str(ch), 0) + 1}"
+        snapshot_chapter(book, ch, tag)
+        record_snapshot_manifest(book, ch, tag)
     if spec["id"] == "N20f":
         snapshot_body(book, f"N20f_round{st.get('n20_rounds', 1)}")
 
@@ -521,7 +561,7 @@ def main():
     for x in ("--title", "--genre", "--target-words", "--max-chapters", "--book"):
         p.add_argument(x, required=(x != "--title"))
 
-    for name in ("next", "status", "resume"):
+    for name in ("next", "status"):
         p = sub.add_parser(name); p.add_argument("--book", required=True)
 
     d = sub.add_parser("done")
@@ -537,6 +577,13 @@ def main():
     b = sub.add_parser("block")
     b.add_argument("--book", required=True)
     b.add_argument("--reason", required=True)
+    b.add_argument("--token", required=False, default="")
+
+    r = sub.add_parser("resume")
+    r.add_argument("--book", required=True)
+    r.add_argument("--token", required=False, default="")
+    r.add_argument("--force", action="store_true",
+                   help="确认恢复处于人工阻断态的书（blocked 且无在途令牌时必须）")
 
     a = ap.parse_args()
     os.environ.update(utf8_env())
@@ -559,8 +606,23 @@ def main():
             release_next_lock(lock)
     if a.cmd in ("done", "skip", "block", "resume"):
         from commands import cmd_done, cmd_skip, cmd_block, cmd_resume
-        return {"done": cmd_done, "skip": cmd_skip,
-                "block": cmd_block, "resume": cmd_resume}[a.cmd](a)
+        handlers = {"done": cmd_done, "skip": cmd_skip,
+                    "block": cmd_block, "resume": cmd_resume}
+        # 审查 B4：done/skip 也要跨驱动锁——next 持锁内联可跑数分钟，期间另一
+        # 驱动 done 推进会用陈旧 state 覆盖游标。block/resume 不推进游标，不加锁。
+        if a.cmd in ("done", "skip"):
+            book = Path(a.book).resolve()
+            lock = acquire_next_lock(book)
+            if lock is None:
+                print(json.dumps({"error": "driver_locked",
+                                  "hint": "另一个驱动正在执行，稍后重试"},
+                                 ensure_ascii=False))
+                return 2
+            try:
+                return handlers[a.cmd](a)
+            finally:
+                release_next_lock(lock)
+        return handlers[a.cmd](a)
     return 2
 
 

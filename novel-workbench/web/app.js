@@ -8,7 +8,8 @@ import { renderSubmit } from "./views/submit.js";
 import { renderSettings } from "./views/settings.js";
 
 const state = {
-  books: [],
+  books: null, // null=加载失败/未加载；[]=真的空书房（B15 空态二分）
+  loadError: null,
   health: null,
   currentBookId: null,
   routeToken: 0,
@@ -39,7 +40,7 @@ function parseRoute() {
 }
 
 function bookOf(id) {
-  return state.books.find((book) => Number(book.id) === Number(id)) ?? null;
+  return (state.books ?? []).find((book) => Number(book.id) === Number(id)) ?? null;
 }
 
 function go(hash) {
@@ -72,8 +73,8 @@ function paintNav(active, book) {
   };
   clear(railNav).append(...items.map((item) => make(item, false)));
   clear(bottomNav).append(...items.map((item) => make(item, true)));
-  railBook.textContent = book ? `${book.title ?? "未命名"}\n${book.chapters_committed} 章` : "还没有书";
-  context.textContent = book ? `${book.title ?? "未命名"} · 已封板 ${book.chapters_committed} 章` : "先写下来，再改好";
+  railBook.textContent = book ? `${book.title ?? "未命名"}` : "还没有书";
+  context.textContent = book ? `${book.title ?? "未命名"}` : "先写下来，再改好";
 }
 
 function openNewBook() {
@@ -85,13 +86,16 @@ function openNewBook() {
 async function renderShelfRoute(token) {
   try {
     await loadBooks();
+    state.loadError = null;
   } catch (error) {
-    toast(error.message, "error");
+    // B15：加载失败与真空态二分，绝不再误报"书房还空着"
+    state.books = null;
+    state.loadError = error.message;
   }
-  const preferred = bookOf(state.currentBookId) ?? state.books[0] ?? null;
+  const preferred = bookOf(state.currentBookId) ?? state.books?.[0] ?? null;
   paintNav("书房", preferred);
   if (token !== state.routeToken) return;
-  await renderShelf({ state, go, openNewBook });
+  await renderShelf({ state, go, openNewBook, retry: render });
 }
 
 async function renderBookRoute(route, token) {
@@ -116,6 +120,22 @@ async function renderBookRoute(route, token) {
       }
       if (token === state.routeToken) {
         history.replaceState(null, "", `#/books/${book.id}/write/${chapter}`);
+      }
+    } else {
+      // P2 小项：URL 章节号越界（如 /write/999）不再直接开空白稿纸，先确认
+      try {
+        const manuscript = await api(`/api/books/${book.id}/manuscript`);
+        const exists = manuscript.chapters.some((item) => item.number === chapter);
+        const next = manuscript.next_chapter || 1;
+        if (!exists && chapter > next) {
+          const ok = window.confirm(`第 ${chapter} 章还不存在。将创建这一章并跳过中间章节，确认创建？`);
+          if (!ok) {
+            if (token === state.routeToken) go(`#/books/${book.id}/write/${next}`);
+            return;
+          }
+        }
+      } catch {
+        // 读取失败时交给稿纸视图报错，不阻断打开
       }
     }
     context.textContent = `${book.title ?? "未命名"} · 第 ${chapter} 章`;
@@ -167,12 +187,48 @@ async function loadBooks() {
   state.books = data.books ?? [];
 }
 
+let connBar = null;
+
+function hideConnError() {
+  connBar?.remove();
+  connBar = null;
+}
+
+// B15：连接失败常驻错误条（可手动关闭/重试），不再依赖 4.2 秒自消的 toast
+function showConnError(message) {
+  hideConnError();
+  connBar = el("div", { class: "conn-bar", role: "alert" },
+    el("span", { class: "conn-text", text: `连接失败：${message}。先重试；若持续失败，请确认工作台服务正在运行。` }),
+    el("div", { class: "conn-actions" },
+      el("button", { class: "button button-small", type: "button", text: "重试", onclick: retryConnection }),
+      el("button", { class: "button button-small button-quiet", type: "button", text: "关闭", onclick: hideConnError })));
+  document.body.prepend(connBar);
+}
+
+async function retryConnection() {
+  try {
+    const [health] = await Promise.all([api("/api/health"), loadBooks()]);
+    state.health = health;
+    state.loadError = null;
+    hideConnError();
+    toast("已重新连接");
+    await render();
+  } catch (error) {
+    state.books = null;
+    state.loadError = error.message;
+    showConnError(error.message);
+  }
+}
+
 async function boot() {
   try {
     const [health] = await Promise.all([api("/api/health"), loadBooks()]);
     state.health = health;
   } catch (error) {
-    toast(`工作台连接失败：${error.message}`, "error");
+    state.books = null;
+    state.loadError = error.message;
+    // 常驻错误条已含完整信息与重试入口，不再叠加会自消/堆积的 toast
+    showConnError(error.message);
   }
   if (!location.hash) location.hash = "#/";
   await render();

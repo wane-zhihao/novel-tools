@@ -2,16 +2,22 @@
 # -*- coding: utf-8 -*-
 """commands.py — done / skip / block / resume 四个子命令
 
-done 的四道验收（缺一不可）：
-  1. evidence 存在 ∧ 非空 ∧ 大小 > 节点阈值
-  2. sha256 与 state 记录一致
-  3. script/verify 节点退出码 0
-  4. verify 节点额外：原文引用硬校验（归一化后子串匹配）
+done 的验收（2026-10-25 审查后修订，此前的"四道验收"表述不实，已撤回）：
+  1. token 必须与在途节点匹配（一次性握手）
+  2. evidence 存在 ∧ 非空 ∧ 大小 > 节点阈值，且与 spec 的期望证据模式一致
+     （审查 A2：此前用调用方传入值、不与 spec 比对，持令牌者可指认任意大文件）
+  3. evidence 不得早于本轮 token 签发时间（防沿用旧产物）
+  4. verify 节点额外：judgments 结构校验 + 原文引用硬校验（归一化后子串匹配）
+注意：sha256 只记录不比对（曾声称"与 state 一致"，未实现，已从声称中删除）；
+script 节点由 autopilot 内联执行，不到本命令。
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
+import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +27,72 @@ from autopilot import (HERE, IRON_RULES, load_state, save_state, sha256_of, now,
 from pipeline_spec import GLOBAL_NODES, chapter_nodes, next_cursor, judgment_policy
 from inline_runner import (run_node_script, verify_quote, append_chapter_findings,
                            append_endgame_findings)
+
+
+def _evidence_matches_spec(book: Path, spec: dict, files: list[Path]) -> str | None:
+    """done 的 evidence 必须匹配节点 spec 的期望模式（审查 A2）。
+
+    返回 None 表示通过，否则返回错误描述。防止持令牌者指认任意大文件
+    冒充本节点产物——通配符按 fnmatch 语义比对。
+    """
+    patterns = spec.get("evidence")
+    if not patterns:
+        return None
+    if isinstance(patterns, str):
+        patterns = [patterns]
+    patterns = [str(p).replace("\\", "/") for p in patterns]
+    rels: list[str] = []
+    for f in files:
+        try:
+            rels.append(str(f.resolve().relative_to(book.resolve())).replace("\\", "/"))
+        except ValueError:
+            return f"evidence 不在书目录内：{f}"
+    for rel in rels:
+        if not any(fnmatch.fnmatch(rel, p) for p in patterns):
+            return f"evidence {rel} 不匹配本节点期望模式 {patterns}"
+    for p in patterns:
+        if not any(fnmatch.fnmatch(rel, p) for rel in rels):
+            return f"本节点期望证据未提供：{p}"
+    return None
+
+
+def _control_log(book: Path, entry: dict) -> None:
+    """block/resume 的调用方留痕（审查 B5：无令牌免费停机键的对策之一是记账）。"""
+    p = book / "_pipeline" / "control_log.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    record = {"at": now(), "pid": os.getpid(), **entry}
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _cross_check_tracking(book: Path, st: dict) -> None:
+    """resume 纪律（plan 第七节）：不信任内存——与 _tracking-state.json 交叉校验。
+
+    此前 docstring 声称"扫盘重建"从未实现（审查 B2）。这里是轻量版：
+    章号不一致时以 tracking 账本为准，越界章节节点打回 pending 并记入
+    decisions_taken。
+    """
+    tracking = book / "追踪" / "_tracking-state.json"
+    try:
+        doc = json.loads(tracking.read_text(encoding="utf-8"))
+        last = int(doc.get("last_committed_chapter") or 0)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return
+    committed = int(st.get("chapters_committed") or 0)
+    if last == committed:
+        return
+    if last < committed:
+        for nid, node in st.get("nodes", {}).items():
+            m = re.match(r"C(\d+)\.", str(nid))
+            if m and int(m.group(1)) > last and node.get("status") == "done":
+                node["status"] = "pending"
+    st["chapters_committed"] = last
+    st["current_chapter"] = max(int(st.get("current_chapter") or 0), last)
+    st["decisions_taken"].append({
+        "at_node": "resume",
+        "issue": f"state 记 {committed} 章 / tracking 账本记 {last} 章",
+        "applied_rule": "以 tracking 账本为准，越界章节节点打回 pending",
+    })
 
 
 def _evidence_ok(book: Path, paths: list[str], min_size: int) -> tuple[bool, str, list[Path]]:
@@ -209,6 +281,13 @@ def cmd_done(a) -> int:
         print(json.dumps({"error": "evidence_invalid", "detail": msg}, ensure_ascii=False))
         return 2
 
+    # 审查 A2：evidence 必须与 spec 期望模式一致，不能指认任意大文件
+    mismatch = _evidence_matches_spec(book, spec, files)
+    if mismatch:
+        print(json.dumps({"error": "evidence_pattern_mismatch", "detail": mismatch},
+                         ensure_ascii=False))
+        return 2
+
     held = read_token(book)
     issued_at = held.get("issued_at")
     if issued_at:
@@ -254,7 +333,14 @@ def cmd_done(a) -> int:
     }
     st["llm_rounds"] = int(st.get("llm_rounds", 0)) + 1
     clear_token(book)
-    st["cursor"] = next_cursor(st)
+    # 审查 B1：N14 真实改写后必须先回 C{n}.N13 复检平台闸门，通过才进 N15
+    # （plan 5.2.2）。自动跳过的 N14 不经此路（cmd_next 里 next_cursor 直达 N15）。
+    if a.node.startswith("C") and a.node.endswith(".N14"):
+        ch = int(a.node.split(".")[0][1:])
+        st["recheck_chapter"] = ch
+        st["cursor"] = f"C{ch}.N13"
+    else:
+        st["cursor"] = next_cursor(st)
     save_state(book, st)
     print(json.dumps({"ok": True, "node": a.node, "next": st["cursor"],
                       "llm_rounds": st["llm_rounds"]}, ensure_ascii=False))
@@ -285,19 +371,52 @@ def cmd_block(a) -> int:
     st = load_state(book)
     if not st:
         return 2
+    # 审查 B5：有节点在途时，block 也要令牌——否则任何进程一句话停摆整链。
+    held = read_token(book)
+    token = getattr(a, "token", "") or ""
+    if held.get("token") and not token_ok(book, held.get("node"), token):
+        print(json.dumps({"error": "token_mismatch",
+                          "hint": "有节点正在进行中，block 需要该节点的令牌"},
+                         ensure_ascii=False))
+        return 2
     st["blocked_reason"] = a.reason
     save_state(book, st)
+    _control_log(book, {"cmd": "block", "reason": a.reason, "node": held.get("node")})
     print(json.dumps({"ok": True, "blocked": True, "reason": a.reason}, ensure_ascii=False))
     return 1
 
 
 def cmd_resume(a) -> int:
-    """不信任内存：重新扫盘重建，从第一个未完成节点继续。"""
+    """不信任内存：清阻断、返还修复预算、与 tracking 账本交叉校验后继续。"""
     book = Path(a.book).resolve()
     st = load_state(book)
     if not st:
         print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
+    was_blocked = bool(st.get("blocked_reason"))
+    held = read_token(book)
+    token = getattr(a, "token", "") or ""
+    forced = bool(getattr(a, "force", False))
+    # --force 是显式的人工/驱动意图（UI 恢复按钮、运行时恢复都会传）：放行在途
+    # 令牌校验；否则有节点在途时 resume 需要该节点的令牌。
+    if held.get("token") and not token_ok(book, held.get("node"), token) and not forced:
+        print(json.dumps({"error": "token_mismatch",
+                          "hint": "有节点正在进行中，resume 需要该节点的令牌或 --force"},
+                         ensure_ascii=False))
+        return 2
+    # 审查 B5：人工阻断态（无在途令牌）必须显式 --force 才能恢复——
+    # 防止被劫持的 subagent 把用户喊停的书重新跑起来烧钱。
+    if was_blocked and not held.get("token") and not forced:
+        print(json.dumps({"error": "blocked_needs_force",
+                          "reason": st["blocked_reason"],
+                          "hint": "该书处于人工阻断态；确认要继续请加 --force"},
+                         ensure_ascii=False))
+        return 2
     st["blocked_reason"] = None
+    # 审查 B2：终停后人工修复再 resume，必须返还修复预算，否则第一次再 block
+    # 就再次终停——恢复路径只给一次机会。
+    st["fix_rounds"] = {}
+    st["n20_rounds"] = 0
+    st.pop("recheck_chapter", None)
     clear_token(book)
     try:
         (book / "_pipeline" / ".next.lock").unlink()
@@ -308,7 +427,10 @@ def cmd_resume(a) -> int:
         if v.get("status") == "running":
             v["status"] = "pending"
             v["attempts"] = v.get("attempts", 0)
+    _cross_check_tracking(book, st)
     save_state(book, st)
+    _control_log(book, {"cmd": "resume", "was_blocked": was_blocked,
+                        "forced": bool(getattr(a, "force", False))})
     print(json.dumps({"ok": True, "resumed_at": st["cursor"],
                       "chapter": st["current_chapter"]}, ensure_ascii=False))
     return 0

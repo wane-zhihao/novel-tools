@@ -32,6 +32,8 @@ metadata:
 
 - ❌ 读取 `正文/` `大纲/` `设定/` 下任何 `.md` 的内容（会撑爆你的上下文）
 - ❌ 把 `step_token` 或 `done_cmd` 写进 subagent 的提示词
+- ❌ 读取或改写 `_pipeline/` 下的控制文件（state.json / .step_token / workbench.json /
+  run.json / agents.json）——Node 沙箱已默认拒读，对话 subagent 也不要用 Bash/Read 碰它们
 - ❌ 直接调用 `storyctl.py` / `tracking_commit.py` / `gate_runner.py`（一律由 autopilot 内联）
 - ❌ 使用 `--accept-current-length` 绕过字数检查
 - ❌ 在闸门未通过时声称"本章已完成"
@@ -77,10 +79,17 @@ AUT="<repo>\novel-workbench\scripts\autopilot.py"
 "$PY" "$AUT" next    --book "F:\小说\works\书名"
 "$PY" "$AUT" done    --book "..." --node C1.N12 --token <token> --evidence "正文/第001章_*.md"
 "$PY" "$AUT" skip    --book "..." --node C1.N14 --token <token> --reason "..."
-"$PY" "$AUT" block   --book "..." --reason "..."
+"$PY" "$AUT" block   --book "..." --reason "..." [--token <t>]
 "$PY" "$AUT" status  --book "F:\小说\works\书名"
-"$PY" "$AUT" resume  --book "F:\小说\works\书名"
+"$PY" "$AUT" resume  --book "F:\小说\works\书名" [--force]
 ```
+
+`block` / `resume` 的鉴权（2026-10-25 审查 B5）：
+- 有节点在途（存在 `.step_token`）时，`block` / `resume` 必须带该节点的 `--token`，否则被拒；
+- 书处于人工阻断态时，`resume` 必须显式 `--force`（确认恢复），否则被拒；
+- 两次调用都写 `_pipeline/control_log.jsonl` 留痕（pid + 时间 + 原因）。
+`resume` 会返还修复预算（fix_rounds / n20_rounds 清零）并与 `_tracking-state.json`
+交叉校验（不一致以账本为准，越界章节节点打回 pending）。
 
 `done` 的 evidence 支持通配符：章节文件名由 writer 定标题，所以传 `正文/第001章_*.md` 即可。
 

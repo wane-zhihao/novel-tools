@@ -70,7 +70,12 @@ export function migrate(db) {
 export function resetData(db) {
   db.exec("BEGIN");
   try {
-    for (const table of ["submissions", "runs", "judgments", "findings", "nodes", "chapters", "books"]) {
+    // 覆盖全部业务表（含 migration4 新增的 versions/story_docs/approvals/analytics_events
+    // 与 migration5 的 run_events），schema_migrations 不动
+    for (const table of [
+      "submissions", "runs", "run_events", "judgments", "findings", "nodes",
+      "versions", "story_docs", "approvals", "analytics_events", "chapters", "books",
+    ]) {
       db.exec(`DELETE FROM ${table}`);
     }
     db.exec("COMMIT");

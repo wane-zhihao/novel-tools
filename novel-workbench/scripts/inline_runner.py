@@ -56,6 +56,20 @@ def run_script(cmd: list[str], cwd: Path, timeout: int = 180) -> tuple[int, str]
         return 127, f"NOT_FOUND: {e}"
 
 
+def run_script_capture(cmd: list[str], cwd: Path, timeout: int = 180) -> tuple[int, str, str]:
+    """stdout/stderr 分开返回（审查 B6）：第三方脚本 stderr 里的 warning/traceback
+    会污染拼接输出的 JSON 提取（花括号错位导致误硬停）。"""
+    try:
+        r = subprocess.run(cmd, cwd=str(cwd), env=utf8_env(),
+                           encoding="utf-8", errors="replace",
+                           capture_output=True, timeout=timeout)
+        return r.returncode, (r.stdout or ""), (r.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, "", f"TIMEOUT after {timeout}s: {' '.join(cmd)}"
+    except FileNotFoundError as e:
+        return 127, "", f"NOT_FOUND: {e}"
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
@@ -429,14 +443,14 @@ def _chapter_check(book: Path, chapter: int, st: dict) -> tuple[int, str]:
 
     story_cmd = [cfg["PYTHON"], cfg["STORYCTL"], "chapter", "check",
                  "--project", str(book), "--chapter", str(chapter)]
-    src, sout = run_script(story_cmd, book, timeout=300)
+    src, sout, serr = run_script_capture(story_cmd, book, timeout=300)
     story = extract_json(sout)
     if not isinstance(story, dict):
-        return 2, f"storyctl check 输出无法解析（rc={src}）：{sout[-500:]}"
+        return 2, f"storyctl check 输出无法解析（rc={src}）：{(sout + serr)[-500:]}"
     status = story.get("status")
     if status in ("invalid", "tool_unavailable", "error"):
         code = story.get("error_code") or status
-        return 2, f"storyctl 复检硬失败（{code}）：{story.get('message') or sout[-500:]}"
+        return 2, f"storyctl 复检硬失败（{code}）：{story.get('message') or (sout + serr)[-500:]}"
     if status not in ("ready", "blocked", "needs_decision"):
         return 2, f"storyctl 返回未知状态：{status!r}"
 
@@ -446,10 +460,14 @@ def _chapter_check(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     if genre:
         gate_cmd += ["--genre", genre]
     gate_cmd.append(str(body))
-    grc, gout = run_script(gate_cmd, book, timeout=300)
+    grc, gout, gerr = run_script_capture(gate_cmd, book, timeout=300)
+    # 审查 B6：gate_runner 退出码 0=pass/warn、1=block 都是有效结果；其余码
+    # 才是工具失败。此前 grc 只进错误文案，阻断全靠 JSON 推断。
+    if grc not in (0, 1):
+        return 2, f"gate_runner 异常退出（rc={grc}）：{(gout + gerr)[-500:]}"
     gates = extract_json(gout)
     if not isinstance(gates, list) or not gates or "error" in gates[0]:
-        return 2, f"gate_runner 输出无法解析（rc={grc}）：{gout[-500:]}"
+        return 2, f"gate_runner 输出无法解析（rc={grc}）：{(gout + gerr)[-500:]}"
 
     items = _story_findings(story)
     if status in ("blocked", "needs_decision") and not items:
@@ -605,7 +623,9 @@ def _style_drift(book: Path, cfg: dict, st: dict, files: list[Path]) -> tuple[li
     if genre:
         cmd += ["--genre", genre]
     cmd += [str(p) for p in files]
-    rc, out = run_script(cmd, book, timeout=300)
+    rc, out, err = run_script_capture(cmd, book, timeout=300)
+    if rc not in (0, 1):
+        return [], f"style 指标工具异常退出（rc={rc}）：{(out + err)[-300:]}", True
     rows = extract_json(out)
     if not isinstance(rows, list) or not rows:
         return [], f"style 指标不可用（rc={rc}）：{out[-300:]}", True
@@ -760,7 +780,9 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
     if st.get("genre"):
         gate_cmd += ["--genre", st["genre"]]
     gate_cmd += [str(p) for p in chapters]
-    rc, out = run_script(gate_cmd, book, timeout=300)
+    rc, out, err = run_script_capture(gate_cmd, book, timeout=300)
+    if rc not in (0, 1):
+        out = ""
     parsed = extract_json(out)
     if isinstance(parsed, list):
         for row in parsed:
@@ -964,6 +986,50 @@ def snapshot_chapter(book: Path, chapter: int, tag: str) -> None:
         shutil.copy2(txn, dest / "tracking.json")
 
 
+def record_snapshot_manifest(book: Path, chapter: int, tag: str) -> None:
+    """进 N14 前记录当时本章 blocking 数，供终停时选 Blocker 最少的快照（B3）。"""
+    path = book / "_pipeline" / "snapshots" / f"manifest_C{chapter}.json"
+    doc = _read_json(path, default={}) or {}
+    findings = _read_json(book / "_pipeline" / f"findings_C{chapter}.json", default={}) or {}
+    doc[tag] = {"blocking_count": int(findings.get("blocking_count") or 0), "at": _now()}
+    _write_json(path, doc)
+
+
+def restore_best_snapshot(book: Path, chapter: int) -> str | None:
+    """审查 B3 / plan 补丁4：同处失败 2 次后回滚到 Blocker 数量最少的快照。
+
+    候选 blocking 数在进 N14 前记录于 manifest_C{n}.json；并列取最早 tag。
+    没有快照返回 None（调用方按无回滚处理）。
+    """
+    snap_dir = book / "_pipeline" / "snapshots"
+    manifest = _read_json(snap_dir / f"manifest_C{chapter}.json", default={}) or {}
+    candidates = []
+    for tag in sorted(manifest):
+        info = manifest[tag]
+        if not isinstance(info, dict):
+            continue
+        src = snap_dir / tag
+        if not src.is_dir():
+            continue
+        candidates.append((int(info.get("blocking_count") or 0), tag, src))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: (x[0], x[1]))
+    _, tag, src = candidates[0]
+    for p in sorted(src.glob("第*.md")):
+        shutil.copy2(p, book / "正文" / p.name)
+    txn_src = src / "tracking.json"
+    if txn_src.is_file():
+        dest = book / ".story" / "work" / f"第{chapter:03d}章" / "tracking.json"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(txn_src, dest)
+    _write_json(book / "_pipeline" / "rollback_log.json", {
+        "chapter": chapter, "restored": tag, "at": _now(),
+        "candidates": [{"tag": t, "blocking_count": c} for c, t, _ in candidates],
+    })
+    return tag
+
+
 def snapshot_body(book: Path, tag: str) -> None:
     dest = book / "_pipeline" / "snapshots" / tag
     dest.mkdir(parents=True, exist_ok=True)
@@ -995,7 +1061,14 @@ def run_node_script(book: Path, st: dict, spec: dict) -> tuple[int, str]:
     if nid == "N21":
         return _package(book, st)
     if nid == "N02":
-        return 0, "style anchor: 见 qimao/harness/style-anchor.json（已 calibrated）"
+        # 诚实化（C 级）：N02 不创作文风锚，只校验上游 style-anchor.json 的
+        # 校准状态；缺失时按 plan 5.1 的失败处置标 provisional 续跑。
+        anchor = Path(_cfg()["QIMAO_STYLE_ANCHOR"])
+        if anchor.is_file():
+            doc = _read_json(anchor, default={}) or {}
+            samples = len(doc.get("samples") or doc.get("positive_samples") or [])
+            return 0, f"style anchor 已校准：{anchor}（正例切片 {samples} 段）"
+        return 0, "style anchor 缺失，文风锚标记为 provisional（按 plan 5.1 续跑）"
     # 未实现的 script 节点必须硬失败：静默放行会让「确定性闸门」形同虚设
     return 2, f"{nid} 未实现内联动作——拒绝放行，请先实现再跑"
 

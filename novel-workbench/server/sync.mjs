@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
+import { normalizeText } from "./book-files.mjs";
 import { resetData } from "./db.mjs";
+import { storyIndex } from "./story.mjs";
 
-const SYNC_DIRS = ["_pipeline", "正文", "追踪"];
+const SYNC_DIRS = ["_pipeline", "正文", "大纲", "设定", "追踪", "投稿包"];
+const MAX_HASH_BYTES = 4_000_000;
 const ENDGAME_CHAPTER = -1;
 
 function toPosix(path) {
@@ -50,30 +53,42 @@ export function discoverBooks(roots) {
   return [...new Set(found)];
 }
 
+function fileSha(path) {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
 function fingerprintOf(bookDir) {
-  let maxMtime = 0;
-  let totalSize = 0;
-  let count = 0;
+  // 逐文件 路径:size:内容sha 递归拼接后哈希：
+  // - 同 size 同 mtime 的内容变化（保留 mtime 的拷贝/回滚）→ 内容 sha 不同，检出
+  // - rename 互换 → 路径与内容绑定，检出
+  // - 纯 touch（内容不变）→ 指纹不变，正确跳过
+  // 超大文件（>4MB）退化为 size:mtimeMs，避免为指纹读入过大内容
+  const entries = [];
   for (const dirName of SYNC_DIRS) {
     const dir = join(bookDir, dirName);
     if (!existsSync(dir)) continue;
-    let entries = [];
+    let scanned = [];
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      scanned = readdirSync(dir, { withFileTypes: true, recursive: true });
     } catch {
       continue;
     }
-    for (const entry of entries) {
+    for (const entry of scanned) {
       if (!entry.isFile()) continue;
+      const full = join(entry.parentPath ?? dir, entry.name);
+      const rel = toPosix(relative(bookDir, full));
       try {
-        const info = statSync(join(dir, entry.name));
-        maxMtime = Math.max(maxMtime, info.mtimeMs);
-        totalSize += info.size;
-        count += 1;
+        const info = statSync(full);
+        if (info.size > MAX_HASH_BYTES) {
+          entries.push(`${rel}:${info.size}:${Math.round(info.mtimeMs)}`);
+          continue;
+        }
+        entries.push(`${rel}:${info.size}:${fileSha(full)}`);
       } catch {}
     }
   }
-  return `${Math.round(maxMtime)}:${totalSize}:${count}`;
+  entries.sort();
+  return `${entries.length}:${sha256(entries.join("\n"))}`;
 }
 
 function upsertBook(db, bookDir, state, fingerprint, nowIso) {
@@ -134,6 +149,132 @@ function readTracking(bookDir) {
   }
 }
 
+/** versions.mjs 的磁盘文件名：<ISO stamp 把 : . 换成 ->_<safeSource>.md */
+function stampToIso(stamp) {
+  const match = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(stamp);
+  if (!match) return null;
+  return `${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`;
+}
+
+function versionKindFromSource(source) {
+  if (source.startsWith("ai-before")) return "ai-before";
+  if (source.startsWith("ai-rewrite")) return "ai-rewrite";
+  if (source.startsWith("ai-draft")) return "ai-draft";
+  if (source.startsWith("rollback")) return "rollback";
+  if (source.startsWith("manual-before")) return "manual-before";
+  return source;
+}
+
+/**
+ * 从 _pipeline/versions/第XXX章/*.md 重建 versions 行（rebuild 无损的关键路径）。
+ * 按文件名字典序（= 时间序）处理，parent_id 链接到同章上一行，id 尽量保持稳定
+ * （已存在的 file_path 只更新内容字段，不重新分配 id）。
+ */
+function syncVersions(db, bookId, bookDir) {
+  const root = join(bookDir, "_pipeline", "versions");
+  const find = db.prepare("SELECT id FROM versions WHERE book_id = ? AND file_path = ?");
+  const update = db.prepare(`
+    UPDATE versions SET chapter = ?, kind = ?, source = ?, sha256 = ?, words = ?, created_at = ?
+    WHERE id = ?
+  `);
+  const insert = db.prepare(`
+    INSERT INTO versions (book_id, chapter, kind, source, file_path, sha256, words, parent_id, pinned, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+  `);
+  const keep = [];
+  let total = 0;
+  if (existsSync(root)) {
+    let chapterDirs = [];
+    try {
+      chapterDirs = readdirSync(root, { withFileTypes: true });
+    } catch {
+      chapterDirs = [];
+    }
+    for (const entry of chapterDirs) {
+      if (!entry.isDirectory()) continue;
+      const match = /^第(\d{3})章$/.exec(entry.name);
+      if (!match) continue;
+      const chapter = Number(match[1]);
+      const dir = join(root, entry.name);
+      let files = [];
+      try {
+        files = readdirSync(dir).filter((name) => name.endsWith(".md")).sort();
+      } catch {
+        continue;
+      }
+      for (const name of files) {
+        const rel = `_pipeline/versions/第${String(chapter).padStart(3, "0")}章/${name}`;
+        keep.push(rel);
+        const file = join(dir, name);
+        let text;
+        try {
+          text = readFileSync(file, "utf8");
+        } catch {
+          continue;
+        }
+        const normalized = normalizeText(text);
+        const createdAt = stampToIso(name.slice(0, name.indexOf("_")))
+          ?? statSync(file).mtime.toISOString();
+        const source = name.slice(name.indexOf("_") + 1).replace(/\.md$/, "");
+        const kind = versionKindFromSource(source);
+        const sha = sha256(normalized);
+        const words = countVisibleChars(normalized);
+        const existing = find.get(bookId, rel);
+        if (existing) {
+          update.run(chapter, kind, source, sha, words, createdAt, existing.id);
+        } else {
+          const parent = db.prepare(
+            "SELECT MAX(id) AS id FROM versions WHERE book_id = ? AND chapter = ?",
+          ).get(bookId, chapter)?.id ?? null;
+          insert.run(bookId, chapter, kind, source, rel, sha, words, parent, createdAt);
+        }
+        total += 1;
+      }
+    }
+  }
+  if (keep.length) {
+    db.prepare(`DELETE FROM versions WHERE book_id = ? AND file_path NOT IN (${keep.map(() => "?").join(",")})`)
+      .run(bookId, ...keep);
+  } else {
+    db.prepare("DELETE FROM versions WHERE book_id = ?").run(bookId);
+  }
+  return total;
+}
+
+/** story_docs 索引（设定/大纲/伏笔等）：只收磁盘上存在的文档，删掉已消失的行，rebuild 后不丢。 */
+function syncStoryDocs(db, bookId, bookDir) {
+  let index;
+  try {
+    index = storyIndex(bookDir);
+  } catch {
+    return 0;
+  }
+  const upsert = db.prepare(`
+    INSERT INTO story_docs (book_id, kind, path, sha256, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(book_id, path) DO UPDATE SET
+      kind = excluded.kind, sha256 = excluded.sha256, updated_at = excluded.updated_at
+  `);
+  const nowIso = new Date().toISOString();
+  const keep = [];
+  const docs = [
+    ...index.groups.flatMap((group) => group.docs),
+    ...index.chapter_outlines,
+  ];
+  for (const doc of docs) {
+    if (!doc.exists || !doc.sha256) continue;
+    keep.push(doc.path);
+    upsert.run(bookId, doc.kind, doc.path, doc.sha256, nowIso);
+  }
+  if (keep.length) {
+    db.prepare(`DELETE FROM story_docs WHERE book_id = ? AND path NOT IN (${keep.map(() => "?").join(",")})`)
+      .run(bookId, ...keep);
+  } else {
+    db.prepare("DELETE FROM story_docs WHERE book_id = ?").run(bookId);
+  }
+  return keep.length;
+}
+
 function syncChapters(db, bookId, bookDir, state) {
   const bodyDir = join(bookDir, "正文");
   const records = readTracking(bookDir).wordcount_records ?? {};
@@ -146,30 +287,55 @@ function syncChapters(db, bookId, bookDir, state) {
       const file = join(bodyDir, name);
       const text = readFileSync(file, "utf8");
       const record = records[String(number)];
+      const committed = record ? 1 : 0;
+      const sha = sha256(text);
+      // dirty：已封板且正文与封板时记录的 body_sha256 不一致（AI 改过或作者改过）
+      const committedSha = typeof record?.body_sha256 === "string" ? record.body_sha256 : null;
+      const dirty = committed && committedSha && sha !== committedSha ? 1 : 0;
       rows.push({
         number,
         title: match[2],
         filePath: toPosix(relative(bookDir, file)),
         words: Number(record?.actual) || countVisibleChars(text),
-        committed: record ? 1 : 0,
-        sha256: sha256(text),
+        committed,
+        sha256: sha,
         committedAt: state.nodes?.[`C${number}.N16`]?.at ?? null,
+        dirty,
       });
     }
   }
+  // 这三个字段以前只由运行期/保存接口写，rebuild 后全部丢失；现在从磁盘推导回写
+  const previousStates = new Map(
+    db.prepare("SELECT number, author_state FROM chapters WHERE book_id = ?").all(bookId)
+      .map((row) => [row.number, row.author_state]),
+  );
+  const latestVersions = new Map(
+    db.prepare("SELECT chapter, MAX(id) AS id FROM versions WHERE book_id = ? GROUP BY chapter")
+      .all(bookId).map((row) => [row.chapter, row.id]),
+  );
   const upsert = db.prepare(`
-    INSERT INTO chapters (book_id, number, title, file_path, words, committed, sha256, committed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO chapters (book_id, number, title, file_path, words, committed, sha256, committed_at, dirty, author_state, current_version_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(book_id, number) DO UPDATE SET
       title = excluded.title,
       file_path = excluded.file_path,
       words = excluded.words,
       committed = excluded.committed,
       sha256 = excluded.sha256,
-      committed_at = excluded.committed_at
+      committed_at = excluded.committed_at,
+      dirty = excluded.dirty,
+      author_state = excluded.author_state,
+      current_version_id = excluded.current_version_id
   `);
   for (const row of rows) {
-    upsert.run(bookId, row.number, row.title, row.filePath, row.words, row.committed, row.sha256, row.committedAt);
+    const previousState = previousStates.get(row.number) ?? null;
+    const authorState = row.committed
+      ? (row.dirty ? (previousState === "ai_edit" ? "ai_edit" : "draft_edit") : "committed")
+      : "draft";
+    upsert.run(
+      bookId, row.number, row.title, row.filePath, row.words, row.committed, row.sha256,
+      row.committedAt, row.dirty, authorState, latestVersions.get(row.number) ?? null,
+    );
   }
   const keep = rows.map((row) => row.number);
   if (keep.length) {
@@ -452,6 +618,8 @@ export function syncBook(db, bookDir, { now = new Date(), force = false } = {}) 
   db.exec("BEGIN");
   try {
     const bookId = upsertBook(db, absolute, state, fingerprint, nowIso);
+    const versions = syncVersions(db, bookId, absolute);
+    const storyDocs = syncStoryDocs(db, bookId, absolute);
     const chapters = syncChapters(db, bookId, absolute, state);
     const nodes = syncNodes(db, bookId, state);
     const findings = syncFindings(db, bookId, absolute, nowIso);
@@ -460,7 +628,8 @@ export function syncBook(db, bookDir, { now = new Date(), force = false } = {}) 
     const submissions = syncSubmissions(db, bookId, absolute, nowIso);
     db.exec("COMMIT");
     return {
-      path: absolute, skipped: false, bookId, chapters, nodes, findings, judgments, runs, submissions,
+      path: absolute, skipped: false, bookId, versions, storyDocs, chapters, nodes,
+      findings, judgments, runs, submissions,
     };
   } catch (error) {
     db.exec("ROLLBACK");

@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test, { after, before } from "node:test";
 import { fileURLToPath } from "node:url";
 import { startWorkbench } from "../index.mjs";
 import { applyFakeEnv } from "./helpers.mjs";
+
+// reveal 端点测试：覆盖打开命令，避免弹出真实资源管理器
+process.env.WORKBENCH_REVEAL_CMD = process.execPath;
+process.env.WORKBENCH_REVEAL_ARGS = JSON.stringify(["-e", "process.exit(0)"]);
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = resolve(TEST_DIR, "..", "..");
@@ -297,6 +301,33 @@ test("故事库与投前检查端点", async () => {
   assert.equal(preflight.status, 200);
   assert.equal(preflight.body.ready, false);
   assert.ok(preflight.body.checks.some((check) => check.id === "words" && !check.ok));
+});
+
+test("投稿包 reveal 端点：路径校验与本机打开", async () => {
+  const pkgName = "2026-10-25_七猫";
+  const pkgDir = join(bookDir, "_pipeline", "submissions", pkgName);
+  mkdirSync(pkgDir, { recursive: true });
+  writeFileSync(join(pkgDir, "全文.md"), "# 全文\n", "utf8");
+  writeFileSync(join(pkgDir, "MANIFEST.json"), "{}\n", "utf8");
+
+  const revealed = await post(`/api/books/${bookId}/submissions/${encodeURIComponent(pkgName)}/reveal`, { file: "全文.md" });
+  assert.equal(revealed.status, 200);
+  assert.equal(revealed.body.opened, true);
+
+  const openedDir = await post(`/api/books/${bookId}/submissions/${encodeURIComponent(pkgName)}/reveal`, {});
+  assert.equal(openedDir.status, 200);
+
+  const missing = await post(`/api/books/${bookId}/submissions/${encodeURIComponent("不存在的投稿包")}/reveal`, {});
+  assert.equal(missing.status, 404);
+  assert.equal(missing.body.error.code, "package_not_found");
+
+  const traversal = await post(`/api/books/${bookId}/submissions/..%2F..%2Fsettings/reveal`, {});
+  assert.equal(traversal.status, 400);
+  assert.equal(traversal.body.error.code, "invalid_package");
+
+  const badFile = await post(`/api/books/${bookId}/submissions/${encodeURIComponent(pkgName)}/reveal`, { file: "../state.json" });
+  assert.equal(badFile.status, 400);
+  assert.equal(badFile.body.error.code, "invalid_file");
 });
 
 test("未知书与未知接口返回 404", async () => {

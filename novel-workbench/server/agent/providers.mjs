@@ -24,6 +24,29 @@ function sleep(ms, signal) {
   });
 }
 
+const SECRET_PATTERNS = [
+  [/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer ***"],
+  [/\b(sk|pk|rk|ak)-[A-Za-z0-9_-]{6,}/g, "***"],
+  [/(api[_-]?key|access[_-]?key|secret|token|password|authorization)["'\s]*[:=]["'\s]*[^"'\s,}]+/gi, "$1=***"],
+  [/(https?:\/\/[^\s"']+?)\?[^\s"']*/g, "$1?<query-redacted>"],
+];
+
+/** 脱敏摘要：只保留状态码与安全摘要，进错误消息/事件流；原始错误体只进 console.error 本地日志 */
+function sanitizeErrorText(text, limit = 200) {
+  let out = String(text ?? "").replace(/\s+/g, " ").trim();
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    out = out.replace(pattern, replacement);
+  }
+  if (out.length > limit) out = `${out.slice(0, limit)}…`;
+  return out;
+}
+
+function logProviderError(context, detail) {
+  try {
+    console.error(`[provider] ${context}`, detail);
+  } catch {}
+}
+
 export class OpenAIProvider {
   constructor({ baseUrl, apiKey, timeoutMs = 300_000, fetchImpl = globalThis.fetch, maxRetries = 2 } = {}) {
     if (!baseUrl) throw new ProviderError("OpenAI provider 缺少 base_url");
@@ -65,7 +88,12 @@ export class OpenAIProvider {
           await sleep(500 * 2 ** attempt, signal);
           continue;
         }
-        throw new ProviderError(`模型请求失败：${error.message}`, { retryable: true });
+        logProviderError("请求异常", {
+          url: sanitizeErrorText(`${this.baseUrl}/chat/completions`, 120),
+          message: error.message,
+          cause: String(error.cause ?? ""),
+        });
+        throw new ProviderError(`模型请求失败：${sanitizeErrorText(error.message, 160)}`, { retryable: true });
       } finally {
         clearTimeout(timeout);
         signal?.removeEventListener("abort", onAbort);
@@ -78,10 +106,17 @@ export class OpenAIProvider {
           await sleep(500 * 2 ** attempt, signal);
           continue;
         }
-        throw new ProviderError(`模型接口返回 HTTP ${response.status}：${text.slice(0, 300)}`, {
-          status: response.status,
-          retryable,
+        // 原始响应体只进本地日志；抛给上层的消息脱敏，避免端点/账号信息
+        // 经 node_retry 事件持久化并回喂模型
+        logProviderError(`HTTP ${response.status}`, {
+          url: sanitizeErrorText(`${this.baseUrl}/chat/completions`, 120),
+          body: text.slice(0, 2000),
         });
+        const summary = sanitizeErrorText(text);
+        throw new ProviderError(
+          summary ? `模型接口返回 HTTP ${response.status}：${summary}` : `模型接口返回 HTTP ${response.status}`,
+          { status: response.status, retryable },
+        );
       }
 
       const data = await response.json();

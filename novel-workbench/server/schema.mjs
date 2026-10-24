@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 function migration1(db) {
   db.exec(`
@@ -203,9 +203,25 @@ function migration4(db) {
   db.exec("ALTER TABLE runs ADD COLUMN pending_json TEXT");
 }
 
+function migration5(db) {
+  // B12：运行事件按 seq 增量落库，内存只留近窗，历史全部可查
+  db.exec(`
+    CREATE TABLE run_events (
+      id INTEGER PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      seq INTEGER NOT NULL,
+      event_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(run_id, seq)
+    );
+    CREATE INDEX idx_run_events_run ON run_events(run_id, seq);
+  `);
+}
+
 export const migrations = [
   { version: 1, name: "initial", up: migration1 },
   { version: 2, name: "submission-external-id", up: migration2 },
   { version: 3, name: "run-persistence", up: migration3 },
   { version: 4, name: "author-content", up: migration4 },
+  { version: 5, name: "run-events", up: migration5 },
 ];

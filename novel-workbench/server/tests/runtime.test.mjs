@@ -30,7 +30,9 @@ test("mock 运行时用真实 autopilot 推进一步并封住令牌", async () =
     const result = await runtime.run();
 
     assert.equal(result.status, "max_steps");
-    assert.equal(result.llm_rounds, 1);
+    // 审查 B8：llm_rounds 按 chat 次数计（一次 attempt 内工具循环可多次 chat），
+    // mock writer 一个节点 = 工具调用轮 + 收尾轮 = 2。
+    assert.equal(result.llm_rounds, 2);
     assert.equal(result.steps.length, 1);
     assert.equal(result.steps[0].node, "C3.N09");
 

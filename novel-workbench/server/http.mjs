@@ -82,7 +82,28 @@ export function originHostname(value) {
   }
 }
 
-/** 只接受本机回环 Host；写操作还要求 Origin 也是回环，挡住浏览器跨站请求。 */
+/** Origin 是否与服务端自身同源。端口必须严格匹配（审查 A5 的攻击向量）；
+ *  主机名允许回环别名等价（127.0.0.1 / ::1 / localhost）——同端口只有一个
+ *  进程能绑定，等价不增加攻击面，但避免用户换个别名打开就连不上。 */
+export function isSameOrigin(originValue, hostValue) {
+  if (!originValue || !hostValue) return false;
+  let origin;
+  let host;
+  try {
+    origin = new URL(originValue);
+    host = new URL(`http://${hostValue}`);
+  } catch {
+    return false;
+  }
+  if (origin.protocol !== "http:" && origin.protocol !== "https:") return false;
+  if (origin.port !== host.port) return false;
+  const oh = origin.hostname.replace(/^\[|\]$/g, "");
+  const hh = host.hostname.replace(/^\[|\]$/g, "");
+  if (oh === hh) return true;
+  return LOOPBACK_HOSTS.has(oh) && LOOPBACK_HOSTS.has(hh);
+}
+
+/** 只接受本机回环 Host；写操作还要求 Origin 与服务端同源，挡住浏览器跨站请求。 */
 export function assertLocalRequest(request, { allowNetwork = false, networkToken = null } = {}) {
   if (allowNetwork) {
     if (!networkToken) {
@@ -97,10 +118,16 @@ export function assertLocalRequest(request, { allowNetwork = false, networkToken
   if (!LOOPBACK_HOSTS.has(host)) {
     throw new HttpError(403, "invalid_host", "工作台只接受本机回环地址请求");
   }
-  if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method) && request.headers.origin) {
-    const origin = originHostname(request.headers.origin);
-    if (!LOOPBACK_HOSTS.has(origin)) {
-      throw new HttpError(403, "invalid_origin", "拒绝来自非本机页面的写入请求");
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) {
+    // 审查 A5：只校验 Origin 主机名不校验端口时，本机任意 localhost 页面都能
+    // 发起写请求（本地 CSRF → 改 python 路径 → RCE 链）。现在要求同源。
+    const origin = request.headers.origin;
+    if (origin && !isSameOrigin(origin, request.headers.host)) {
+      throw new HttpError(403, "invalid_origin", "拒绝来自非本服务工作台的写入请求");
+    }
+    const fetchSite = String(request.headers["sec-fetch-site"] ?? "").toLowerCase();
+    if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") {
+      throw new HttpError(403, "invalid_fetch_site", `拒绝跨站写入请求（Sec-Fetch-Site: ${fetchSite}）`);
     }
   }
 }
