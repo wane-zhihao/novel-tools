@@ -2,8 +2,8 @@
 name: novel-workbench
 description: "一键小说工作台（七猫系）。输入题材/书名，自动完成 选题→设定→卷纲→细纲→正文至2万字→质检→投稿包。触发词：一键开书、无人值守写书、novel-workbench、自动写小说、工作台写书。"
 metadata:
-  version: 0.6.0
-  phase: "phase5-release"
+  version: 0.7.0
+  phase: "v2-author"
   repo: "F:\\WorkBuddy AI\\Novel Platform"
 ---
 

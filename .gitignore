@@ -47,6 +47,7 @@ temp/
 *.db
 *.db-wal
 *.db-shm
+*.db.bak-*
 
 # 用户级配置与密钥（只存数据目录，不入库）
 settings.json
@@ -63,3 +64,7 @@ agents.json
 # 夹具里的 manifest / run 记录是测试证据，保留入库
 !_fixtures/**/_pipeline/workbench.json
 !_fixtures/**/_pipeline/run.json
+
+# 版本与投稿包（生成物）
+**/_pipeline/versions/
+**/_pipeline/submissions/

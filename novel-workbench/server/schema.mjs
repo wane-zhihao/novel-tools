@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 function migration1(db) {
   db.exec(`
@@ -134,8 +134,78 @@ function migration3(db) {
   db.exec("CREATE UNIQUE INDEX idx_runs_run_id ON runs(run_id) WHERE run_id IS NOT NULL");
 }
 
+function migration4(db) {
+  // 正文中心：作者手改、版本、AI 改动、故事库、投稿 CRM
+  db.exec("ALTER TABLE chapters ADD COLUMN dirty INTEGER NOT NULL DEFAULT 0");
+  db.exec("ALTER TABLE chapters ADD COLUMN author_state TEXT");
+  db.exec("ALTER TABLE chapters ADD COLUMN current_version_id INTEGER");
+
+  db.exec(`
+    CREATE TABLE versions (
+      id INTEGER PRIMARY KEY,
+      book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      chapter INTEGER NOT NULL,
+      kind TEXT,
+      source TEXT,
+      file_path TEXT NOT NULL,
+      sha256 TEXT NOT NULL,
+      words INTEGER NOT NULL DEFAULT 0,
+      parent_id INTEGER,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_versions_book ON versions(book_id, chapter, created_at);
+
+    CREATE TABLE story_docs (
+      id INTEGER PRIMARY KEY,
+      book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      path TEXT NOT NULL,
+      sha256 TEXT,
+      updated_at TEXT NOT NULL,
+      UNIQUE(book_id, path)
+    );
+
+    CREATE TABLE approvals (
+      id INTEGER PRIMARY KEY,
+      book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      run_id TEXT NOT NULL,
+      node TEXT NOT NULL,
+      chapter INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending',
+      diff_json TEXT,
+      created_at TEXT NOT NULL,
+      decided_at TEXT,
+      reject_reason TEXT
+    );
+    CREATE INDEX idx_approvals_book ON approvals(book_id, status);
+
+    CREATE TABLE analytics_events (
+      id INTEGER PRIMARY KEY,
+      book_id INTEGER,
+      type TEXT NOT NULL,
+      payload_json TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX idx_events_type ON analytics_events(type, created_at);
+  `);
+
+  for (const column of [
+    "manuscript_version TEXT",
+    "package_path TEXT",
+    "editor_contact TEXT",
+    "expected_reply_at TEXT",
+    "replied_at TEXT",
+    "result TEXT",
+  ]) {
+    db.exec(`ALTER TABLE submissions ADD COLUMN ${column}`);
+  }
+  db.exec("ALTER TABLE runs ADD COLUMN pending_json TEXT");
+}
+
 export const migrations = [
   { version: 1, name: "initial", up: migration1 },
   { version: 2, name: "submission-external-id", up: migration2 },
   { version: 3, name: "run-persistence", up: migration3 },
+  { version: 4, name: "author-content", up: migration4 },
 ];

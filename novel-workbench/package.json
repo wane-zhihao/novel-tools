@@ -1,6 +1,6 @@
 {
   "name": "novel-signing-workbench",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "description": "签约工作台：AI 自动写作 + 人工投稿，本地单机可发版",
@@ -11,6 +11,6 @@
     "start": "node server/index.mjs --open",
     "serve": "node server/index.mjs",
     "sync": "node server/cli.mjs sync",
-    "test": "node --test server/tests/sync.test.mjs server/tests/agent-config.test.mjs server/tests/tools.test.mjs server/tests/providers.test.mjs server/tests/runtime.test.mjs server/tests/api.test.mjs server/tests/settings.test.mjs server/tests/setup-api.test.mjs server/tests/first-chapter.test.mjs server/tests/judgment.test.mjs server/tests/read-roots.test.mjs server/tests/resume.test.mjs server/tests/stale-evidence.test.mjs server/tests/budgets.test.mjs server/tests/secrets.test.mjs server/tests/python-contracts.test.mjs server/tests/version.test.mjs server/tests/runs-persistence.test.mjs"
+    "test": "node --test server/tests/sync.test.mjs server/tests/agent-config.test.mjs server/tests/tools.test.mjs server/tests/providers.test.mjs server/tests/runtime.test.mjs server/tests/api.test.mjs server/tests/settings.test.mjs server/tests/setup-api.test.mjs server/tests/first-chapter.test.mjs server/tests/judgment.test.mjs server/tests/read-roots.test.mjs server/tests/resume.test.mjs server/tests/stale-evidence.test.mjs server/tests/budgets.test.mjs server/tests/secrets.test.mjs server/tests/python-contracts.test.mjs server/tests/version.test.mjs server/tests/runs-persistence.test.mjs server/tests/v2-content.test.mjs server/tests/v2-story-submit.test.mjs"
   }
 }

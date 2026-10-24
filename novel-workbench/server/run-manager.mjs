@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { AgentRuntime, resolveRuntimePaths } from "./agent/runtime.mjs";
 import { defaultDataDir } from "./paths.mjs";
+import { recordVersion } from "./versions.mjs";
 
 const ACTIVE = new Set(["running", "stopping"]);
 const MAX_EVENTS = 600;
@@ -89,6 +90,7 @@ export class RunManager {
         paths,
         readRoots: paths.readRoots,
         onEvent: (event) => this.push(run, event),
+        onFileWrite: (change) => this.recordAiWrite(run, change),
       });
       const result = await runtime.run();
       run.status = result.status;
@@ -109,6 +111,48 @@ export class RunManager {
         this.onError?.(error);
       }
     }
+  }
+
+  recordAiWrite(run, change) {
+    const normalized = String(change?.relativePath ?? "").replaceAll("\\", "/");
+    const match = /^正文\/第(\d{3})章_/.exec(normalized);
+    if (!match) return;
+    const chapter = Number(match[1]);
+    const node = change.node || "ai";
+    try {
+      if (typeof change.before === "string" && change.before !== change.after) {
+        recordVersion(this.db, {
+          bookDir: run.bookPath,
+          bookId: run.bookId,
+          chapter,
+          content: change.before,
+          source: `ai-before-${node}`,
+          kind: "ai-before",
+        });
+      }
+      const version = recordVersion(this.db, {
+        bookDir: run.bookPath,
+        bookId: run.bookId,
+        chapter,
+        content: change.after,
+        source: node.includes("N14") || node.includes("N20f") ? "ai-rewrite" : "ai-draft",
+        kind: node.includes("N14") || node.includes("N20f") ? "ai-rewrite" : "ai-draft",
+      });
+      const row = this.db.prepare(
+        "SELECT committed FROM chapters WHERE book_id = ? AND number = ?",
+      ).get(run.bookId, chapter);
+      if (row?.committed) {
+        this.db.prepare("UPDATE chapters SET dirty = 1, author_state = 'ai_edit' WHERE book_id = ? AND number = ?")
+          .run(run.bookId, chapter);
+      }
+      this.push(run, {
+        type: "ai_version",
+        node,
+        chapter,
+        version_id: version?.id ?? null,
+        words: version?.words ?? null,
+      });
+    } catch {}
   }
 
   push(run, event) {

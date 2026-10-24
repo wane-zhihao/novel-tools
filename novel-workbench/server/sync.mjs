@@ -368,12 +368,16 @@ function syncSubmissions(db, bookId, bookDir, nowIso) {
   const items = Array.isArray(doc) ? doc : Array.isArray(doc?.items) ? doc.items : [];
   const find = db.prepare("SELECT id FROM submissions WHERE book_id = ? AND external_id = ?");
   const update = db.prepare(`
-    UPDATE submissions SET channel = ?, submitted_at = ?, editor = ?, status = ?, feedback = ?, next_action = ?, created_at = ?
+    UPDATE submissions SET channel = ?, submitted_at = ?, editor = ?, status = ?, feedback = ?,
+      next_action = ?, manuscript_version = ?, package_path = ?, editor_contact = ?,
+      expected_reply_at = ?, replied_at = ?, result = ?, created_at = ?
     WHERE id = ?
   `);
   const insert = db.prepare(`
-    INSERT INTO submissions (book_id, external_id, channel, submitted_at, editor, status, feedback, next_action, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO submissions (book_id, external_id, channel, submitted_at, editor, status, feedback,
+      next_action, manuscript_version, package_path, editor_contact, expected_reply_at, replied_at,
+      result, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   items.forEach((item, index) => {
     const externalId = String(item.id ?? `submission-${index}`);
@@ -384,6 +388,12 @@ function syncSubmissions(db, bookId, bookDir, nowIso) {
       item.status ?? null,
       item.feedback ?? null,
       item.next_action ?? null,
+      item.manuscript_version ?? null,
+      item.package_path ?? null,
+      item.editor_contact ?? null,
+      item.expected_reply_at ?? null,
+      item.replied_at ?? null,
+      item.result ?? null,
       item.created_at ?? nowIso,
     ];
     const existing = find.get(bookId, externalId);

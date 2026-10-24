@@ -227,6 +227,78 @@ test("跨站 Origin 的写请求被拒绝", async () => {
   assert.equal(evil.body.error.code, "invalid_origin");
 });
 
+test("正文保存、版本、diff 与回滚端点", async () => {
+  const current = await request(`/api/books/${bookId}/chapters/2/content`);
+  assert.equal(current.status, 200);
+  assert.ok(current.body.content.length > 0);
+  assert.ok(current.body.sha256);
+
+  const saved = await request(`/api/books/${bookId}/chapters/2/content`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      base_sha: current.body.sha256,
+      content: `${current.body.content}\n\n（端点测试补一句。）`,
+      allow_committed_edit: true,
+    }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.dirty, true);
+  assert.ok(saved.body.version?.id);
+
+  const versions = await request(`/api/books/${bookId}/versions?chapter=2`);
+  assert.equal(versions.status, 200);
+  assert.ok(versions.body.versions.length >= 2);
+  const [right, left] = versions.body.versions;
+  const diff = await request(`/api/books/${bookId}/versions/${left.id}/diff/${right.id}`);
+  assert.equal(diff.status, 200);
+  assert.ok(diff.body.stats.changed >= 1);
+
+  const conflict = await request(`/api/books/${bookId}/chapters/2/content`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ base_sha: "deadbeef", content: "x" }),
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.body.error.code, "content_conflict");
+
+  const restored = await request(`/api/books/${bookId}/versions/${left.id}/restore`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.body.content, current.body.content);
+});
+
+test("故事库与投前检查端点", async () => {
+  const story = await request(`/api/books/${bookId}/story`);
+  assert.equal(story.status, 200);
+  assert.ok(story.body.groups.length >= 3);
+
+  const doc = await request(`/api/books/${bookId}/story/doc?path=${encodeURIComponent("设定/角色.md")}`);
+  assert.equal(doc.status, 200);
+  const saved = await request(`/api/books/${bookId}/story/doc`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      path: "设定/角色.md",
+      content: `${doc.body.content}\n\n## 端点测试\n- 身份：测试`,
+      base_sha: doc.body.sha256,
+    }),
+  });
+  assert.equal(saved.status, 200);
+
+  const preflight = await request(`/api/books/${bookId}/submissions/preflight`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(preflight.status, 200);
+  assert.equal(preflight.body.ready, false);
+  assert.ok(preflight.body.checks.some((check) => check.id === "words" && !check.ok));
+});
+
 test("未知书与未知接口返回 404", async () => {
   const missingBook = await request("/api/books/9999");
   assert.equal(missingBook.status, 404);

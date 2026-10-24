@@ -143,6 +143,7 @@ export class AgentRuntime {
     dataDir = defaultDataDir(),
     paths = resolveRuntimePaths({ env, dataDir }),
     readRoots = paths.readRoots ?? [],
+    onFileWrite = null,
     providerFactory = createProvider,
   } = {}) {
     if (!bookDir) throw new RuntimeError("缺少 bookDir");
@@ -155,7 +156,13 @@ export class AgentRuntime {
     this.maxSteps = maxSteps;
     this.paths = paths;
     this.providerFactory = providerFactory;
-    this.tools = createToolExecutor({ bookDir: this.bookDir, readRoots });
+    this.onFileWrite = onFileWrite;
+    this.currentNode = null;
+    this.tools = createToolExecutor({
+      bookDir: this.bookDir,
+      readRoots,
+      onFileWrite: (change) => this.onFileWrite?.({ ...change, node: this.currentNode }),
+    });
     this.secrets = secretResolver({ dataDir, env });
     this.budgets = { llm_rounds: Infinity, node_timeout_s: 900, ...(config.budgets ?? {}) };
     this.steps = 0;
@@ -325,6 +332,7 @@ export class AgentRuntime {
       ? instruction.resolved_evidence
       : (Array.isArray(instruction.evidence) ? instruction.evidence : []);
     const maxAttempts = roleConfig.max_attempts ?? 2;
+    this.currentNode = instruction.node;
     let feedback = "";
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {

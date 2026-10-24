@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
-import { resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { openDatabase } from "./db.mjs";
 import { syncAll, syncBook } from "./sync.mjs";

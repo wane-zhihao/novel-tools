@@ -102,6 +102,7 @@ function fail(code, message) {
 export function createToolExecutor({
   bookDir,
   readRoots = [],
+  onFileWrite = null,
   maxReadChars = 60000,
   maxWriteBytes = 2_000_000,
 } = {}) {
@@ -188,6 +189,7 @@ export function createToolExecutor({
     if (typeof args?.content !== "string") return fail("CONTENT", "content 必须是字符串");
     const bytes = Buffer.byteLength(args.content, "utf8");
     if (bytes > maxWriteBytes) return fail("TOO_LARGE", `内容 ${bytes} 字节超过上限 ${maxWriteBytes}`);
+    const before = existsSync(target) ? readFileSync(target, "utf8") : null;
     try {
       backupExisting(target, rel);
       mkdirSync(dirname(target), { recursive: true });
@@ -197,6 +199,9 @@ export function createToolExecutor({
     } catch (error) {
       return fail("WRITE", `写入失败：${error.message}`);
     }
+    try {
+      onFileWrite?.({ relativePath: rel, before, after: args.content });
+    } catch {}
     return { ok: true, content: `已写入 ${rel}（${bytes} 字节）` };
   }
 

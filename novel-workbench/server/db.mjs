@@ -1,15 +1,38 @@
-import { mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { migrations } from "./schema.mjs";
+import { SCHEMA_VERSION, migrations } from "./schema.mjs";
+
+function appliedVersion(db) {
+  try {
+    const row = db.prepare("SELECT MAX(version) AS version FROM schema_migrations").get();
+    return Number(row?.version) || 0;
+  } catch {
+    return 0;
+  }
+}
 
 export function openDatabase({ dataDir, file = "workbench.db" } = {}) {
   if (!dataDir) throw new Error("openDatabase 需要 dataDir");
   mkdirSync(dataDir, { recursive: true });
-  const db = new DatabaseSync(join(dataDir, file));
+  const path = join(dataDir, file);
+  const existed = existsSync(path);
+  const db = new DatabaseSync(path);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
+  if (existed) {
+    const current = appliedVersion(db);
+    if (current < SCHEMA_VERSION) {
+      const backup = `${path}.bak-v${current}`;
+      if (!existsSync(backup)) {
+        try {
+          db.exec("PRAGMA wal_checkpoint(FULL)");
+          copyFileSync(path, backup);
+        } catch {}
+      }
+    }
+  }
   migrate(db);
   return db;
 }
