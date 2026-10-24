@@ -1,0 +1,21 @@
+{
+ "schema_version": 1,
+ "book_title": "《联试之书》",
+ "last_chapter": 0,
+ "context": {
+  "position": {
+   "volume": "第一卷",
+   "volume_start_chapter": 1,
+   "story_time": "待补充",
+   "scene": "待补充"
+  },
+  "long_term_constraints": [],
+  "active_character_names": [],
+  "continuity_risks": [],
+  "recent_chapters": [],
+  "next_chapter_commitments": []
+ },
+ "character_snapshots": {},
+ "foreshadow": [],
+ "timeline_events": []
+}

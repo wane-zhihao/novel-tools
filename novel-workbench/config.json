@@ -10,6 +10,8 @@
   "TRACKING_COMMIT":     "C:\\Users\\Wane-\\.qoder\\skills\\story-long-write\\scripts\\tracking_commit.py",
   "BUILD_WRITER_PROMPT": "C:\\Users\\Wane-\\.qoder\\skills\\story-long-write\\scripts\\build_writer_prompt.py",
   "CHECK_OUTLINE":       "C:\\Users\\Wane-\\.qoder\\skills\\story-long-write\\scripts\\check-outline-contract.js",
+  "AI_PATTERNS_CHECK":   "C:\\Users\\Wane-\\.qoder\\skills\\story-long-write\\scripts\\check-ai-patterns.js",
+  "DEGENERATION_CHECK":  "C:\\Users\\Wane-\\.qoder\\skills\\story-long-write\\scripts\\check-degeneration.js",
 
   "QIMAO_PLATFORM_DIR":  "F:\\小说\\platforms\\qimao",
   "QIMAO_HARNESS":       "F:\\小说\\platforms\\qimao\\harness",
@@ -21,6 +23,10 @@
 
   "CORE_TOOLS_DIR":      "F:\\小说\\platforms\\_core\\tools",
   "GATE_RUNNER":         "F:\\小说\\platforms\\_core\\tools\\gate_runner.py",
+  "STYLE_PROBE":         "F:\\小说\\platforms\\_core\\tools\\style_probe.py",
+  "CLARITY_ORG_PROBE":   "F:\\小说\\platforms\\_core\\tools\\clarity_org_probe.py",
+
+  "BOOKS_ROOT":          "F:\\小说\\works",
 
   "PYTHON":              "C:\\Users\\Wane-\\.workbuddy-ai\\binaries\\python\\versions\\3.13.12\\python.exe",
   "NODE":                "C:\\Users\\Wane-\\.workbuddy-ai\\binaries\\node\\versions\\22.22.2-6\\node.exe",

@@ -1,0 +1,9 @@
+{
+ "schema_version": 1,
+ "action": "resume",
+ "requested_at": "2026-10-24T10:32:52.933Z",
+ "book": "_fixtures/chapter_e2e",
+ "cursor": "C3.N09",
+ "blocked_reason": null,
+ "command": "\"C:\\Users\\Wane-\\.workbuddy-ai\\binaries\\python\\versions\\3.13.12\\python.exe\" \"F:\\WorkBuddy AI\\Novel Platform\\novel-workbench\\scripts\\autopilot.py\" resume --book \"F:\\WorkBuddy AI\\Novel Platform\\_fixtures\\chapter_e2e\""
+}

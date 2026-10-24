@@ -33,6 +33,12 @@ import sys
 import time
 from pathlib import Path
 
+# 主控进程的 stdout 直接交给宿主读取（subagent_prompt 全是中文）。
+# Windows 管道默认按 locale(cp936) 编码，宿主按 UTF-8 解码就会乱码，必须强制。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 # ─── 路径与配置 ───────────────────────────────────────────────────────────────
 
 HERE = Path(__file__).resolve().parent
@@ -51,10 +57,23 @@ IRON_RULES = [
 ]
 
 
+def config_path() -> Path:
+    """发版时由 Node 写入 <dataDir>/pipeline.json，并通过 WORKBENCH_CONFIG 指定。"""
+    override = os.environ.get("WORKBENCH_CONFIG")
+    return Path(override) if override else CONFIG_PATH
+
+
 def load_config() -> dict:
-    if not CONFIG_PATH.is_file():
-        sys.exit(f"ERROR: 找不到 {CONFIG_PATH}")
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    path = config_path()
+    if not path.is_file():
+        sys.exit(f"ERROR: 找不到配置文件 {path}（可用 WORKBENCH_CONFIG 指定）")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    required = ("PYTHON", "NODE", "STORY_LONG_WRITE", "QIMAO_PLATFORM_DIR",
+                "STORYCTL", "TRACKING_COMMIT", "CHECK_OUTLINE", "GATE_RUNNER")
+    missing = [key for key in required if not data.get(key)]
+    if missing:
+        sys.exit(f"ERROR: {path} 缺少配置键：{', '.join(missing)}")
+    return data
 
 
 CFG = load_config()
@@ -106,9 +125,29 @@ def save_state(book: Path, st: dict) -> None:
     # 旧版把令牌写在 state 里；现在令牌在 _pipeline/.step_token，落盘时清掉残留字段
     st.pop("step_token", None)
     st.pop("step_token_node", None)
-    tmp = p.with_suffix(".json.tmp")
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{time.time_ns()}.tmp")
     tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     tmp.replace(p)          # 原子替换，避免中断写出半截文件
+
+
+def write_workbench_manifest(book: Path) -> None:
+    """给 Dashboard 留一份可执行路径清单：它不读 config.json，只认这本书的清单。"""
+    manifest = {
+        "schema_version": 1,
+        "python": CFG["PYTHON"],
+        "autopilot": str(HERE / "autopilot.py"),
+        "gate_runner": CFG.get("GATE_RUNNER", ""),
+        "platform": CFG.get("QIMAO_PLATFORM_DIR", ""),
+    }
+    p = book / "_pipeline" / "workbench.json"
+    if p.is_file():
+        try:
+            if json.loads(p.read_text(encoding="utf-8")) == manifest:
+                return
+        except json.JSONDecodeError:
+            pass
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
 
 
 def sha256_of(path: Path) -> str:
@@ -138,7 +177,7 @@ def token_path(book: Path) -> Path:
 def write_token(book: Path, token: str, node: str) -> None:
     p = token_path(book)
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{time.time_ns()}.tmp")
     tmp.write_text(json.dumps({"token": token, "node": node, "issued_at": now()},
                               ensure_ascii=False), encoding="utf-8")
     tmp.replace(p)
@@ -166,6 +205,40 @@ def token_ok(book: Path, node: str, token: str) -> bool:
     return bool(token) and held.get("token") == token and held.get("node") == node
 
 
+NEXT_LOCK_TTL = 600
+
+
+def acquire_next_lock(book: Path) -> Path | None:
+    """跨驱动互斥：UI 与对话编排者同时 next 时只放行一个。"""
+    path = book / "_pipeline" / ".next.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(2):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, str(os.getpid()).encode("ascii"))
+            os.close(fd)
+            return path
+        except FileExistsError:
+            try:
+                age = time.time() - path.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if age <= NEXT_LOCK_TTL:
+                return None
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+    return None
+
+
+def release_next_lock(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+
+
 # ─── 节点表（PART 3 填充） ────────────────────────────────────────────────────
 
 from pipeline_spec import (          # noqa: E402
@@ -174,7 +247,10 @@ from pipeline_spec import (          # noqa: E402
 
 # ─── 内联脚本执行（PART 2 填充） ──────────────────────────────────────────────
 
-from inline_runner import run_node_script, verify_quote   # noqa: E402
+from inline_runner import (          # noqa: E402
+    run_node_script, verify_quote, chapter_has_blocking, append_chapter_findings,
+    snapshot_chapter, snapshot_body, MILESTONE_CHAPTERS, extract_json,
+)
 
 
 # ─── 子命令 ───────────────────────────────────────────────────────────────────
@@ -205,35 +281,123 @@ def cmd_init(a) -> int:
         "relay_count": 0,
     }
     save_state(book, st)
+    write_workbench_manifest(book)
     print(json.dumps({"ok": True, "book": st["book"], "cursor": st["cursor"],
                       "nodes_total": len(GLOBAL_NODES)}, ensure_ascii=False))
     return 0
 
 
 def cmd_status(a) -> int:
-    st = load_state(Path(a.book))
+    book = Path(a.book).resolve()
+    st = load_state(book)
     if not st:
         print(json.dumps({"error": "not_initialized"}, ensure_ascii=False))
         return 2
+    write_workbench_manifest(book)
     nodes = st["nodes"]
     done = sum(1 for v in nodes.values() if v.get("status") == "done")
     print(json.dumps({
         "book": st["book"], "genre": st["genre"],
         "cursor": st["cursor"], "current_chapter": st["current_chapter"],
         "chapters_committed": st["chapters_committed"], "words_total": st["words_total"],
-        "target_words": st["target_words"],
+        "target_words": st["target_words"], "max_chapters": st["max_chapters"],
         "nodes_done": done, "nodes_recorded": len(nodes),
         "blocked_reason": st["blocked_reason"],
         "pending_questions": len(st["pending_questions"]),
+        "fix_rounds": st.get("fix_rounds") or {},
+        "n20_rounds": st.get("n20_rounds", 0),
+        "llm_rounds": st.get("llm_rounds", 0),
     }, ensure_ascii=False))
     return 0
 
 
+def evidence_hits(book: Path, pattern: str) -> list[Path]:
+    if "*" not in pattern:
+        return [book / pattern] if (book / pattern).is_file() else []
+    return sorted(book.glob(pattern))
+
+
+def resolve_evidence(book: Path, patterns: list[str]) -> tuple[list[str], list[str]]:
+    """done 前的严格解析：通配符必须唯一命中；返回（相对路径, 错误）。"""
+    out: list[str] = []
+    errors: list[str] = []
+    for pattern in patterns:
+        if "*" not in pattern:
+            out.append(pattern)
+            continue
+        hits = evidence_hits(book, pattern)
+        if len(hits) == 1:
+            out.append(str(hits[0].relative_to(book)))
+        elif not hits:
+            errors.append(f"证据通配符无匹配：{pattern}")
+        else:
+            errors.append(f"证据通配符匹配到 {len(hits)} 个文件（应唯一）：{pattern}")
+    return out, errors
+
+
+def _resolve_evidence(book: Path, patterns: list[str]) -> list[str]:
+    """next 时的宽松解析：尚无产出时保留模式串，交给 writer；唯一命中则展开。"""
+    out: list[str] = []
+    for pattern in patterns:
+        hits = evidence_hits(book, pattern) if "*" in pattern else []
+        if len(hits) == 1:
+            out.append(str(hits[0].relative_to(book)))
+        else:
+            out.append(pattern)
+    return out
+
+
+def _auto_skip_reason(book: Path, st: dict, spec: dict) -> str | None:
+    """确定性跳过：N14 无 B 级 findings、N15 非里程碑章。"""
+    nid = spec["id"]
+    if nid.endswith(".N14"):
+        ch = st["current_chapter"] + 1
+        if not chapter_has_blocking(book, ch):
+            return "N13 无 B 级 findings，无需定点改写"
+    if nid.endswith(".N15"):
+        ch = st["current_chapter"] + 1
+        if ch not in MILESTONE_CHAPTERS:
+            return f"第{ch}章非里程碑章（只在 {MILESTONE_CHAPTERS} 做阶段审查）"
+    return None
+
+
+def _write_relay(book: Path, st: dict) -> None:
+    content = (
+        "# 接力口令\n\n"
+        f"- 书：{st['book']}\n"
+        f"- 已封板：{st['chapters_committed']} 章 / {st['words_total']} 字\n"
+        f"- 当前 cursor：`{st['cursor']}`\n"
+        f"- 续跑命令：\n\n"
+        "```\n"
+        f'"{PYTHON}" "{HERE / "autopilot.py"}" next --book "{book}"\n'
+        "```\n\n"
+        "> 人工粘贴上一条命令即可接管；不要手动改 state.json。\n"
+    )
+    p = book / "_pipeline" / "relay.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding="utf-8")
+
+
+def _recoverable_commit_error(out: str) -> bool:
+    """N16 封板失败是否可由 N14 修正文/事务解决。
+
+    事务缺失是 writer 没在 N12 按 shapes 写 tracking.json，属于可定点修复；
+    工具不可用（node 缺失等）与环境相关，重试再多次也没用。
+    """
+    if "TOOL_UNAVAILABLE" in out or "NODE_REQUIRED" in out or "tool_unavailable" in out:
+        return False
+    data = extract_json(out)
+    if isinstance(data, dict) and data.get("status") == "error":
+        return data.get("error_code") != "TOOL_UNAVAILABLE"
+    return "找不到追踪事务" in out
+
+
 def cmd_next(a) -> int:
-    book = Path(a.book)
+    book = Path(a.book).resolve()
     st = load_state(book)
     if not st:
         print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
+    write_workbench_manifest(book)
     if st["blocked_reason"]:
         print(json.dumps({"error": "blocked", "reason": st["blocked_reason"],
                           "hint": "修复后调 resume"}, ensure_ascii=False)); return 2
@@ -250,9 +414,40 @@ def cmd_next(a) -> int:
                               "words_total": st["words_total"]}, ensure_ascii=False))
             return 0
         if spec["kind"] != "script":
+            reason = _auto_skip_reason(book, st, spec)
+            if reason:
+                clear_token(book)
+                st["nodes"][spec["id"]] = {"status": "skipped", "at": now(), "reason": reason}
+                st["cursor"] = next_cursor(st)
+                save_state(book, st)
+                continue
             break
         rc, out = run_node_script(book, st, spec)
         if rc != 0:
+            # N16 封板复检失败（质量/字数/事务）→ 退章内定点改写，而不是整条链停死
+            if spec["id"].endswith(".N16") and _recoverable_commit_error(out):
+                ch = st["current_chapter"] + 1
+                data = extract_json(out) or {}
+                code = data.get("error_code") or "COMMIT_FAILED"
+                append_chapter_findings(book, ch, [{
+                    "id": code, "criterion": code,
+                    "name": data.get("message") or "封板复检失败",
+                    "level": "B", "blocking": True, "source": "N16",
+                    "note": data.get("message") or out[-300:],
+                }], "N16")
+                rounds = int(st.get("fix_rounds", {}).get(str(ch), 0))
+                if rounds >= 2:
+                    st["blocked_reason"] = f"N16 连续 {rounds + 1} 轮封板失败：{code}"
+                    st["nodes"][spec["id"]] = {"status": "failed", "at": now(), "output": out[-2000:]}
+                    save_state(book, st)
+                    print(json.dumps({"error": "script_failed", "node": spec["id"],
+                                      "output": out[-800:]}, ensure_ascii=False))
+                    return 1
+                st["fix_rounds"] = {**(st.get("fix_rounds") or {}), str(ch): rounds + 1}
+                st["nodes"][spec["id"]] = {"status": "failed", "at": now(), "output": out[-2000:]}
+                st["cursor"] = f"C{ch}.N14"
+                save_state(book, st)
+                continue
             st["blocked_reason"] = f"{spec['id']} 内联脚本失败：{out[-400:]}"
             st["nodes"][spec["id"]] = {"status": "failed", "at": now(), "output": out[-2000:]}
             save_state(book, st)
@@ -261,6 +456,8 @@ def cmd_next(a) -> int:
             return 1
         st["nodes"][spec["id"]] = {"status": "done", "at": now(), "output": out[-1500:]}
         st["cursor"] = next_cursor(st)
+        if spec["id"].endswith(".N16") and st["chapters_committed"] % 3 == 0:
+            _write_relay(book, st)
         save_state(book, st)
 
     # llm / verify 节点：发令牌，交还控制权
@@ -271,6 +468,13 @@ def cmd_next(a) -> int:
         print(json.dumps({"error": "node_running", "node": spec["id"],
                           "hint": "先调 done 完成当前节点"}, ensure_ascii=False))
         return 2
+
+    ch = st["current_chapter"] + 1
+    if spec["id"].endswith(".N14"):
+        snapshot_chapter(book, ch, f"C{ch}_before_N14_r{st.get('fix_rounds', {}).get(str(ch), 0) + 1}")
+    if spec["id"] == "N20f":
+        snapshot_body(book, f"N20f_round{st.get('n20_rounds', 1)}")
+
     token = new_token()
     write_token(book, token, spec["id"])
     st["nodes"][spec["id"]] = {"status": "running", "attempts":
@@ -278,14 +482,19 @@ def cmd_next(a) -> int:
                                "started_at": now()}
     save_state(book, st)
 
+    evidence = spec["evidence"] if isinstance(spec["evidence"], list) else [spec["evidence"]]
+    evidence = _resolve_evidence(book, evidence)
+    done_cmd = (f'"{PYTHON}" "{HERE / "autopilot.py"}" done --book "{book}" '
+                f'--node {spec["id"]} --token {token} '
+                + " ".join(f'--evidence "{e}"' for e in evidence))
     print(json.dumps({
         "node": spec["id"],
         "kind": spec["kind"],
-        "chapter": st["current_chapter"] + 1 if spec["id"].startswith("C") else None,
+        "chapter": ch if spec["id"].startswith("C") else None,
+        "evidence": evidence,
+        "resolved_evidence": _resolve_evidence(book, evidence),
         "_iron_rules": IRON_RULES,
-        "done_cmd_for_orchestrator_only":
-            f'"{PYTHON}" "{HERE / "autopilot.py"}" done --book "{a.book}" '
-            f'--node {spec["id"]} --token {token} --evidence {spec["evidence"]}',
+        "done_cmd_for_orchestrator_only": done_cmd,
         "subagent_role": spec["role"],
         "subagent_model": spec.get("model", "default"),
         "subagent_prompt": render_prompt(spec["prompt"], book),
@@ -337,7 +546,17 @@ def main():
     if a.cmd == "status":
         return cmd_status(a)
     if a.cmd == "next":
-        return cmd_next(a)
+        book = Path(a.book).resolve()
+        lock = acquire_next_lock(book)
+        if lock is None:
+            print(json.dumps({"error": "driver_locked",
+                              "hint": "另一个驱动正在执行 next，稍后重试或先 resume"},
+                             ensure_ascii=False))
+            return 2
+        try:
+            return cmd_next(a)
+        finally:
+            release_next_lock(lock)
     if a.cmd in ("done", "skip", "block", "resume"):
         from commands import cmd_done, cmd_skip, cmd_block, cmd_resume
         return {"done": cmd_done, "skip": cmd_skip,

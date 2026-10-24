@@ -1,0 +1,14 @@
+{
+ "verdict": "pass",
+ "summary": "终审通过：开篇、场景、主线、人物登记均通过；机械项以 endgame 为准。",
+ "items": [
+  {
+   "id": "1",
+   "level": "B",
+   "criterion": "前200字有冲突",
+   "quote": "顶职名单今天换名字，换掉的正是他",
+   "source": "正文/第001章_榜上换了名.md",
+   "verdict": "pass"
+  }
+ ]
+}

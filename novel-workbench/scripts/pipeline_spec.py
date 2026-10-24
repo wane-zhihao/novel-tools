@@ -110,6 +110,73 @@ GLOBAL_NODES: dict[str, dict] = {
             "每章标注预估字数（保底 ≥2000）。回执 ≤100 字。"
         ),
     },
+
+    # ─── P5 收尾：只读探针 + 单点修补（N20f 由 N20 block 路由进入，不在线性序列里） ───
+    "N17": {
+        "id": "N17", "kind": "script", "name": "全文整合",
+        "evidence": "投稿包/全文.md", "min_size": 2000,
+    },
+    "N18": {
+        "id": "N18", "kind": "script", "name": "AI味/退化扫描",
+        "evidence": "_pipeline/endgame_findings.json", "min_size": 10,
+    },
+    "N19": {
+        "id": "N19", "kind": "script", "name": "文风漂移+伏笔回收",
+        "evidence": "_pipeline/endgame_findings.json", "min_size": 10,
+    },
+    "N20": {
+        "id": "N20", "kind": "verify", "model": "reasoning", "role": "judge", "name": "评分卡终审",
+        "evidence": "_pipeline/judgments_N20.json", "min_size": 200,
+        "prompt": (
+            "你是七猫签约评审（红队模式）。这是**终审**，不写稿、不改稿。\n"
+            "读取：\n"
+            "  {QIMAO}/03_评分卡.md                 （判定项与 B/A 级别，唯一标准）\n"
+            "  {QIMAO}/01_投稿方案.md               （收稿范围 / 唯一一次评估机会）\n"
+            "  {BOOK}/投稿包/全文.md                 （整合后的交付文本）\n"
+            "  {BOOK}/_pipeline/endgame_findings.json（N18/N19 的机械扫描结果）\n"
+            "  {BOOK}/设定/角色.md                   （人物登记表，判「未知人物」）\n"
+            "  {BOOK}/追踪/_tracking-state.json      （伏笔账本）\n\n"
+            "【分工】机械项以 endgame_findings.json 为准，不要自己重算：\n"
+            "  5–7 文风、12–13 AI/退化、17–19 字数与整合。\n"
+            "你只判需要读文本的项：\n"
+            "  B 级（任一 fail → verdict=block）：1–4 开篇四关、8–9 场景切换/过渡、"
+            "14 段落重复、16 未知人物；\n"
+            "  A 级（只记录，不阻断）：10–11 主线收束/利用率、15 题材漂移。\n\n"
+            "先输出「最可能被七猫编辑拒稿的 3 个理由」，再逐项裁决。\n"
+            "每条 item 必须给 quote（正文连续 12–30 字原文），source 填具体章节文件路径；"
+            "纯机械项可 quote 留空，但必须写 metric（{\"actual\":...,\"expected\":...}）。\n"
+            "裁决：任一 B 项 fail → verdict=block。summary 必须列出**只能靠改 正文/ 解决的章节清单**；"
+            "若问题无法通过改正文解决（例如字数总量不足、伏笔回收率结构性过低），明确写「需人工决策」。\n"
+            "N20f 只准改正文，不许改剧情、大纲、设定、追踪。\n\n"
+            "写入 {BOOK}/_pipeline/judgments_N20.json：\n"
+            '  {"verdict":"pass|block","summary":"...","items":[{"id":"1","level":"B|A",'
+            '"criterion":"...","quote":"正文连续12-30字原文","source":"正文/第NNN章_xxx.md",'
+            '"verdict":"pass|fail","fix":"只改正文的修复指令","metric":{"actual":...,"expected":...}}],'
+            '"chapter_fix_list":[{"chapter":1,"items":["..."]}]}\n'
+            "quote 必须是正文连续原文，严禁省略号跳跃。回执 ≤100 字。"
+        ),
+    },
+    "N20f": {
+        "id": "N20f", "kind": "llm", "model": "default", "role": "writer", "name": "外科手术补丁",
+        "evidence": "_pipeline/n20f_patch_log.json", "min_size": 20,
+        "prompt": (
+            "读取 {BOOK}/_pipeline/endgame_findings.json 与 {BOOK}/_pipeline/judgments_N20.json。\n"
+            "**只改 正文/ 下被点名的章节**，做段落级外科手术：按 findings 的 fix 逐条修，"
+            "不重写整章、不改剧情、不改人物关系、不新增/删除章节文件。\n"
+            "严禁修改 大纲/、设定/、追踪/、投稿包/——投稿包会在下一轮 N17 重新合成。\n"
+            "同一处修 2 次仍不过就停下，把原因写进补丁日志，不要第 3 次硬猜。\n"
+            "改完写 {BOOK}/_pipeline/n20f_patch_log.json：\n"
+            '  {"chapters":[{"chapter":1,"file":"正文/第001章_xxx.md","fixed":["..."]}],'
+            '"unresolved":[{"item":"...","reason":"..."}]}\n'
+            "回执 ≤100 字。"
+        ),
+    },
+    "N21": {
+        "id": "N21", "kind": "script", "name": "投稿包打包",
+        "evidence": ["投稿包/全文.md", "投稿包/体检报告.md",
+                     "投稿包/投稿邮件.md", "投稿包/投稿记录.md"],
+        "min_size": 80,
+    },
 }
 
 
@@ -152,11 +219,11 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
         },
         f"C{n}.N11": {
             "id": f"C{n}.N11", "kind": "script", "name": "章节上下文组装",
-            "evidence": "追踪/上下文.md", "min_size": 1,
+            "evidence": "追踪/上下文.md", "min_size": 200,
         },
         f"C{n}.N12": {
             "id": f"C{n}.N12", "kind": "llm", "model": "default", "role": "writer", "name": "写正文+填追踪事务",
-            "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1800,
+            "evidence": f"正文/第{n:03d}章_*.md", "min_size": 1800,
             "prompt": (
                 f"读取：\n"
                 f"  {b}/大纲/细纲_第{n:03d}章.md          （场景卡，按拍写）\n"
@@ -195,11 +262,11 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
         },
         f"C{n}.N13": {
             "id": f"C{n}.N13", "kind": "script", "name": "合并检查+平台闸门",
-            "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1,
+            "evidence": f"正文/第{n:03d}章_*.md", "min_size": 1,
         },
         f"C{n}.N14": {
             "id": f"C{n}.N14", "kind": "llm", "model": "default", "role": "writer", "name": "定点改写",
-            "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1800,
+            "evidence": f"正文/第{n:03d}章_*.md", "min_size": 1800,
             "skippable": True,  # N13 通过（无 findings）时按方案跳过，直达 N15
             "prompt": (
                 f"读取 {b}/_pipeline/findings_C{n}.json（N13 脚本报错与 N15 审查意见已统一汇入）。\n"
@@ -229,10 +296,15 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
         },
         f"C{n}.N16": {
             "id": f"C{n}.N16", "kind": "script", "name": "章末原子封板",
-            "evidence": f"正文/第{n:03d}章_待命名.md", "min_size": 1,
+            "evidence": f"正文/第{n:03d}章_*.md", "min_size": 1,
         },
     }
     return base
+
+
+def _chapter_path(b: str, n: int) -> str:
+    hits = sorted(Path(b).glob(f"正文/第{n:03d}章_*.md"))
+    return str(hits[0]) if hits else f"{b}/正文/第{n:03d}章_*.md"
 
 
 def _n15_prompt(n: int, prev: int, b: str) -> str:
@@ -240,14 +312,14 @@ def _n15_prompt(n: int, prev: int, b: str) -> str:
     if n == 1:
         scope = ("**首章铁律**：前 200 字有冲突（主角陷入困境：退婚/背叛/陷害/侮辱/破产/误会/灾难/生死危机/利益冲突）；"
                  "主角核心困境已交代；章末留下钩子。")
-        src = f"{b}/正文/第001章_*.md"
+        src = _chapter_path(b, 1)
     elif n == 2:
         return ("本条自动跳过——第 2 章靠 C02.N13 的确定性闸门把关即可。"
                 "请直接调 skip。")
     elif n == 3:
         scope = ("**黄金三章闭环**：读第 1–3 章。查三章内是否有至少一次反转、"
                  "前 600 字冲突是否升级、前 6000 字主线是否可用一句话说清。")
-        src = f"{b}/正文/ 下第 1–3 章"
+        src = "、".join(_chapter_path(b, i) for i in (1, 2, 3))
     elif n in (6, 10):
         scope = ("**Milestone Gate**：节奏是否拖沓、伏笔回收率、主线推进是否过半、"
                  "是否存在悬念空窗（大悬念解决后 3 章内无新钩子）。")
@@ -278,9 +350,31 @@ def _n15_prompt(n: int, prev: int, b: str) -> str:
 
 # ─── 游标推进 ─────────────────────────────────────────────────────────────────
 
+STATION_MIN_WORDS = 20000
+MECHANICAL_N20_IDS = {"5", "6", "7", "12", "13", "17", "18", "19"}
+
+
+def judgment_policy(node_id: str) -> dict:
+    """verify 节点的引用策略：不同节点允许的取证范围不同。"""
+    if node_id == "N04":
+        return {"sources": ["大纲/选题报告.md"], "mechanical_ids": set()}
+    if node_id == "N06":
+        return {"sources": ["设定/"], "mechanical_ids": set()}
+    if node_id == "N08":
+        return {"sources": ["大纲/卷纲_第一卷.md"], "mechanical_ids": set()}
+    if node_id.startswith("C") and node_id.endswith(".N15"):
+        chapter = int(node_id.split(".")[0][1:])
+        return {"sources": [f"正文/第{chapter:03d}章_"], "mechanical_ids": set()}
+    if node_id == "N20":
+        return {"sources": ["正文/"], "mechanical_ids": MECHANICAL_N20_IDS}
+    return {"sources": [], "mechanical_ids": set()}
+
+
 CHAPTER_SEQ = [f"C{{n}}.N{k:02d}" for k in (9, 10, 11, 12, 13, 14, 15, 16)]
 GLOBAL_SEQ = ["N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09d",
-              "__chapters__", "N17", "N18", "N19", "N20", "N20f", "N21"]
+              "__chapters__", "N17", "N18", "N19", "N20", "N21"]
+# N20f 不在线性序列里：只有 N20 判 block 时才由 commands.cmd_done 把 cursor 指过去，
+# 修完由 next_cursor 回跳 N17 重合成。这样 N20 pass 直接进 N21，不会空跑修补节点。
 
 
 def first_cursor() -> str:
@@ -292,6 +386,10 @@ def next_cursor(st: dict) -> str:
     cur = st["cursor"]
     if cur == "__done__":
         return "__done__"
+    if cur == "N20f":                 # 补丁修完 → 回 N17 重合成/重扫，再进 N20 复核
+        return "N17"
+    if cur == "N20":                  # 终审 pass 才走到这里；block 由 cmd_done 直接指到 N20f
+        return "N21"
 
     if cur.startswith("C"):
         n = st["current_chapter"] + 1

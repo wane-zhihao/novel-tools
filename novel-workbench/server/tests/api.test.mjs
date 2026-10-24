@@ -1,0 +1,235 @@
+import assert from "node:assert/strict";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import test, { after, before } from "node:test";
+import { fileURLToPath } from "node:url";
+import { startWorkbench } from "../index.mjs";
+import { applyFakeEnv } from "./helpers.mjs";
+
+const TEST_DIR = dirname(fileURLToPath(import.meta.url));
+const SKILL_DIR = resolve(TEST_DIR, "..", "..");
+const FIXTURES = resolve(SKILL_DIR, "..", "_fixtures");
+
+let workspace;
+let tempRoot;
+let bookDir;
+let base;
+let bookId;
+
+async function request(path, options = {}) {
+  const response = await fetch(`${base}${path}`, options);
+  const text = await response.text();
+  let body = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = text;
+  }
+  return { status: response.status, body, headers: response.headers };
+}
+
+function post(path, payload, extraHeaders = {}) {
+  return request(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...extraHeaders },
+    body: JSON.stringify(payload),
+  });
+}
+
+async function waitRun(id, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { body } = await request(`/api/books/${id}/run?since=0`);
+    const run = body?.run;
+    if (run && !["running", "stopping"].includes(run.status)) return run;
+    await new Promise((accept) => setTimeout(accept, 150));
+  }
+  throw new Error("等待运行结束超时");
+}
+
+before(async () => {
+  applyFakeEnv();
+  tempRoot = mkdtempSync(join(tmpdir(), "wb-api-"));
+  bookDir = join(tempRoot, "联试书");
+  cpSync(resolve(FIXTURES, "chapter_e2e"), bookDir, { recursive: true });
+  workspace = await startWorkbench({
+    port: 0,
+    roots: [tempRoot],
+    dataDir: join(tempRoot, "data"),
+  });
+  base = workspace.url;
+});
+
+after(async () => {
+  await workspace?.close();
+  rmSync(tempRoot, { recursive: true, force: true });
+});
+
+test("健康检查与书库列表", async () => {
+  const health = await request("/api/health");
+  assert.equal(health.status, 200);
+  assert.equal(health.body.ok, true);
+  assert.equal(health.body.books, 1);
+
+  const books = await request("/api/books");
+  assert.equal(books.status, 200);
+  assert.equal(books.body.books.length, 1);
+  bookId = books.body.books[0].id;
+  assert.equal(books.body.books[0].title, "《联试之书》");
+  assert.equal(books.body.books[0].chapters_committed, 2);
+});
+
+test("书详情包含章节、节点与 findings", async () => {
+  const detail = await request(`/api/books/${bookId}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.chapters.length, 2);
+  assert.equal(detail.body.chapters[0].title, "榜上换了名");
+  assert.ok(detail.body.nodes.length >= 8);
+  assert.equal(detail.body.findings.filter((item) => item.active === 1 && item.blocking === 1).length, 1);
+  assert.equal(detail.body.book.cursor, "C3.N09");
+});
+
+test("闸门报告走 gate_runner 实时", async () => {
+  const report = await request(`/api/books/${bookId}/report?chapter=2`);
+  assert.equal(report.status, 200);
+  assert.equal(report.body.source, "gate_runner");
+  assert.equal(report.body.gates.status, "pass");
+  assert.ok(report.body.findings.items.length >= 1);
+
+  const invalid = await request(`/api/books/${bookId}/report?chapter=abc`);
+  assert.equal(invalid.status, 400);
+});
+
+test("mock 运行一步、事件流与历史入库", async () => {
+  const started = await post(`/api/books/${bookId}/run`, { mode: "mock", max_steps: 1 });
+  assert.equal(started.status, 202);
+  assert.equal(started.body.run.status, "running");
+
+  const run = await waitRun(bookId);
+  assert.equal(run.status, "max_steps");
+  assert.ok(run.events.some((event) => event.type === "node_started" && event.node === "C3.N09"));
+  assert.ok(run.events.some((event) => event.type === "node_done" && event.node === "C3.N09"));
+  assert.ok(!JSON.stringify(run.result).toLowerCase().includes("token"));
+
+  const detail = await request(`/api/books/${bookId}`);
+  assert.equal(detail.body.book.cursor, "C3.N10");
+  assert.ok(!existsSync(join(bookDir, "_pipeline", ".step_token")));
+
+  const history = await request(`/api/books/${bookId}/runs`);
+  assert.equal(history.status, 200);
+  assert.ok(history.body.runs.some((row) => row.action === "agent_run" && row.kind === "mock"));
+});
+
+test("停止接口在没有运行时返回 409", async () => {
+  const stopped = await post(`/api/books/${bookId}/stop`, {});
+  assert.equal(stopped.status, 409);
+});
+
+test("投稿记录以文件为真相并可更新", async () => {
+  const created = await post(`/api/books/${bookId}/submissions`, {
+    channel: "七猫",
+    editor: "李编辑",
+    feedback: "开篇节奏偏慢，第三章后再看。",
+  });
+  assert.equal(created.status, 201);
+  const id = created.body.submission.id;
+  assert.ok(existsSync(join(bookDir, "_pipeline", "submissions.json")));
+
+  const updated = await request(`/api/books/${bookId}/submissions/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "编辑反馈", next_action: "按反馈改前三章" }),
+  });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.submission.status, "编辑反馈");
+
+  const list = await request(`/api/books/${bookId}/submissions`);
+  assert.equal(list.body.submissions.length, 1);
+  assert.equal(list.body.submissions[0].next_action, "按反馈改前三章");
+
+  const stored = JSON.parse(readFileSync(join(bookDir, "_pipeline", "submissions.json"), "utf8"));
+  assert.equal(stored.items.length, 1);
+  assert.equal(stored.items[0].id, id);
+});
+
+test("Agent 配置读取、按书覆盖与非法回滚", async () => {
+  const global = await request("/api/agents");
+  assert.equal(global.status, 200);
+  assert.deepEqual(global.body.errors, []);
+  const config = structuredClone(global.body.config);
+
+  const good = structuredClone(config);
+  good.roles.writer.temperature = 0.6;
+  const saved = await request("/api/agents", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope: "book", book_id: bookId, config: good }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.config.roles.writer.temperature, 0.6);
+  assert.ok(existsSync(join(bookDir, "_pipeline", "agents.json")));
+
+  const bad = structuredClone(good);
+  bad.roles.writer.provider = "nope";
+  const rejected = await request("/api/agents", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope: "book", book_id: bookId, config: bad }),
+  });
+  assert.equal(rejected.status, 400);
+  assert.ok(rejected.body.error.details.errors.some((error) => error.includes("不存在的 provider")));
+
+  const after = await request(`/api/agents?book=${bookId}`);
+  assert.equal(after.body.config.roles.writer.temperature, 0.6);
+
+  const secret = structuredClone(good);
+  secret.api_key = "sk-should-not-be-saved";
+  const secretRejected = await request("/api/agents", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope: "book", book_id: bookId, config: secret }),
+  });
+  assert.equal(secretRejected.status, 400);
+  assert.equal(secretRejected.body.error.code, "secret_not_allowed");
+});
+
+test("provider 密钥可写入且不回显", async () => {
+  const secret = "sk-api-test-do-not-leak";
+  const saved = await request("/api/providers/deepseek/secret", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: secret }),
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.configured, true);
+  assert.ok(!JSON.stringify(saved.body).includes(secret));
+
+  const agents = await request("/api/agents");
+  assert.equal(agents.status, 200);
+  const deepseek = agents.body.providers.find((provider) => provider.name === "deepseek");
+  assert.equal(deepseek.configured, true);
+  assert.equal(deepseek.source, "store");
+  assert.ok(!JSON.stringify(agents.body).includes(secret));
+
+  const removed = await request("/api/providers/deepseek/secret", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.configured, false);
+});
+
+test("跨站 Origin 的写请求被拒绝", async () => {
+  const evil = await post(`/api/books/${bookId}/run`, { mode: "mock" }, { Origin: "https://evil.example" });
+  assert.equal(evil.status, 403);
+  assert.equal(evil.body.error.code, "invalid_origin");
+});
+
+test("未知书与未知接口返回 404", async () => {
+  const missingBook = await request("/api/books/9999");
+  assert.equal(missingBook.status, 404);
+  const missingApi = await request("/api/nope");
+  assert.equal(missingApi.status, 404);
+});

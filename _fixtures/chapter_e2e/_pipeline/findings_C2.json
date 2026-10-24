@@ -1,0 +1,31 @@
+{
+ "chapter": 2,
+ "generated_at": "2026-10-24T03:14:38+0800",
+ "items": [
+  {
+   "id": "COMMIT_FAILED",
+   "criterion": "COMMIT_FAILED",
+   "name": "封板复检失败",
+   "level": "B",
+   "blocking": true,
+   "source": "N16",
+   "note": "找不到追踪事务 F:\\WorkBuddy AI\\Novel Platform\\_fixtures\\chapter_e2e\\.story\\work\\第002章\\tracking.json——writer 必须在 N12 按 shapes 填好它"
+  }
+ ],
+ "metrics": {
+  "visible_chars": 2051,
+  "paragraphs_per_1000": 45.2,
+  "sent_len_median": 16.0,
+  "causal_per_1000": 3.9,
+  "narration_action_density": 30.13,
+  "action_density": 31.2,
+  "action_chain_max": 2,
+  "number_per_1000": 0.0,
+  "question_per_1000": 2.44,
+  "multi_actor_sent_ratio": 0.098
+ },
+ "blocking_count": 1,
+ "advisory_count": 0,
+ "resolved_at": "2026-10-24T03:14:57+0800",
+ "resolved_blocking": 1
+}

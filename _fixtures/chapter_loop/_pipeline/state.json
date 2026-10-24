@@ -1,0 +1,38 @@
+{
+ "schema_version": 2,
+ "book": "《联试之书》",
+ "genre": "niandai",
+ "target_words": 20000,
+ "max_chapters": 12,
+ "created_at": "2026-10-24T03:12:20",
+ "current_chapter": 0,
+ "chapters_committed": 0,
+ "words_total": 0,
+ "cursor": "C1.N15",
+ "nodes": {
+  "C1.N15": {
+   "status": "failed",
+   "at": "2026-10-24T03:12:23+0800",
+   "judgments": "F:\\WorkBuddy AI\\Novel Platform\\_fixtures\\chapter_loop\\_pipeline\\judgments_C1.N15.json"
+  },
+  "C1.N14": {
+   "status": "done",
+   "at": "2026-10-24T03:12:22+0800",
+   "evidence": [
+    "正文\\第001章_榜上换了名.md"
+   ],
+   "sha256": [
+    "54aba4ecaf9c151da5297ead45cd7307a98c514b99350e2db34f694cabcd0f91"
+   ],
+   "attempts": 2
+  }
+ },
+ "decisions_taken": [],
+ "pending_questions": [],
+ "blocked_reason": "C1.N15 连续 3 轮仍 block：第1章动作链是流水账，需把连续动作改成动作+因果。",
+ "relay_count": 0,
+ "fix_rounds": {
+  "1": 2
+ },
+ "llm_rounds": 2
+}

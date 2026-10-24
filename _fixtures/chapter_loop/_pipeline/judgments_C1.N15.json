@@ -1,0 +1,15 @@
+{
+ "verdict": "block",
+ "summary": "第1章动作链是流水账，需把连续动作改成动作+因果。",
+ "items": [
+  {
+   "id": "deletion-test",
+   "level": "B",
+   "criterion": "删除测试",
+   "quote": "",
+   "source": "正文/第001章_榜上换了名.md",
+   "verdict": "fail",
+   "fix": "第1章第2条动作链改写成动作+因果"
+  }
+ ]
+}

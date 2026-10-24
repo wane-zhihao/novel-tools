@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "providers": {
+    "mock": {
+      "type": "mock"
+    },
+    "deepseek": {
+      "type": "openai",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key_env": "DEEPSEEK_API_KEY"
+    },
+    "ollama": {
+      "type": "openai",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "api_key_env": "OLLAMA_API_KEY",
+      "api_key_optional": true
+    }
+  },
+  "roles": {
+    "writer": {
+      "provider": "mock",
+      "model": "mock-writer",
+      "temperature": 0.8,
+      "timeout_s": 300,
+      "max_attempts": 2,
+      "max_tokens": 4096
+    },
+    "judge": {
+      "provider": "mock",
+      "model": "mock-judge",
+      "temperature": 0.2,
+      "timeout_s": 600,
+      "max_attempts": 2,
+      "max_tokens": 2048
+    },
+    "scout": {
+      "provider": "mock",
+      "model": "mock-scout",
+      "temperature": 0.4,
+      "timeout_s": 180,
+      "max_attempts": 2,
+      "max_tokens": 2048
+    }
+  },
+  "budgets": {
+    "llm_rounds": 60,
+    "fix_rounds": 2,
+    "n20_rounds": 2,
+    "node_timeout_s": 900,
+    "max_completion_tokens": 200000,
+    "max_tool_steps": 48
+  }
+}

@@ -39,3 +39,27 @@ dist/
 *.log
 tmp/
 temp/
+
+# 工作台数据库与本地运行数据（文件才是真相，DB 可重建）
+.workbench-data/
+.tmp-wb-data/
+.tmp-*/
+*.db
+*.db-wal
+*.db-shm
+
+# 用户级配置与密钥（只存数据目录，不入库）
+settings.json
+secrets.json
+pipeline.json
+agents.json
+**/_pipeline/workbench.json
+**/_pipeline/run.json
+**/_pipeline/.step_token
+**/_pipeline/.next.lock
+**/_pipeline/backups/
+.story/
+
+# 夹具里的 manifest / run 记录是测试证据，保留入库
+!_fixtures/**/_pipeline/workbench.json
+!_fixtures/**/_pipeline/run.json

@@ -1,0 +1,20 @@
+{
+ "chapter": 1,
+ "generated_at": "2026-10-24T03:12:23+0800",
+ "items": [
+  {
+   "id": "deletion-test",
+   "criterion": "删除测试",
+   "name": "删除测试",
+   "level": "B",
+   "blocking": true,
+   "quote": "",
+   "file": "正文/第001章_榜上换了名.md",
+   "fix": "第1章第2条动作链改写成动作+因果",
+   "note": "第1章第2条动作链改写成动作+因果",
+   "source": "N15"
+  }
+ ],
+ "blocking_count": 1,
+ "advisory_count": 0
+}

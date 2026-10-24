@@ -1,0 +1,7 @@
+{
+ "schema_version": 1,
+ "python": "C:\\Users\\Wane-\\.workbuddy-ai\\binaries\\python\\versions\\3.13.12\\python.exe",
+ "autopilot": "F:\\WorkBuddy AI\\Novel Platform\\novel-workbench\\scripts\\autopilot.py",
+ "gate_runner": "F:\\小说\\platforms\\_core\\tools\\gate_runner.py",
+ "platform": "F:\\小说\\platforms\\qimao"
+}

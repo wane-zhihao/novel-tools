@@ -1,0 +1,75 @@
+{
+ "schema_version": 2,
+ "book": "《联试之书》",
+ "genre": "niandai",
+ "target_words": 20000,
+ "max_chapters": 12,
+ "created_at": "2026-10-24T03:12:20",
+ "current_chapter": 2,
+ "chapters_committed": 2,
+ "words_total": 4760,
+ "cursor": "C3.N09",
+ "nodes": {
+  "C2.N10": {
+   "status": "done",
+   "at": "2026-10-24T03:14:02+0800",
+   "output": "\"表头：# | 情节点 | 功能标签 | 执行边界（禁＋放）\",\n      \"expected\": \"情节细化使用表格：# / 情节点（谁做了什么） / 功能标签 / 执行边界（禁＋放）；需要时可在功能标签后加「分辨率」列\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只把情节点序列改成这张表，逐点补功能标签与执行边界；不增删情节点本身。\"\n    },\n    {\n      \"id\": \"outline.plotpoint-release\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"6 个情节点里 6 个写了「放」\",\n      \"expected\": \"执行边界写成「禁＋放」两半，每章至少一个点写了「放」——放行是解除限制，不是义务\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"给最该出彩的一两个点补「放」半边（谁可以出声、谁可以失态、允不允许当场标价），不改情节点本身。\"\n    },\n    {\n      \"id\": \"outline.setting-refs-exist\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"2 处项目内引用全部存在\",\n      \"expected\": \"细纲引用的每个项目内 .md 文件都真实存在——不许把槽位指向查无实据的权威文件\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"修正引用路径；或按新增物三级先把缺的设定落档（「写了要报」直接补并登记、「先问作者」进排纲底稿的供给自查提案），再在细纲引用。\"\n    },\n    {\n      \"id\": \"outline.wordcount-target\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"字数目标：2500；字数口径 visible_chars_v1：true\",\n      \"expected\": \"字数目标为 500-20000 的正整数（可写「2300 字」「约 2300」「2,300」，可带括号备注），并声明 字数口径：visible_chars_v1；作者给了上下限时另写一行「字数范围：2000-2600」\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只补字数目标、字数范围或字数口径行，不调整情节安排。\"\n    }\n  ],\n  \"failures\": [],\n  \"advisories\": [],\n  \"repair_scope\": []\n}\n"
+  },
+  "C2.N11": {
+   "status": "done",
+   "at": "2026-10-24T03:14:02+0800",
+   "output": "上下文已组装 -> F:\\WorkBuddy AI\\Novel Platform\\_fixtures\\chapter_e2e\\追踪\\上下文.md（9710 字符）"
+  },
+  "C2.N12": {
+   "status": "done",
+   "at": "2026-10-24T03:14:33+0800",
+   "evidence": [
+    "正文\\第002章_老会计的茶缸.md"
+   ],
+   "sha256": [
+    "80fa66bfe073efbf5f6b5fe16db5ca19d39cf7ddedde866f9cf50b9416b53a3a"
+   ],
+   "attempts": 1
+  },
+  "C2.N13": {
+   "status": "done",
+   "at": "2026-10-24T03:14:38+0800",
+   "output": "blocking=0 advisory=0 metrics={\"visible_chars\": 2051, \"paragraphs_per_1000\": 45.2, \"sent_len_median\": 16.0, \"causal_per_1000\": 3.9, \"narration_action_density\": 30.13, \"action_density\": 31.2, \"action_chain_max\": 2, \"number_per_1000\": 0.0, \"question_per_1000\": 2.44, \"multi_actor_sent_ratio\": 0.098}"
+  },
+  "C2.N14": {
+   "status": "done",
+   "at": "2026-10-24T03:14:53+0800",
+   "evidence": [
+    "正文\\第002章_老会计的茶缸.md"
+   ],
+   "sha256": [
+    "80fa66bfe073efbf5f6b5fe16db5ca19d39cf7ddedde866f9cf50b9416b53a3a"
+   ],
+   "attempts": 1
+  },
+  "C2.N15": {
+   "status": "skipped",
+   "at": "2026-10-24T03:14:56+0800",
+   "reason": "第2章非里程碑章（只在 (1, 3, 6, 10) 做阶段审查）"
+  },
+  "C2.N16": {
+   "status": "done",
+   "at": "2026-10-24T03:14:57+0800",
+   "output": "{\"schema\":\"story-chapter-check/v1\",\"status\":\"ready\",\"chapter\":2,\"length\":{\"schema\":\"story-wordcount-result/v1\",\"metric\":\"visible_chars_v1\",\"chapter\":2,\"case_id\":null,\"target\":2500,\"actual\":2380,\"internal_band\":{\"min\":2200,\"max\":2800,\"status\":\"pass\"},\"user_band\":{\"min\":2125,\"max\":2875,\"status\":\"pass\"},\"signed_error_pct\":-0.048,\"absolute_error_pct\":0.048,\"band_source\":\"default\",\"status\":\"internal_pass\",\"invalid_reason\":null},\"quality\":{\"status\":\"pass\",\"blocking_findings\":[],\"advisories\":[],\"semantic_advisories\":0,\"tool_errors\":[]},\"compression\":null,\"state_revision\":2,\"tracking_committed\":true,\"next_chapter_started\":false,\"available_actions\":[\"commit\"],\"wordcount\":{\"metric\":\"visible_chars_v1\",\"target\":2500,\"actual\":2380,\"status\":\"internal_pass\",\"resolution\":\"within_user_band\",\"body_sha256\":\"80fa66bfe073efbf5f6b5fe16db5ca19d39cf7ddedde866f9cf50b9416b53a3a\"},\"mode\":\"append\",\"work_dir_removed\":\".story/work/第002章\"}\n\nwords_total=4760"
+  },
+  "C3.N09": {
+   "status": "running",
+   "attempts": 1,
+   "started_at": "2026-10-24T03:14:57+0800"
+  }
+ },
+ "decisions_taken": [],
+ "pending_questions": [],
+ "blocked_reason": null,
+ "relay_count": 0,
+ "fix_rounds": {
+  "2": 1
+ },
+ "llm_rounds": 2,
+ "n20_rounds": 0
+}

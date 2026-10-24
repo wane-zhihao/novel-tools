@@ -1,0 +1,62 @@
+{
+ "schema_version": 2,
+ "book": "《联试之书》",
+ "genre": "niandai",
+ "target_words": 20000,
+ "max_chapters": 12,
+ "created_at": "2026-10-24T03:11:50",
+ "current_chapter": 1,
+ "chapters_committed": 1,
+ "words_total": 2380,
+ "cursor": "__done__",
+ "nodes": {
+  "N17": {
+   "status": "done",
+   "at": "2026-10-24T03:12:01+0800",
+   "output": "合并 1 章 -> F:\\WorkBuddy AI\\Novel Platform\\_fixtures\\workbench_e2e\\投稿包\\全文.md；已重置 endgame_findings"
+  },
+  "N18": {
+   "status": "done",
+   "at": "2026-10-24T03:12:01+0800",
+   "output": "N18 扫描 1 章：blocking=0 total=0"
+  },
+  "N19": {
+   "status": "done",
+   "at": "2026-10-24T03:12:01+0800",
+   "output": "N19：style 扫描 1 章，漂移提示 0 条；截至第1章无到期伏笔"
+  },
+  "N20": {
+   "status": "done",
+   "at": "2026-10-24T03:12:07+0800",
+   "evidence": [
+    "_pipeline\\judgments_N20.json"
+   ],
+   "sha256": [
+    "2b5e678a637336c2f6c8c60ac7602a37c8dda486cc3082fb51139a18fda47c53"
+   ],
+   "attempts": 1
+  },
+  "N20f": {
+   "status": "done",
+   "at": "2026-10-24T03:12:00+0800",
+   "evidence": [
+    "_pipeline\\n20f_patch_log.json"
+   ],
+   "sha256": [
+    "99ea0cfed72859444610ac7fd36c830fdd26532f36edfdf24235f28782427405"
+   ],
+   "attempts": 2
+  },
+  "N21": {
+   "status": "done",
+   "at": "2026-10-24T03:12:08+0800",
+   "output": "投稿包已生成：全文.md / 体检报告.md / 投稿邮件.md / 投稿记录.md；体检=不可投；字数=2380"
+  }
+ },
+ "decisions_taken": [],
+ "pending_questions": [],
+ "blocked_reason": null,
+ "relay_count": 0,
+ "n20_rounds": 2,
+ "llm_rounds": 3
+}

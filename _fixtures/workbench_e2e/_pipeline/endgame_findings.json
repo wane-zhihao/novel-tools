@@ -1,0 +1,21 @@
+{
+ "book": "《联试之书》",
+ "chapters_scanned": 1,
+ "generated_at": "2026-10-24T03:12:01+0800",
+ "items": [
+  {
+   "id": "1",
+   "criterion": "前200字有冲突",
+   "name": "前200字有冲突",
+   "level": "B",
+   "blocking": true,
+   "quote": "",
+   "file": "正文/第001章_榜上换了名.md",
+   "fix": "把第1章前200字的背景交代改成当场对抗",
+   "note": "把第1章前200字的背景交代改成当场对抗",
+   "source": "N20"
+  }
+ ],
+ "blocking_count": 1,
+ "advisory_count": 0
+}
