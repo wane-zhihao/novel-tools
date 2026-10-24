@@ -8,7 +8,7 @@
  "current_chapter": 1,
  "chapters_committed": 1,
  "words_total": 0,
- "cursor": "C2.N09",
+ "cursor": "C2.N12",
  "nodes": {
   "N01": {
    "status": "done",
@@ -156,15 +156,34 @@
    "output": "{\"schema\":\"story-chapter-check/v1\",\"status\":\"ready\",\"chapter\":1,\"length\":{\"schema\":\"story-wordcount-result/v1\",\"metric\":\"visible_chars_v1\",\"chapter\":1,\"case_id\":null,\"target\":2500,\"actual\":2380,\"internal_band\":{\"min\":2200,\"max\":2800,\"status\":\"pass\"},\"user_band\":{\"min\":2125,\"max\":2875,\"status\":\"pass\"},\"signed_error_pct\":-0.048,\"absolute_error_pct\":0.048,\"band_source\":\"default\",\"status\":\"internal_pass\",\"invalid_reason\":null},\"quality\":{\"status\":\"pass\",\"blocking_findings\":[],\"advisories\":[],\"semantic_advisories\":0,\"tool_errors\":[]},\"compression\":null,\"state_revision\":1,\"tracking_committed\":true,\"next_chapter_started\":false,\"available_actions\":[\"commit\"],\"wordcount\":{\"metric\":\"visible_chars_v1\",\"target\":2500,\"actual\":2380,\"status\":\"internal_pass\",\"resolution\":\"within_user_band\",\"body_sha256\":\"54aba4ecaf9c151da5297ead45cd7307a98c514b99350e2db34f694cabcd0f91\"},\"mode\":\"revision\",\"work_dir_removed\":\".story/work/第001章\"}\nWARNING: chapter delta is 2979 bytes; target is <= 1536\n"
   },
   "C2.N09": {
+   "status": "done",
+   "at": "2026-10-24T02:56:47+0800",
+   "evidence": [
+    "大纲\\细纲_第002章.md"
+   ],
+   "sha256": [
+    "ac73623827c0c5fdc6c2ff17b0280723f0345bbdfd818091d71eecabcb0256b6"
+   ],
+   "attempts": 2
+  },
+  "C2.N10": {
+   "status": "done",
+   "at": "2026-10-24T03:00:50+0800",
+   "output": "\"表头：# | 情节点 | 功能标签 | 执行边界（禁＋放）\",\n      \"expected\": \"情节细化使用表格：# / 情节点（谁做了什么） / 功能标签 / 执行边界（禁＋放）；需要时可在功能标签后加「分辨率」列\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只把情节点序列改成这张表，逐点补功能标签与执行边界；不增删情节点本身。\"\n    },\n    {\n      \"id\": \"outline.plotpoint-release\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"6 个情节点里 6 个写了「放」\",\n      \"expected\": \"执行边界写成「禁＋放」两半，每章至少一个点写了「放」——放行是解除限制，不是义务\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"给最该出彩的一两个点补「放」半边（谁可以出声、谁可以失态、允不允许当场标价），不改情节点本身。\"\n    },\n    {\n      \"id\": \"outline.setting-refs-exist\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"2 处项目内引用全部存在\",\n      \"expected\": \"细纲引用的每个项目内 .md 文件都真实存在——不许把槽位指向查无实据的权威文件\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"修正引用路径；或按新增物三级先把缺的设定落档（「写了要报」直接补并登记、「先问作者」进排纲底稿的供给自查提案），再在细纲引用。\"\n    },\n    {\n      \"id\": \"outline.wordcount-target\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"字数目标：2500；字数口径 visible_chars_v1：true\",\n      \"expected\": \"字数目标为 500-20000 的正整数（可写「2300 字」「约 2300」「2,300」，可带括号备注），并声明 字数口径：visible_chars_v1；作者给了上下限时另写一行「字数范围：2000-2600」\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只补字数目标、字数范围或字数口径行，不调整情节安排。\"\n    }\n  ],\n  \"failures\": [],\n  \"advisories\": [],\n  \"repair_scope\": []\n}\n"
+  },
+  "C2.N11": {
+   "status": "done",
+   "at": "2026-10-24T03:00:51+0800",
+   "output": "陈磊\": {\"identity\": \"陈砚的亲弟弟，顶职名额的既得挂名者\", \"location\": \"县机械厂厂前宣传栏\", \"goal\": \"坐稳名额，把哥哥钉死让自己安稳\", \"state\": \"顶职名额暂时挂在榜上；当众倒戈指认哥哥「那笔账有问题」，被「经手人是谁」当众问住\", \"abilities_resources\": [\"顶职名额暂时挂在榜上\", \"赵德海的暗中支持（被当枪使而不自知）\"], \"relationships\": [\"陈砚：从兄弟变成当众指证的对手\", \"赵德海：被其当枪使\"], \"knowledge\": [\"名额来得不正，经手顺序一摆就崩\", \"不知道陈砚记得当年全部顺序\"], \"open_threads\": [\"能否坐稳榜上名额\"]}, \"赵德海\": {\"identity\": \"县机械厂厂办主任，顶职名额经手人，幕后大反派\", \"location\": \"县机械厂厂前宣传栏\", \"goal\": \"捂死自己经手的账目窟窿，先把知情人钉成「侵占公款」，一次绝后患\", \"state\": \"当众定性成功并定下三天期限，但被陈砚当众逐条复述罪状顺序、被「经手人是谁」一问戳中顺序软肋，失了分寸\", \"abilities_resources\": [\"厂办主任权柄\", \"经手顶职名单与账目的便利\"], \"relationships\": [\"陈砚：从上下级变成限期追缴的死对头\", \"陈磊：当枪使的棋子\"], \"knowledge\": [\"只记得对他有利的顺序\", \"知道账目有窟窿，不知道陈砚记得全顺序\", \"软肋：越急着限期定罪，越把所有人的记忆往前多逼一步\"], \"open_threads\": [\"三天内把陈砚钉成侵占公款\", \"捂住院子里经手的账目窟窿\"]}, \"王秀兰\": {\"identity\": \"陈砚之母\", \"location\": \"县机械厂厂前宣传栏\", \"goal\": \"小儿子前途大于大儿子委屈，盼家丑捂住、家门不丢人\", \"state\": \"当众劝「认了算了，别连累全家」被大儿子掰开手并当众反驳，愣在原地；偏心账加重（S6 埋设加深）\", \"abilities_resources\": [], \"relationships\": [\"陈砚：当众劝认被掰开手并当众反驳\", \"陈磊：偏疼小儿子\"], \"knowledge\": [\"第一个打脸位在 ch9\", \"她的偏心是陈磊敢下手的土壤\"], \"open_threads\": [\"家丑能否捂住\"]}, \"陈广田\": {\"identity\": \"陈砚之父，三十年老工人\", \"location\": \"县机械厂厂前宣传栏人群边缘\", \"goal\": \"保住三十年清誉，盼两个儿子都有出路、家门不丢人\", \"state\": \"清誉被赵德海当众点名殃及；人群边缘露一面，终究没说上话，先转身离去\", \"abilities_resources\": [\"三十年车间口碑\"], \"relationships\": [\"陈砚：清誉被当众殃及，护誉之心更切\", \"赵德海：其拿捏陈家的后续筹码（S7 埋于 ch5）\"], \"knowledge\": [\"偏疼小儿子是软肋\", \"污名恰恰落在他最看重的清誉上\", \"越想「家丑捂下去」越被赵德海拿捏\"], \"open_threads\": [\"保住三十年清誉\"]}}, \"previous_position\": {\"story_time\": \"1983年初夏，顶职公示当天，晌午至傍晚\", \"scene\": \"县机械厂厂前宣传栏（公示栏前，开篇「当众换名」发生地）\"}}\n"
+  },
+  "C2.N12": {
    "status": "running",
    "attempts": 1,
-   "started_at": "2026-10-24T01:23:10+0800"
+   "started_at": "2026-10-24T03:00:51+0800"
   }
  },
  "decisions_taken": [],
  "pending_questions": [],
- "blocked_reason": null,
- "step_token": "fe5cfd",
- "step_token_node": "C2.N09",
+ "blocked_reason": "用户明确指示：先不动小说，转工作台开发",
  "relay_count": 0
 }
