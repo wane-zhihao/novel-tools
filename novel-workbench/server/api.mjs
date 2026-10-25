@@ -78,6 +78,35 @@ function parseJson(text, fallback = null) {
   }
 }
 
+// 子命令会先打印若干行 JSON（如 resume 的进度），最后一行才是结果
+function parseLastJson(text, fallback = null) {
+  const lines = String(text ?? "").trim().split(/\r?\n/).filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const parsed = parseJson(lines[i]);
+    if (parsed && typeof parsed === "object") return parsed;
+  }
+  return fallback;
+}
+
+// 单章定稿的错误码 → HTTP 状态（Python 侧统一返回 2，语义靠 code 区分）
+const COMMIT_STATUS = {
+  run_running: 409,
+  chapter_busy: 409,
+  chapter_gap: 409,
+  chapter_missing: 409,
+  chapter_ambiguous: 409,
+  tracking_missing: 409,
+  tracking_invalid: 409,
+  revision_conflict: 409,
+  gate_blocked: 422,
+  length_out_of_band: 422,
+  quality_blocked: 422,
+  quality_tool_unavailable: 400,
+  invalid_chapter: 400,
+  not_initialized: 400,
+  commit_failed: 500,
+};
+
 function bookSummary(row) {
   return {
     id: row.id,
@@ -430,6 +459,36 @@ export function createApi({
       resumed: true,
       book: bookSummary(db.prepare(`${bookSelect} WHERE b.id = ?`).get(row.id)),
     });
+  }
+
+  async function handleChapterCommit(request, response, url, id, chapter) {
+    const row = getBookRow(id);
+    if (runManager.active(row.id)) {
+      throw new HttpError(409, "run_running", "这一章还在写，等运行结束再定稿");
+    }
+    if (hasStepToken(row.path)) {
+      throw new HttpError(409, "chapter_busy", "流水线正卡在一个节点上，先恢复或停止");
+    }
+    const body = await readJsonBody(request);
+    const paths = resolveRuntimePaths({ dataDir });
+    const args = [paths.autopilot, "commit", "--book", row.path, "--chapter", String(chapter)];
+    if (["auto", "append", "revision"].includes(body.mode)) args.push("--mode", body.mode);
+    if (body.accept_current_length === true) args.push("--accept-current-length");
+    if (body.verify === false) args.push("--no-verify");
+    const result = await runPython(paths.python, args, {
+      cwd: row.path,
+      timeoutMs: 360_000,
+      env: { WORKBENCH_CONFIG: paths.configPath },
+    });
+    const payload = parseLastJson(result.stdout) ?? parseLastJson(result.stderr) ?? {};
+    if (result.code !== 0) {
+      const code = payload.error || "commit_failed";
+      const { error: _error, ...detail } = payload;
+      throw new HttpError(COMMIT_STATUS[code] ?? 500, code,
+        payload.message || "定稿失败", detail);
+    }
+    syncBook(db, row.path, { force: true });
+    sendJson(response, 200, payload);
   }
 
   async function handleRunStatus(request, response, url, id) {
@@ -1115,6 +1174,11 @@ export function createApi({
     match = /^\/api\/books\/(\d+)\/chapters\/(\d+)\/content$/.exec(path);
     if (match) {
       return handleChapterContent(request, response, url, Number(match[1]), Number(match[2]));
+    }
+    match = /^\/api\/books\/(\d+)\/chapters\/(\d+)\/commit$/.exec(path);
+    if (match) {
+      if (request.method !== "POST") throw new HttpError(405, "method_not_allowed", "不支持的方法");
+      return handleChapterCommit(request, response, url, Number(match[1]), Number(match[2]));
     }
     match = /^\/api\/books\/(\d+)\/versions$/.exec(path);
     if (match) {
