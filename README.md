@@ -173,6 +173,8 @@ node novel-workbench/server/cli.mjs run --book <书目录> --json
 - `done` 返回引用校验失败时，把失败原因回喂给 judge 重写（受 `max_attempts` 限制）；
   N15/N20 的 block 按状态机路由（N14 / N20f），第三次连续失败才停机。
 - 停止：Ctrl+C（AbortSignal）；预算：`budgets.llm_rounds`、`budgets.node_timeout_s`；`--max-steps` 限制本轮节点数。
+  注意 `llm_rounds` 按 **chat 轮**计（一次节点 attempt 内工具循环可多次 chat），不是按节点数：
+  默认 400 约够 25–40 章/run，130 章的长篇要分 3–4 个 run 跑完。
 - 每轮结束自动同步 SQLite，`status` 立即能看到新进度。
 - 回归：`node --test novel-workbench/server/tests/*.test.mjs`（含真实 autopilot 单节点集成测试，全部在临时副本上跑）。
 

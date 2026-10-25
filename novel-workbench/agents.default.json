@@ -48,7 +48,6 @@
     "n20_rounds": 2,
     "node_timeout_s": 900,
     "max_completion_tokens": 200000,
-    "max_tool_steps": 48,
-    "_note": "llm_rounds 按 chat 轮计（runtime.mjs:295），不是按节点数。130 章约需 300+ llm 节点 × 3–6 轮 → 400 只够 25–40 章/run，130 章要 3–4 个 run。单次 run 的预算是 400，不是全书写完的预算。（2026-10-25 从 60 调）"
+    "max_tool_steps": 48
   }
 }
