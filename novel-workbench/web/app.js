@@ -1,6 +1,7 @@
 import { api } from "./lib/api.js";
 import { el, clear, toast } from "./lib/dom.js";
 import { renderShelf } from "./views/shelf.js";
+import { renderSetup } from "./views/setup.js";
 import { renderWrite } from "./views/write.js";
 import { renderRevise } from "./views/revise.js";
 import { renderStory } from "./views/story.js";
@@ -23,6 +24,18 @@ const context = document.querySelector("#context");
 const dialog = document.querySelector("#newBookDialog");
 const form = document.querySelector("#newBookForm");
 
+// B2：记住上次打开的书。单写本机工具，用 localStorage 足够；隐私模式下 setItem
+// 会抛错，静默忽略——丢了记忆只是回落到书架，不影响正确性。
+const LAST_BOOK_KEY = "workbench:last-book";
+
+function rememberBook(id) {
+  try { localStorage.setItem(LAST_BOOK_KEY, String(id)); } catch { /* 忽略 */ }
+}
+
+function lastBookId() {
+  try { return Number(localStorage.getItem(LAST_BOOK_KEY)) || null; } catch { return null; }
+}
+
 function parseRoute() {
   const raw = location.hash.replace(/^#\/?/, "");
   const [path] = raw.split("?");
@@ -36,6 +49,7 @@ function parseRoute() {
     return { view: "write", id, chapter: null };
   }
   if (parts[0] === "settings") return { view: "settings" };
+  if (parts[0] === "setup") return { view: "setup" };
   return { view: "shelf" };
 }
 
@@ -73,11 +87,43 @@ function paintNav(active, book) {
   };
   clear(railNav).append(...items.map((item) => make(item, false)));
   clear(bottomNav).append(...items.map((item) => make(item, true)));
-  railBook.textContent = book ? `${book.title ?? "未命名"}` : "还没有书";
+  paintBookSwitcher(book);
   context.textContent = book ? `${book.title ?? "未命名"}` : "先写下来，再改好";
 }
 
+// B2：多书作者唯一的换书入口。原生 <select>：零框架、键盘可达、移动端可用。
+// 选中即跳该书的默认页（app 会用 manuscript.next_chapter 解析到对的章）。
+function paintBookSwitcher(book) {
+  clear(railBook);
+  const books = state.books ?? [];
+  if (!books.length) {
+    railBook.textContent = "还没有书";
+    return;
+  }
+  const select = el("select", {
+    class: "rail-book-select",
+    "aria-label": "切换书籍",
+    onchange: (event) => {
+      const id = Number(event.target.value);
+      if (id && id !== Number(book?.id)) go(`#/books/${id}`);
+    },
+  }, ...books.map((item) => el("option", {
+    value: String(item.id),
+    text: item.title ?? "未命名",
+    selected: Number(item.id) === Number(book?.id) ? "selected" : null,
+  })));
+  if (book) select.value = String(book.id);
+  railBook.append(select);
+}
+
 function openNewBook() {
+  // B4：书库目录没就绪时，点「开新书」注定 500 books_root_missing。与其让用户
+  // 填完整张表再撞墙，不如先把开机向导打开——这是「开书」的真正前置。
+  if (state.health?.needs_setup) {
+    toast("先设好书库目录才能开书", "warn");
+    go("#/setup");
+    return;
+  }
   form.reset();
   form.elements.target_words.value = "20000";
   dialog.showModal();
@@ -92,7 +138,11 @@ async function renderShelfRoute(token) {
     state.books = null;
     state.loadError = error.message;
   }
-  const preferred = bookOf(state.currentBookId) ?? state.books?.[0] ?? null;
+  // B2：优先用「上次打开的书」，而不是按标题排序的 books[0]——后者会让多书作者
+  // 刷新后静默换书。记忆的书被删时回落书架（不假装还在）。
+  if (state.currentBookId == null) state.currentBookId = lastBookId();
+  const preferred = bookOf(state.currentBookId) ?? null;
+  if (preferred) state.currentBookId = Number(preferred.id);
   paintNav("书房", preferred);
   if (token !== state.routeToken) return;
   await renderShelf({ state, go, openNewBook, retry: render });
@@ -108,6 +158,7 @@ async function renderBookRoute(route, token) {
     return;
   }
   state.currentBookId = Number(book.id);
+  rememberBook(book.id);
   if (route.view === "write") {
     paintNav("写", book);
     let chapter = route.chapter;
@@ -139,29 +190,43 @@ async function renderBookRoute(route, token) {
       }
     }
     context.textContent = `${book.title ?? "未命名"} · 第 ${chapter} 章`;
+    // 并发守卫：换书/切路由会让 routeToken 前进，在途渲染必须作废，否则会用
+    // 陈旧 book 覆盖新页面（renderShelfRoute 已有同款守卫）。
+    if (token !== state.routeToken) return;
     await renderWrite({ bookId: book.id, chapter, go, state });
     return;
   }
   if (route.view === "revise") {
+    if (token !== state.routeToken) return;
     paintNav("改", book);
     await renderRevise({ bookId: book.id, go, state });
     return;
   }
   if (route.view === "story") {
+    if (token !== state.routeToken) return;
     paintNav("故事", book);
     await renderStory({ bookId: book.id, go, state });
     return;
   }
   if (route.view === "submit") {
+    if (token !== state.routeToken) return;
     paintNav("投", book);
     await renderSubmit({ bookId: book.id, go, state });
   }
 }
 
-async function renderSettingsRoute() {
+async function renderSettingsRoute(token) {
   paintNav("", bookOf(state.currentBookId));
   context.textContent = "设置 · 只保存在本机";
+  if (token !== state.routeToken) return;
   await renderSettings({ state, go });
+}
+
+async function renderSetupRoute(token) {
+  paintNav("", null);
+  context.textContent = "首次开机 · 三步";
+  if (token !== state.routeToken) return;
+  await renderSetup({ state, go, onReady: render });
 }
 
 async function render() {
@@ -171,7 +236,8 @@ async function render() {
   const route = parseRoute();
   try {
     if (route.view === "shelf") return await renderShelfRoute(token);
-    if (route.view === "settings") return await renderSettingsRoute();
+    if (route.view === "setup") return await renderSetupRoute(token);
+    if (route.view === "settings") return await renderSettingsRoute(token);
     return await renderBookRoute(route, token);
   } catch (error) {
     toast(error.message, "error");
@@ -230,7 +296,16 @@ async function boot() {
     // 常驻错误条已含完整信息与重试入口，不再叠加会自消/堆积的 toast
     showConnError(error.message);
   }
-  if (!location.hash) location.hash = "#/";
+  // B2/B4：冷启动路由。服务连上但环境没配好 → 开机向导（此前点「开新书」会直接
+  // 500 books_root_missing，路径却藏在设置折叠里）；服务没连上 → 留在书架看错误条；
+  // 一切正常 → 回到「上次打开的那本书」的稿纸。记忆失效（书被删/首启动）才落书架。
+  if (!location.hash) {
+    if (state.health?.needs_setup) location.hash = "#/setup";
+    else {
+      const remembered = bookOf(lastBookId());
+      location.hash = remembered ? `#/books/${remembered.id}` : "#/";
+    }
+  }
   await render();
 }
 
