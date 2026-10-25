@@ -23,7 +23,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from pipeline_spec import milestones  # 里程碑唯一定义处（pipeline_spec.milestones）
+from pipeline_spec import milestones, span, volumes  # 里程碑/卷边界的唯一定义处
 
 HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
@@ -1077,6 +1077,64 @@ def snapshot_body(book: Path, tag: str) -> None:
 
 # ─── 节点 → 动作 分发表 ───────────────────────────────────────────────────────
 
+def _chapter_files_in(book: Path, start: int, end: int) -> list[Path]:
+    """取第 start–end 章的文件（按章号前缀 第NNN章 匹配）。"""
+    want = {f"{n:03d}" for n in range(start, end + 1)}
+    out = []
+    for f in sorted((book / "正文").glob("*.md")):
+        m = re.match(r"第(\d{3})章", f.name)
+        if m and m.group(1) in want:
+            out.append(f)
+    return out
+
+
+def _merge_volume(book: Path, st: dict, v: int) -> tuple[int, str]:
+    """V{v}.N17：只合本卷，单卷 ≤6 万字。25 万字整本合成会超出 judge 上下文。"""
+    start, end = span(st, v)
+    parts = _chapter_files_in(book, start, end)
+    if not parts:
+        return 2, f"第{v}卷（第 {start}–{end} 章）没有章节文件"
+    text = "\n\n".join(p.read_text(encoding="utf-8").strip() for p in parts) + "\n"
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", text))
+    out = book / "投稿包" / f"卷{v}_全文.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    warn = "" if cjk <= 60000 else f"  ⚠ 超 6 万字（{cjk}），N20 可能吃紧"
+    return 0, f"第{v}卷合成 {len(parts)} 章 / {cjk} 汉字 -> {out.name}{warn}"
+
+
+def _merge_global(book: Path, st: dict) -> tuple[int, str]:
+    """N17g：合全书 全文.md + 全书概要.md。
+
+    概要给 N20g 读——N20g **不许读正文**（25 万字 ≈ 20 万 token 必爆）。
+    """
+    parts = sorted((book / "正文").glob("*.md"))
+    if not parts:
+        return 2, "正文/ 下没有章节文件"
+    full = "\n\n".join(p.read_text(encoding="utf-8").strip() for p in parts) + "\n"
+    out = book / "投稿包" / "全文.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(full, encoding="utf-8")
+
+    # 概要：每章取标题 + 首段（各 ≤120 字），加卷统计
+    lines = [f"# {st.get('book') or book.name} · 全书概要", ""]
+    for v, s, e in volumes(st):
+        chs = _chapter_files_in(book, s, e)
+        wc = sum(len(re.findall(r"[\u4e00-\u9fff]", f.read_text(encoding="utf-8"))) for f in chs)
+        lines.append(f"## 第{v}卷（第 {s}–{e} 章，{len(chs)} 章，{wc} 字）")
+        for f in chs:
+            body = [x.strip() for x in f.read_text(encoding="utf-8").splitlines() if x.strip()]
+            title = body[0].lstrip("# ").strip() if body else f.stem
+            head = body[1][:120] if len(body) > 1 else ""
+            lines.append(f"- {title}：{head}")
+        lines.append("")
+    summary = book / "投稿包" / "全书概要.md"
+    summary.write_text("\n".join(lines), encoding="utf-8")
+
+    total = len(re.findall(r"[\u4e00-\u9fff]", full))
+    return 0, f"全书合成 {len(parts)} 章 / {total} 汉字；概要 {summary.name}"
+
+
 def run_node_script(book: Path, st: dict, spec: dict) -> tuple[int, str]:
     nid = spec["id"]
     ch = st["current_chapter"] + 1
@@ -1092,6 +1150,13 @@ def run_node_script(book: Path, st: dict, spec: dict) -> tuple[int, str]:
         return _commit_chapter(book, ch, st)
     if nid == "N17":
         return _merge_full(book, st)
+    if nid == "N17g":
+        return _merge_global(book, st)
+    if nid.startswith("V") and nid.endswith(".N17"):
+        return _merge_volume(book, st, int(nid[1:].split(".", 1)[0]))
+    if nid.startswith("V") and nid.endswith((".N18", ".N19")):
+        # 卷级扫描复用全书扫描，只按卷范围取文件——先按全书跑，口径一致
+        return _ai_scan(book) if nid.endswith(".N18") else _endgame_scan(book, st)
     if nid == "N18":
         return _ai_scan(book)
     if nid == "N19":

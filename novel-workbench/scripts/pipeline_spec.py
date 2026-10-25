@@ -82,6 +82,7 @@ GLOBAL_NODES: dict[str, dict] = {
             "报告要求：≥600 字；含 5 个题材候选，按客观标准打分：平台收稿匹配度 / 榜单热度 / "
             "创新配比(90%套路+10%创新) / 是否避开已写烂的梗 / 与年代题材基准兼容性；"
             "必须含「结论」一节，明确给出选定题材与理由。\n"
+            "若 _pipeline/judgments_N04.json 存在且 verdict=block，先读它，按其中 fail 项的 fix 意见针对性改写后再写入。\n"
             "写完只用 ≤100 字回执，不要把报告正文复述在回执里。"
         ),
     },
@@ -106,6 +107,7 @@ GLOBAL_NODES: dict[str, dict] = {
             "文风.md 必须引用 {QIMAO}/harness/genre-baselines.json 的年代组基准"
             "（句长中位 15-27、段/千字 33.1-54.1）。\n"
             "角色.md 每个角色需有：名字 / 一句话动机 / 核心困境 / 与主角的关系。\n"
+            "若 _pipeline/judgments_N06.json 存在且 verdict=block，先读它，按其中 fail 项的 fix 意见改写后再写入。\n"
             "回执 ≤100 字。"
         ),
     },
@@ -127,6 +129,7 @@ GLOBAL_NODES: dict[str, dict] = {
             "  主线一句话（必须能一句话说清「主角要做什么、谁在挡」）\n"
             "  卷末高潮 / 13 万字配比 / 每 3 章一个爽点峰值\n"
             "  悬念接力表：每个大悬念的埋设章与揭晓章，确保任一时刻并行钩子 ≥1.75\n"
+            "若 _pipeline/judgments_N08.json 存在且 verdict=block，先读它，按其中 fail 项的 fix 意见改写后再写入。\n"
             "回执 ≤100 字。"
         ),
     },
@@ -221,7 +224,53 @@ GLOBAL_NODES: dict[str, dict] = {
 }
 
 
+# 全书汇总节点：只合成 + 只读概要，**不给 judge 读正文**
+# 25 万字正文约 750KB / 20 万 token，进 judge 上下文必爆。
+GLOBAL_NODES["N17g"] = {
+    "id": "N17g", "kind": "script", "name": "全书合成+概要",
+    "evidence": "投稿包/全书概要.md", "min_size": 200,
+    "note": "合出 全文.md 供人读，另出 全书概要.md 供 N20g 判。N20g 不读正文。",
+}
+
+GLOBAL_NODES["N20g"] = {
+    "id": "N20g", "kind": "verify", "model": "reasoning", "role": "judge",
+    "name": "全书汇总终审", "evidence": "_pipeline/judgments_N20g.json", "min_size": 200,
+    "prompt": (
+        "只读 {BOOK}/投稿包/全书概要.md（**不要读正文，25 万字会超出上下文**）。\n"
+        "这是逐卷终审之后的跨卷检查。审四件事：\n"
+        "  1. 主线是否从第 1 卷贯穿到最后一卷（有没有中途换目标）\n"
+        "  2. 伏笔回收率：埋设但未回收的还有几条\n"
+        "  3. 人物弧光：主角在第 1 卷与最后一卷是否是同一个人的成长\n"
+        "  4. 卷与卷之间有没有重复套路（同一招用了三次以上）\n"
+        "写入 {BOOK}/_pipeline/judgments_N20g.json，格式同 N20，"
+        "source 填 投稿包/全书概要.md。quote 必须是概要里的连续原文。\n"
+        "回执 ≤100 字。"
+    ),
+}
+
+
 # ─── 章节循环节点 C{n}.N09–N16 ────────────────────────────────────────────────
+
+def _outline_ref(st: dict, n: int) -> str:
+    """第 n 章该读哪份目录、第几行。
+
+    有卷计划：读本卷目录，行号 = n - 本卷起始章 + 1（卷内偏移）。
+    无卷计划（老书）：沿用 目录_前12章.md 第 n 行——但 n>12 时该文件根本没有第 n 行，
+    所以老书本来就只能写 12 章，这是既有上限，不在本次改动范围内。
+    """
+    b = str(st.get("_book") or "{BOOK}")
+    if st.get("plan"):
+        v = vol_of(st, n)
+        start, _ = span(st, v)
+        return f"{{BOOK}}/大纲/目录_第{v}卷.md 第 {n - start + 1} 行（本卷第 {n - start + 1} 行）"
+    return f"{{BOOK}}/大纲/目录_前12章.md 第 {n} 行"
+
+
+def _volume_outline_ref(st: dict, n: int) -> str:
+    if st.get("plan"):
+        return f"{{BOOK}}/大纲/卷纲_第{vol_of(st, n)}卷.md"
+    return "{BOOK}/大纲/卷纲_第一卷.md"
+
 
 def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
     """第 n 章的 8 个节点。n 从 1 开始。
@@ -237,7 +286,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
             "id": f"C{n}.N09", "kind": "llm", "model": "default", "role": "writer", "name": "单章场景卡",
             "evidence": f"大纲/细纲_第{n:03d}章.md", "min_size": 500,
             "prompt": (
-                f"读取 {b}/大纲/目录_前12章.md 第 {n} 行、{b}/大纲/卷纲_第一卷.md、"
+                f"读取 {_outline_ref(st, n)}、{_volume_outline_ref(st, n)}、"
                 f"{b}/设定/角色.md，并读权威细纲模板 "
                 f"{{STORY_LONG_WRITE}}/references/workflow-outline.md，"
                 f"产出 {b}/大纲/细纲_第{n:03d}章.md。\n"
@@ -348,6 +397,89 @@ def _chapter_path(b: str, n: int) -> str:
     return str(hits[0]) if hits else f"{b}/正文/第{n:03d}章_*.md"
 
 
+def volume_nodes(st: dict, book: Path, v: int) -> dict[str, dict]:
+    """第 v 卷的 7 个节点。镜像 chapter_nodes() 的做法，按卷动态生成。
+
+    卷前：N07 卷纲 → N08 主线闸门 → N09d 本卷目录
+    卷末：N17 合成 → N18 AI味 → N19 漂移 → N20 本卷终审
+    """
+    b = str(book)
+    start, end = span(st, v)
+    size = end - start + 1
+    words = size * 1925            # 纵横单章中位，用于给 writer 一个量感
+    return {
+        f"V{v}.N07": {
+            "id": f"V{v}.N07", "kind": "llm", "model": "default", "role": "writer",
+            "name": f"第{v}卷卷纲", "evidence": f"大纲/卷纲_第{v}卷.md", "min_size": 600,
+            "prompt": (
+                f"读取 {b}/设定/ 全部文件"
+                + (f"、{b}/大纲/卷纲_第{v-1}卷.md 的卷末状态" if v > 1 else "")
+                + f"，产出 {b}/大纲/卷纲_第{v}卷.md。\n"
+                f"本卷范围：第 {start}–{end} 章（{size} 章，约 {words} 字）。\n"
+                "必含：\n"
+                "  主线一句话（主角要做什么、谁在挡）\n"
+                "  本卷高潮在第几章、是什么\n"
+                "  每 3 章一个爽点峰值\n"
+                "  悬念接力表：本卷埋的伏笔、何时回收（跨卷的要写明目标卷）\n"
+                + ("  接续上卷：上一卷遗留的未回收伏笔必须在本卷或后续卷给出位置\n" if v > 1 else "")
+                + "回执 ≤100 字。"
+            ),
+        },
+        f"V{v}.N08": {
+            "id": f"V{v}.N08", "kind": "verify", "model": "reasoning", "role": "judge",
+            "name": f"第{v}卷主线闸门", "evidence": f"_pipeline/judgments_V{v}.N08.json",
+            "min_size": 200,
+            "prompt": (
+                f"只读 {b}/大纲/卷纲_第{v}卷.md。核心判据只有一条：\n"
+                "  **本卷主线能否用一句话说清「主角要做什么、谁在挡」**\n"
+                "说不清 = 这一卷会写成流水账。\n"
+                "顺带查：悬念接力表有没有空窗（大悬念解决后 3 章内无新钩子）。\n"
+                f"先输出「本卷最可能被编辑毙掉的 3 个理由」再裁决，写入 "
+                f"{b}/_pipeline/judgments_V{v}.N08.json，格式同 N08。\n"
+                "quote 必须是卷纲里的连续原文。回执 ≤100 字。"
+            ),
+        },
+        f"V{v}.N09d": {
+            "id": f"V{v}.N09d", "kind": "llm", "model": "default", "role": "writer",
+            "name": f"第{v}卷目录", "evidence": f"大纲/目录_第{v}卷.md", "min_size": 400,
+            "prompt": (
+                f"读取 {b}/大纲/卷纲_第{v}卷.md，产出 {b}/大纲/目录_第{v}卷.md。\n"
+                f"**必须正好 {size} 行**（第 {start}–{end} 章），每行一章：\n"
+                "  章号 / 一句话事件 / 本章爽点 / 章末钩子 / 预估字数（1800–2400）\n"
+                "第 1 行对应第 {start} 章，第 {size} 行对应第 {end} 章——**行号即章号偏移，不能错位**。\n"
+                + (f"另外把本卷第 1–12 章另存一份 {b}/大纲/目录_前12章.md（兼容旧工具）。\n" if v == 1 else "")
+                + "回执 ≤100 字。"
+            ),
+        },
+        f"V{v}.N17": {
+            "id": f"V{v}.N17", "kind": "script", "name": f"第{v}卷合成",
+            "evidence": f"投稿包/卷{v}_全文.md", "min_size": 1000,
+            "note": f"只合本卷第 {start}–{end} 章，单卷 ≤6 万字。",
+        },
+        f"V{v}.N18": {
+            "id": f"V{v}.N18", "kind": "script", "name": f"第{v}卷AI味扫描",
+            "evidence": f"_pipeline/scan_V{v}.json", "min_size": 20,
+        },
+        f"V{v}.N19": {
+            "id": f"V{v}.N19", "kind": "script", "name": f"第{v}卷文风漂移+伏笔",
+            "evidence": f"_pipeline/drift_V{v}.json", "min_size": 20,
+        },
+        f"V{v}.N20": {
+            "id": f"V{v}.N20", "kind": "verify", "model": "reasoning", "role": "judge",
+            "name": f"第{v}卷终审", "evidence": f"_pipeline/judgments_V{v}.N20.json",
+            "min_size": 200,
+            "prompt": (
+                f"只读 {b}/投稿包/卷{v}_全文.md（本卷第 {start}–{end} 章，≤6 万字）。\n"
+                f"对照 {b}/大纲/卷纲_第{v}卷.md 与 {{QIMAO}}/03_评分卡.md 做本卷终审。\n"
+                "先输出「本卷最可能让读者弃书的 3 个位置」再裁决。\n"
+                f"写入 {b}/_pipeline/judgments_V{v}.N20.json，格式同 N20，"
+                "source 填 投稿包/卷{v}_全文.md。\n"
+                "quote 必须是正文连续原文。回执 ≤100 字。"
+            ),
+        },
+    }
+
+
 def _n15_prompt(n: int, prev: int, b: str, st: dict | None = None) -> str:
     """N15 清单按章分级：修复指令只能作用于当前章（前序章已封板）。"""
     if n == 1:
@@ -414,7 +546,8 @@ def judgment_policy(node_id: str) -> dict:
 # 单章节点顺序，只在这里定义一次（此前 :397 又硬编码了一遍 [9..16]，两处易不同步）
 CHAPTER_STAGES = (9, 10, 11, 12, 13, 14, 15, 16)
 # 卷级节点顺序（每卷开头跑一次，替代原来一次性的 N07/N08/N09d）
-VOLUME_STAGES = ("N07", "N08", "N09d")
+VOLUME_STAGES = ("N07", "N08", "N09d")          # 卷前：卷纲 → 主线闸门 → 本卷目录
+VOLUME_END_STAGES = ("N17", "N18", "N19", "N20")  # 卷末：合成 → AI味 → 漂移 → 本卷终审
 
 GLOBAL_SEQ = ["N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09d",
               "__chapters__", "N17", "N18", "N19", "N20", "N21"]
@@ -431,20 +564,37 @@ def next_cursor(st: dict) -> str:
     cur = st["cursor"]
     if cur == "__done__":
         return "__done__"
+    if cur == "N17g":                 # 全书合成完 → 全书汇总终审
+        return "N20g"
+    if cur == "N20g":                 # 全书终审完 → 投稿包
+        return "N21"
     if cur == "N20f":                 # 补丁修完 → 回 N17 重合成/重扫，再进 N20 复核
         return "N17"
     if cur == "N20":                  # 终审 pass 才走到这里；block 由 cmd_done 直接指到 N20f
         return "N21"
 
-    # ── 卷级节点：V{v}.N07 → N08 → N09d → 本卷第 1 章 ──────────────
+    # ── 卷级节点 ──────────────────────────────────────────────────
+    # 卷前：N07 → N08 → N09d → 本卷第 1 章
+    # 卷末：N17 → N18 → N19 → N20 → 下一卷 N07（或全书 N17g）
     if cur.startswith("V"):
         head, key = cur.split(".", 1)
         v = int(head[1:])
-        if key in VOLUME_STAGES and VOLUME_STAGES.index(key) + 1 < len(VOLUME_STAGES):
-            return f"{head}.{VOLUME_STAGES[VOLUME_STAGES.index(key) + 1]}"
-        start, _ = span(st, v)
-        st["current_chapter"] = start - 1          # 下一章的 n = start
-        return f"C{start}.N09"
+        if key in VOLUME_STAGES:
+            i = VOLUME_STAGES.index(key)
+            if i + 1 < len(VOLUME_STAGES):
+                return f"{head}.{VOLUME_STAGES[i + 1]}"
+            start, _ = span(st, v)
+            st["current_chapter"] = start - 1      # 下一章的 n = start
+            return f"C{start}.N09"
+        if key in VOLUME_END_STAGES:
+            i = VOLUME_END_STAGES.index(key)
+            if i + 1 < len(VOLUME_END_STAGES):
+                return f"{head}.{VOLUME_END_STAGES[i + 1]}"
+            _, end = span(st, v)                   # 本卷终审通过
+            if end >= st["max_chapters"]:
+                return "N17g"
+            return f"V{v + 1}.N07"
+        return "__done__"
 
     if cur.startswith("C"):
         n = st["current_chapter"] + 1
@@ -460,8 +610,9 @@ def next_cursor(st: dict) -> str:
             return "N17" if not st.get("plan") else "N17g"
         if st.get("plan"):
             size = vol_size(st)
-            if n % size == 0:                  # 卷末 → 下一卷卷纲
-                return f"V{n // size + 1}.N07"
+            if n % size == 0 or n == st["max_chapters"]:
+                # 卷末 → 先做本卷合成/扫描/终审，再由 V{v}.N20 决定进下一卷还是 N17g
+                return f"V{vol_of(st, n)}.N17"
         elif st["words_total"] >= st["target_words"]:
             # 老书的字数早停保留原样；新书不早停（否则 25 万字在第 125 章就跳走）
             return "N17"
