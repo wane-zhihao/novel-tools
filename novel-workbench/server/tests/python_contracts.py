@@ -2,6 +2,7 @@
 
 由 server/tests/python-contracts.test.mjs 调用；所有数据在临时目录。
 """
+import hashlib
 import json
 import os
 import sys
@@ -290,11 +291,18 @@ def test_n13_recheck_routes(root: Path) -> None:
     assert st["cursor"] == "C1.N15", f"复检通过应进 N15：{st['cursor']}"
 
     # 仍 blocking：fake storyctl blocked → fix_rounds+1，回 N14
+    # 注意：done 现在有正文预检（_text_preflight），连续拒 2 次后才放行，
+    # 所以这里要按它文档化的行为循环，而不是假设一次就过。
     os.environ["FAKE_STORY_STATUS"] = "blocked"
     book = make_state_book(root, "b1-block", cursor="C1.N14")
     write_token(book, "tok-b", "C1.N14")
-    assert cmd_done(Args(book=str(book), node="C1.N14", token="tok-b",
-                         evidence=["正文/第001章_测试.md"])) == 0
+    released = False
+    for _ in range(3):
+        if cmd_done(Args(book=str(book), node="C1.N14", token="tok-b",
+                         evidence=["正文/第001章_测试.md"])) == 0:
+            released = True
+            break
+    assert released, "正文预检连续 2 次不过后必须放行，否则整条链会死锁"
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = cmd_next(Args(book=str(book)))
@@ -323,6 +331,282 @@ def test_rollback_best_snapshot(root: Path) -> None:
     assert (book / "_pipeline" / "rollback_log.json").is_file()
 
 
+STATEFUL_STORYCTL = r'''
+import hashlib, json, os, sys
+from pathlib import Path
+
+args = sys.argv[1:]
+status = os.environ.get("FAKE_STORY_STATUS", "ready")
+
+
+def opt(name):
+    return args[args.index(name) + 1] if name in args else None
+
+
+if status != "ready":
+    print(json.dumps({"status": "blocked",
+                      "quality": {"status": "fail", "blocking_findings": [
+                          {"type": "QUALITY", "message": "动作链流水账", "line": 3,
+                           "excerpt": "他走过去"}]},
+                      "length": {"status": "internal_pass", "actual": 2200, "target": 2200}},
+                     ensure_ascii=False))
+    sys.exit(0)
+
+if "commit" not in args:
+    print(json.dumps({"status": "ready", "quality": {"status": "pass", "blocking_findings": []},
+                      "length": {"status": "internal_pass", "actual": 2200, "target": 2200}},
+                     ensure_ascii=False))
+    sys.exit(0)
+
+project = Path(opt("--project"))
+chapter = int(opt("--chapter"))
+files = sorted((project / "正文").glob(f"第{chapter:03d}章_*.md"))
+body = files[0].read_bytes()
+state_path = project / "追踪" / "_tracking-state.json"
+state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
+records = state.setdefault("wordcount_records", {})
+records[str(chapter)] = {"actual": len(body.decode("utf-8")), "target": 2200,
+                         "body_sha256": hashlib.sha256(body).hexdigest()}
+state["last_committed_chapter"] = max(int(state.get("last_committed_chapter") or 0), chapter)
+state["state_revision"] = int(state.get("state_revision") or 0) + 1
+state_path.parent.mkdir(parents=True, exist_ok=True)
+state_path.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+print(json.dumps({"status": "ok",
+                  "last_committed_chapter": state["last_committed_chapter"],
+                  "state_revision": state["state_revision"]}, ensure_ascii=False))
+'''
+
+# 先写坏账本再失败：验证备份回滚是真的生效，而不是「没写所以没变」
+FAILING_COMMIT_STORYCTL = STATEFUL_STORYCTL.replace(
+    'print(json.dumps({"status": "ok",',
+    'print(json.dumps({"status": "error", "error_code": "QUALITY_BLOCKED", "message": "boom"}))\n'
+    'sys.exit(1)\nprint(json.dumps({"status": "ok",')
+
+
+def _txn(chapter: int, revision: int) -> dict:
+    return {
+        "schema_version": 1, "mode": "append", "chapter": chapter,
+        "chapter_title": "测试章", "expected_state_revision": revision,
+        "delta": {"result": "测试结果摘要", "character_changes": [],
+                  "foreshadow_changes": [], "timeline_events": [], "constraints": [],
+                  "next_chapter_commitments": [], "retired_context_items": [],
+                  "retired_characters": []},
+        "context": {"position": {"volume": "第一卷", "volume_start_chapter": 1,
+                                 "story_time": "1990 年", "scene": "厂办"},
+                    "long_term_constraints": [], "active_character_names": [],
+                    "continuity_risks": []},
+        "character_snapshots": {},
+    }
+
+
+def make_commit_book(root: Path, name: str, *, last: int = 0, cursor: str | None = None,
+                     with_txn: bool = True, chapters: int = 2) -> Path:
+    book = root / name
+    for n in range(1, chapters + 1):
+        write(book / "正文" / f"第{n:03d}章_测试.md", f"第{n}章正文。" * 120)
+    records = {}
+    for n in range(1, last + 1):
+        body = book / "正文" / f"第{n:03d}章_测试.md"
+        records[str(n)] = {"actual": 2200, "target": 2200,
+                           "body_sha256": hashlib.sha256(body.read_bytes()).hexdigest()}
+    write(book / "追踪" / "_tracking-state.json", json.dumps({
+        "schema_version": 1, "state_revision": last, "last_committed_chapter": last,
+        "wordcount_records": records, "context": {}, "characters": {},
+        "foreshadow": {}, "timeline": {},
+    }, ensure_ascii=False))
+    target = last + 1
+    if with_txn:
+        write(book / ".story" / "work" / f"第{target:03d}章" / "tracking.json",
+              json.dumps(_txn(target, last), ensure_ascii=False))
+    write(book / "_pipeline" / "state.json", json.dumps({
+        "book": "测试", "genre": "niandai",
+        "cursor": cursor or f"C{target}.N16",
+        "current_chapter": last, "chapters_committed": last, "words_total": 0,
+        "target_words": 20000, "max_chapters": 12,
+        "blocked_reason": None, "pending_questions": [], "nodes": {},
+    }, ensure_ascii=False))
+    return book
+
+
+def _ledger(book: Path) -> dict:
+    return json.loads((book / "追踪" / "_tracking-state.json").read_text(encoding="utf-8"))
+
+
+def test_commit_append(root: Path) -> None:
+    """append 定稿成功：账本前进、state 记 N16、游标推到下一章。"""
+    from commit_chapter import commit_chapter
+    book = make_commit_book(root / "commit-append", "book", last=0)
+    result = commit_chapter(book, 1)
+    assert result["committed"] and not result["already"], result
+    assert result["mode"] == "append", result
+    assert _ledger(book)["last_committed_chapter"] == 1
+    st = json.loads((book / "_pipeline" / "state.json").read_text(encoding="utf-8"))
+    assert st["cursor"] == "C2.N09", st["cursor"]
+    assert st["nodes"]["C1.N16"]["source"] == "manual", st["nodes"]
+
+
+def test_commit_already(root: Path) -> None:
+    """同内容重复定稿：already 短路，revision 不前进。"""
+    from commit_chapter import commit_chapter
+    book = make_commit_book(root / "commit-already", "book", last=0)
+    commit_chapter(book, 1)
+    rev_before = _ledger(book)["state_revision"]
+    second = commit_chapter(book, 1)
+    assert second["already"] is True, second
+    assert _ledger(book)["state_revision"] == rev_before
+
+
+def test_commit_gap(root: Path) -> None:
+    """跳章定稿被拒，账本不动。"""
+    from commit_chapter import CommitError, commit_chapter
+    book = make_commit_book(root / "commit-gap", "book", last=0)
+    try:
+        commit_chapter(book, 3)
+    except CommitError as exc:
+        assert exc.code == "chapter_gap", exc.code
+    else:
+        raise AssertionError("跳章定稿必须被拒")
+    assert _ledger(book)["last_committed_chapter"] == 0
+
+
+def test_commit_revision(root: Path) -> None:
+    """已定稿章重新定稿：章数不变、dirty 归零、revision 前进。"""
+    from commit_chapter import commit_chapter
+    book = make_commit_book(root / "commit-revision", "book", last=1, with_txn=False)
+    body = book / "正文" / "第001章_测试.md"
+    body.write_text(body.read_text(encoding="utf-8") + "\n补一句。", encoding="utf-8")
+    result = commit_chapter(book, 1)
+    assert result["mode"] == "revision", result
+    assert result["book"]["chapters_committed"] == 1, result["book"]
+    assert result["book"]["dirty_count"] == 0, result["book"]
+
+
+def test_commit_tracking_missing(root: Path) -> None:
+    """手写章缺事务：必须拒绝，且绝不生成空事务文件。"""
+    from commit_chapter import CommitError, commit_chapter
+    book = make_commit_book(root / "commit-no-txn", "book", last=0, with_txn=False)
+    try:
+        commit_chapter(book, 1)
+    except CommitError as exc:
+        assert exc.code == "tracking_missing", exc.code
+    else:
+        raise AssertionError("缺事务必须拒绝")
+    assert not (book / ".story" / "work" / "第001章" / "tracking.json").exists(), \
+        "绝不能自动建空事务（会静默污染账本）"
+
+
+def test_commit_gate_blocked(root: Path) -> None:
+    """闸门阻断：拒绝且账本不动。"""
+    from commit_chapter import CommitError, commit_chapter
+    book = make_commit_book(root / "commit-blocked", "book", last=0)
+    os.environ["FAKE_STORY_STATUS"] = "blocked"
+    try:
+        try:
+            commit_chapter(book, 1)
+        except CommitError as exc:
+            assert exc.code == "gate_blocked", exc.code
+        else:
+            raise AssertionError("闸门阻断必须拒绝")
+        assert _ledger(book)["last_committed_chapter"] == 0
+    finally:
+        os.environ.pop("FAKE_STORY_STATUS", None)
+
+
+def test_commit_busy(root: Path) -> None:
+    """持锁期间拒绝并发定稿。"""
+    from autopilot import acquire_next_lock, release_next_lock
+    from commit_chapter import CommitError, commit_chapter
+    book = make_commit_book(root / "commit-busy", "book", last=0)
+    lock = acquire_next_lock(book)
+    try:
+        try:
+            commit_chapter(book, 1)
+        except CommitError as exc:
+            assert exc.code == "chapter_busy", exc.code
+        else:
+            raise AssertionError("持锁时必须拒绝")
+    finally:
+        release_next_lock(lock)
+
+
+def test_commit_rollback(root: Path) -> None:
+    """提交失败：备份回滚生效（坏工具先写账本再报错）。"""
+    from commit_chapter import CommitError, commit_chapter
+    book = make_commit_book(root / "commit-rollback", "book", last=0)
+    before = (book / "追踪" / "_tracking-state.json").read_bytes()
+    cfg_path = Path(os.environ["WORKBENCH_CONFIG"])
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    storyctl = Path(cfg["STORYCTL"])
+    write(storyctl, FAILING_COMMIT_STORYCTL)
+    try:
+        try:
+            commit_chapter(book, 1)
+        except CommitError as exc:
+            assert exc.code == "quality_blocked", exc.code
+        else:
+            raise AssertionError("提交失败必须抛错")
+    finally:
+        write(storyctl, STATEFUL_STORYCTL)
+    assert (book / "追踪" / "_tracking-state.json").read_bytes() == before, "失败必须回滚账本"
+    assert list((book / "_pipeline" / "snapshots").glob("C1_before_commit_*")), "提交前必须留备份"
+
+
+FAKE_TRACKING_COMMIT = r'''
+import argparse, json, sys
+from pathlib import Path
+
+ap = argparse.ArgumentParser()
+sub = ap.add_subparsers(dest="cmd", required=True)
+d = sub.add_parser("draft")
+for x in ("--project", "--out"):
+    d.add_argument(x, required=True)
+d.add_argument("--chapter", type=int, required=True)
+d.add_argument("--force", action="store_true")
+c = sub.add_parser("commit")
+for x in ("--project", "--input"):
+    c.add_argument(x, required=True)
+a = ap.parse_args()
+if a.cmd == "draft":
+    txn = {"schema_version": 1, "mode": "revision", "chapter": a.chapter,
+           "chapter_title": "重建章", "expected_state_revision": 1,
+           "delta": {"result": "重建摘要", "character_changes": [], "foreshadow_changes": [],
+                     "timeline_events": [], "constraints": [], "next_chapter_commitments": [],
+                     "retired_context_items": [], "retired_characters": []},
+           "context": {"position": {"volume": "第一卷", "volume_start_chapter": 1,
+                                    "story_time": "1990", "scene": "厂办"},
+                       "long_term_constraints": [], "active_character_names": [],
+                       "continuity_risks": []},
+           "character_snapshots": {}}
+    Path(a.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(a.out).write_text(json.dumps(txn, ensure_ascii=False), encoding="utf-8")
+    print(json.dumps({"status": "ok"}))
+    sys.exit(0)
+print(json.dumps({"status": "ok"}))
+'''
+
+
+def test_commit_suite(root: Path) -> None:
+    cfg_path = make_config(root / "commitcfg", "ready")
+    write(root / "commitcfg" / "fake" / "storyctl.py", STATEFUL_STORYCTL)
+    write(root / "commitcfg" / "fake" / "tracking_commit.py", FAKE_TRACKING_COMMIT)
+    prev = os.environ.get("WORKBENCH_CONFIG")
+    os.environ["WORKBENCH_CONFIG"] = str(cfg_path)
+    try:
+        test_commit_append(root)
+        test_commit_already(root)
+        test_commit_gap(root)
+        test_commit_revision(root)
+        test_commit_tracking_missing(root)
+        test_commit_gate_blocked(root)
+        test_commit_busy(root)
+        test_commit_rollback(root)
+    finally:
+        if prev is None:
+            os.environ.pop("WORKBENCH_CONFIG", None)
+        else:
+            os.environ["WORKBENCH_CONFIG"] = prev
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="wb-py-contracts-") as tmp:
         root = Path(tmp)
@@ -338,6 +622,7 @@ def main() -> int:
         test_n14_done_rechecks_n13(root)
         test_n13_recheck_routes(root)
         test_rollback_best_snapshot(root)
+        test_commit_suite(root)
     print("PY_CONTRACTS_OK")
     return 0
 

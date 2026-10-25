@@ -441,6 +441,93 @@ def _heal_from_tracking(book: Path, st: dict) -> list[str]:
     return notes
 
 
+_NODE_ID_RE = re.compile(r"^(?:N\d+[a-z]?|V\d+\.N\d+[a-z]?|C\d+\.N\d+)$")
+_BOOK_SUBDIRS = ("正文", "大纲", "设定", "追踪", "投稿包", "_pipeline", ".story")
+
+
+def cmd_doctor(a) -> int:
+    """静态契约自检：节点表的配置漂移不该靠人肉发现。
+
+    **为什么要有**（2026-10-26）：发现两个**确定性死路**——
+    `V{v}.N20` 的 prompt 要求 `source 填 投稿包/卷{v}_全文.md`，
+    而 `judgment_policy` 只允许 `正文/`；`N20g` 的 prompt 要求
+    `source 填 投稿包/全书概要.md`，而 policy 落到 `sources: []`。
+    两者都会让该节点**永远**过不了 done，但单测和端到端都只在跑到那一步才暴露。
+
+    这里把「prompt 说的」和「policy 允许的」做机械比对，同类漂移以后跑一次就能抓。
+    """
+    from commands import _source_allowed
+
+    book = Path(a.book).resolve()
+    st = load_state(book)
+    if not st:
+        print(json.dumps({"error": "not_initialized"}, ensure_ascii=False))
+        return 2
+
+    issues: list[dict] = []
+    checked = skipped = 0
+
+    specs = list(GLOBAL_NODES.values())
+    vs = vol_size(st) or 0
+    total = int(st.get("max_chapters") or 0)
+    nvol = max(1, (total + vs - 1) // vs) if vs else 1
+    for v in range(1, nvol + 1):
+        try:
+            specs.extend(volume_nodes(st, book, v).values())
+        except Exception as exc:                       # 节点表本身构造不出来也是问题
+            issues.append({"node": f"V{v}.*", "kind": "volume_nodes_failed",
+                           "detail": str(exc)[:200]})
+    try:
+        specs.extend(chapter_nodes(st, book, 1).values())
+    except Exception as exc:
+        issues.append({"node": "C1.*", "kind": "chapter_nodes_failed",
+                       "detail": str(exc)[:200]})
+
+    seen: dict[str, str] = {}
+    for spec in specs:
+        nid = spec.get("id") or ""
+        checked += 1
+        if not _NODE_ID_RE.match(nid):
+            issues.append({"node": nid, "kind": "bad_node_id",
+                           "detail": "节点 id 不符合 N / V{v}.N / C{n}.N 形态"})
+            continue
+        if nid in seen:
+            issues.append({"node": nid, "kind": "duplicate_node_id",
+                           "detail": f"与「{seen[nid]}」重名"})
+        seen[nid] = spec.get("name") or ""
+
+        ev = spec.get("evidence") or ""
+        if ev and "/" in ev:
+            head = ev.split("/", 1)[0]
+            if head not in _BOOK_SUBDIRS:
+                issues.append({"node": nid, "kind": "bad_evidence_dir",
+                               "detail": f"evidence 前缀 {head!r} 不是书的子目录"})
+
+        if spec.get("kind") != "verify":
+            continue
+
+        srcs = (judgment_policy(nid).get("sources") or [])
+        if not srcs:
+            issues.append({"node": nid, "kind": "empty_policy",
+                           "detail": "verify 节点没有任何允许的 source，任何文本项都会被拒"})
+            continue
+        m = re.search(r"source\s*填\s*([^\s，。；,;）)]+)", spec.get("prompt") or "")
+        if not m:
+            skipped += 1
+            continue
+        declared = m.group(1)
+        if not _source_allowed(declared, srcs):
+            issues.append({"node": nid, "kind": "source_mismatch",
+                           "detail": f"prompt 要求 source={declared!r}，"
+                                     f"但 policy 只允许 {srcs} → 该节点永远过不了 done"})
+
+    print(json.dumps({"book": st.get("book"), "checked": checked,
+                      "skipped_no_source": skipped,
+                      "ok": not issues, "issues": issues},
+                     ensure_ascii=False, indent=1))
+    return 0 if not issues else 1
+
+
 def cmd_status(a) -> int:
     book = Path(a.book).resolve()
     st = load_state(book)
@@ -791,7 +878,7 @@ def main():
     p.add_argument("--vol-llm-cap", type=int, default=80,
                    help="每卷 llm 节点预算上限（默认 80，约够 22 章）")
 
-    for name in ("next", "status"):
+    for name in ("next", "status", "doctor"):
         p = sub.add_parser(name); p.add_argument("--book", required=True)
 
     rl = sub.add_parser("relay", help="只写接力口令，不推进游标（预算耗尽时调）")
@@ -821,6 +908,15 @@ def main():
     r.add_argument("--force", action="store_true",
                    help="确认恢复处于人工阻断态的书（blocked 且无在途令牌时必须）")
 
+    cm = sub.add_parser("commit", help="单章定稿（append/revision 自动分流）")
+    cm.add_argument("--book", required=True)
+    cm.add_argument("--chapter", type=int, required=True)
+    cm.add_argument("--mode", choices=("auto", "append", "revision"), default="auto")
+    cm.add_argument("--accept-current-length", action="store_true",
+                    help="字数不在带内时按当前长度定稿")
+    cm.add_argument("--no-verify", action="store_true",
+                    help="跳过闸门复检（仅排障用）")
+
     a = ap.parse_args()
     os.environ.update(utf8_env())
 
@@ -842,6 +938,19 @@ def main():
             release_next_lock(lock)
     if a.cmd == "relay":
         return cmd_relay(a)
+    if a.cmd == "commit":
+        # 锁由 commit_chapter 自己取（它要在锁内做备份/回滚，粒度比这里更细）
+        from commit_chapter import CommitError, commit_chapter
+        try:
+            result = commit_chapter(Path(a.book), a.chapter, mode=a.mode,
+                                    verify=not a.no_verify,
+                                    accept_current_length=a.accept_current_length)
+        except CommitError as exc:
+            payload = {"error": exc.code, "message": exc.message, **exc.detail}
+            print(json.dumps(payload, ensure_ascii=False))
+            return 2
+        print(json.dumps(result, ensure_ascii=False))
+        return 0
     if a.cmd in ("done", "skip", "block", "resume"):
         from commands import cmd_done, cmd_skip, cmd_block, cmd_resume
         handlers = {"done": cmd_done, "skip": cmd_skip,
