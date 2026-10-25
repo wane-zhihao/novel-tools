@@ -1,0 +1,13 @@
+{
+  "verdict": "pass",
+  "summary": "五个设定文件齐全，五名角色均有一句话动机，世界观围绕单一舞台与单一七年周期主线展开、无庞杂硬伤，文风四项硬指标全部落在都市组（n=24）实测区间内；三项商业风险按规则记录为 A 级，不拦截。",
+  "items": [
+    {"criterion": "五个设定文件齐全", "quote": "「挪棺会」（七年周期的影子，书中逐卷揭示）", "source": "设定/势力.md", "verdict": "pass", "level": "A"},
+    {"criterion": "角色均有明确动机", "quote": "一句话动机：查清 2017 年「龙潭沉箱」旧案", "source": "设定/角色.md", "verdict": "pass", "level": "A"},
+    {"criterion": "世界观无过度庞杂", "quote": "核心舞台：仓桥区老城——十字街、临江轮船码头、米市巷", "source": "设定/世界观.md", "verdict": "pass", "level": "A"},
+    {"criterion": "文风与都市 genre 基准兼容", "quote": "目标 18–26 字；不必套用七猫的 15–27 中位", "source": "设定/文风.md", "verdict": "pass", "level": "A"},
+    {"criterion": "热度与留存有实证支撑", "quote": "热度维度全报告 `[无实证，属推断]`，不作为选型依据", "source": "设定/题材定位.md", "verdict": "fail", "level": "A"},
+    {"criterion": "长线大账兑现距离合理", "quote": "每卷还一小笔，第 3 卷末起还大笔", "source": "设定/题材定位.md", "verdict": "fail", "level": "A"},
+    {"criterion": "考据细节可稳定执行", "quote": "卷次、编号、年份必须精确到可核对", "source": "设定/文风.md", "verdict": "fail", "level": "A"}
+  ]
+}

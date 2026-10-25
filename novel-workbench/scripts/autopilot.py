@@ -83,6 +83,40 @@ PYTHON = CFG["PYTHON"]
 NODE_BIN = CFG.get("NODE", "")
 
 
+def _genre_bounds_text(st: dict, plats: dict, name: str) -> str:
+    """把本书 genre 的 p05-p95 区间格式化成 prompt 文字。
+
+    为什么要有：N12 的「生死线」此前写死七猫年代文数字
+    （因果 1.0-6.0 / 动作 <=41 / 段 33-54 / 字数 >=2000），
+    而纵横都市实测是因果 0.05-7.49 / 动作 12.83-46.53 / 段 24.79-74.78 / 中位 1925 字。
+    writer 冲七猫的目标、闸门按纵横查，必然对不上。
+    """
+    genre = (st or {}).get("genre") or ""
+    gb = ((plats.get(name) or {}).get("GENRE_BASE")) or ""
+    try:
+        doc = json.loads(Path(gb).read_text(encoding="utf-8")) if gb else {}
+    except Exception:
+        doc = {}
+    blk = ((doc.get("baselines") or {}).get(genre)) or {}
+    if not blk:
+        return "  （未取到题材基准，按 N13 闸门实测反馈调整）"
+    labels = [("visible_chars", "单章字数"),
+              ("paragraphs_per_1000", "段/千字"),
+              ("sent_len_median", "句长中位"),
+              ("dialog_ratio", "对话占比"),
+              ("causal_per_1000", "因果连接/千字"),
+              ("narration_action_density", "叙述动作词/千字"),
+              ("question_per_1000", "问句/千字")]
+    out = []
+    for k, cn in labels:
+        v = blk.get(k)
+        if isinstance(v, list) and len(v) == 2:
+            out.append(f"  \u00b7 {cn} **{v[0]}\u2013{v[1]}**")
+    if not out:
+        return "  （题材基准缺字段）"
+    return f"（{name} / {genre}，p05\u2013p95 实测）\n" + "\n".join(out)
+
+
 def render_prompt(template: str, book: Path, st: dict | None = None) -> str:
     """渲染 prompt 模板里的路径占位符。
 
@@ -100,13 +134,49 @@ def render_prompt(template: str, book: Path, st: dict | None = None) -> str:
     label = {"qimao": "七猫", "zongheng": "纵横"}.get(name, name)
     # 归一成 / 分隔，避免 "F:////小说////platforms/zongheng" 这类混合斜杠
     pdir = str(pdir).replace("\\", "/")
+    bounds = _genre_bounds_text(st, plats, name)
     return (template
             .replace("{QIMAO}", pdir)
             .replace("{PLATFORM_DIR}", pdir)
             .replace("{PLATFORM}", label)
+            .replace("{GENRE_BOUNDS}", bounds)
             .replace("{STORY_LONG_WRITE}", CFG["STORY_LONG_WRITE"])
             .replace("{SKILL}", str(SKILL_DIR))
             .replace("{BOOK}", str(book).replace("\\", "/")))
+
+
+def _genre_bounds_text(st: dict, plats: dict, name: str) -> str:
+    """把本书 genre 的 p05-p95 区间格式化成 prompt 文字。
+
+    为什么要有：N12 的「生死线」此前写死七猫年代文数字
+    （因果 1.0-6.0 / 动作 <=41 / 段 33-54 / 字数 >=2000），
+    而纵横都市实测是因果 0.05-7.49 / 动作 12.83-46.53 / 段 24.79-74.78 / 中位 1925 字。
+    writer 冲七猫的目标、闸门按纵横查，必然对不上。
+    """
+    genre = (st or {}).get("genre") or ""
+    gb = ((plats.get(name) or {}).get("GENRE_BASE")) or ""
+    try:
+        doc = json.loads(Path(gb).read_text(encoding="utf-8")) if gb else {}
+    except Exception:
+        doc = {}
+    blk = ((doc.get("baselines") or {}).get(genre)) or {}
+    if not blk:
+        return "  （未取到题材基准，按 N13 闸门实测反馈调整）"
+    labels = [("visible_chars", "单章字数"),
+              ("paragraphs_per_1000", "段/千字"),
+              ("sent_len_median", "句长中位"),
+              ("dialog_ratio", "对话占比"),
+              ("causal_per_1000", "因果连接/千字"),
+              ("narration_action_density", "叙述动作词/千字"),
+              ("question_per_1000", "问句/千字")]
+    out = []
+    for k, cn in labels:
+        v = blk.get(k)
+        if isinstance(v, list) and len(v) == 2:
+            out.append(f"  · {cn} **{v[0]}–{v[1]}**")
+    if not out:
+        return "  （题材基准缺字段）"
+    return f"（{name} / {genre}，p05–p95 实测）\n" + "\n".join(out)
 
 
 def utf8_env() -> dict:

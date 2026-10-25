@@ -1180,9 +1180,19 @@ def run_node_script(book: Path, st: dict, spec: dict) -> tuple[int, str]:
 
 def verify_quote(quote: str, chapter_text: str, min_len: int = 12) -> bool:
     """原文引用硬校验（暗坑6）。min_len=12 与 judge prompt 的"连续 12–30 字"对齐
-    （审查 C 级：此前代码只卡 ≥8，比提示词松）。"""
+    （审查 C 级：此前代码只卡 ≥8，比提示词松）。
+
+    **长度按原始引用算，不按 _norm 后的算**（2026-10-25 修）：
+    此前 `len(_norm(quote)) >= min_len`，而 _norm 会剥掉「」/、等所有标点。
+    像「天师/阴阳眼」也很挤（原文 12 字符）剥完只剩 10 个汉字，
+    **明明是逐字正确的原文却被判不合格**——端到端跑 N04 时实测到。
+    """
+    if not quote or not chapter_text:
+        return False
+    if len(quote.strip()) < min_len:      # 原始长度，含标点
+        return False
     q, t = _norm(quote), _norm(chapter_text)
-    return len(q) >= min_len and q in t
+    return len(q) >= 4 and q in t
 
 
 def _norm(s: str) -> str:

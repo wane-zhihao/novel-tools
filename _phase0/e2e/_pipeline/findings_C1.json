@@ -1,0 +1,31 @@
+{
+ "chapter": 1,
+ "generated_at": "2026-10-25T20:03:21+0800",
+ "items": [
+  {
+   "id": "CHECK_FAILED",
+   "criterion": "CHECK_FAILED",
+   "name": "active core character 顾秀英 has no current snapshot",
+   "level": "B",
+   "blocking": true,
+   "source": "N16",
+   "note": "active core character 顾秀英 has no current snapshot"
+  }
+ ],
+ "metrics": {
+  "visible_chars": 1744,
+  "paragraphs_per_1000": 47.6,
+  "sent_len_median": 14,
+  "causal_per_1000": 1.72,
+  "narration_action_density": 41.36,
+  "action_density": 36.7,
+  "action_chain_max": 5,
+  "number_per_1000": 26.95,
+  "question_per_1000": 5.16,
+  "multi_actor_sent_ratio": 0.079
+ },
+ "blocking_count": 1,
+ "advisory_count": 0,
+ "resolved_at": "2026-10-25T20:05:41",
+ "resolved_blocking": 1
+}

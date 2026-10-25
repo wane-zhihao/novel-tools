@@ -91,10 +91,10 @@ GLOBAL_NODES: dict[str, dict] = {
         "evidence": "_pipeline/judgments_N04.json", "min_size": 200,
         "prompt": (
             "你是{PLATFORM}签约评审（红队模式）。只读 {BOOK}/大纲/选题报告.md，"
-            "对照 {QIMAO}/01_投稿方案.md 的收稿范围与「每部作品只有一次评估机会」的约束。\n"
+            "对照 {QIMAO}/01_投稿方案.md 的收稿范围与「一稿一编辑、没过签可一直投」的约束。\n"
             "先输出「这个选题最可能被{PLATFORM}编辑拒掉的 3 个理由」，再做裁决。\n"
             "写入 {BOOK}/_pipeline/judgments_N04.json：\n"
-            '  {"verdict":"pass|block","summary":"...","items":[{"criterion":"...","quote":"报告原文连续12-30字","source":"大纲/选题报告.md","verdict":"pass|fail"}]}\n'
+            '  {"verdict":"pass|block","summary":"...","items":[{"criterion":"...","quote":"报告原文连续12-30字","source":"大纲/选题报告.md","verdict":"pass|fail","level":"A|B"}]}\n\n**level 决定是否阻断（重要）**：\n  \u00b7 level \"B\"（默认）= 硬伤，有它就打回重写\n  \u00b7 level \"A\" = 风险提示/待观察，只记录不阻断\n  你列的风险类发现（如热度无实证、留存未知）**必须标 A**，\n  否则会被当成硬伤强制打回——只有真正的硬伤才标 B。\n'
             "quote 必须是报告中连续原文，严禁省略号跳跃。回执 ≤100 字。"
         ),
     },
@@ -104,8 +104,8 @@ GLOBAL_NODES: dict[str, dict] = {
         "prompt": (
             "读取 {BOOK}/大纲/选题报告.md 的结论一节，产出 5 个设定文件：\n"
             "  设定/题材定位.md  设定/文风.md  设定/角色.md  设定/世界观.md  设定/势力.md\n"
-            "文风.md 必须引用 {QIMAO}/harness/genre-baselines.json 的年代组基准"
-            "（句长中位 15-27、段/千字 33.1-54.1）。\n"
+            "文风.md 必须引用 {QIMAO}/harness/genre-baselines.json 中**本书 genre 对应组**的"
+            "实测区间（句长中位 / 段每千字 / 对话占比 / 因果密度），把数值抄进去，不要用别处的数字。\n"
             "角色.md 每个角色需有：名字 / 一句话动机 / 核心困境 / 与主角的关系。\n"
             "若 _pipeline/judgments_N06.json 存在且 verdict=block，先读它，按其中 fail 项的 fix 意见改写后再写入。\n"
             "回执 ≤100 字。"
@@ -116,7 +116,7 @@ GLOBAL_NODES: dict[str, dict] = {
         "evidence": "_pipeline/judgments_N06.json", "min_size": 200,
         "prompt": (
             "只读 {BOOK}/设定/ 下 5 个文件。核查：五个文件是否齐全、角色是否有明确动机、"
-            "世界观是否过度庞杂（{PLATFORM}清单：设定太庞杂是硬伤）、文风是否与年代基准兼容。\n"
+            "世界观是否过度庞杂（{PLATFORM}清单：设定太庞杂是硬伤）、文风是否与本书 genre 的基准兼容。\n"
             "先输出 3 个最可能被拒的理由再裁决。写入 {BOOK}/_pipeline/judgments_N06.json，"
             "格式同 N04，source 填具体文件名。回执 ≤100 字。"
         ),
@@ -141,7 +141,12 @@ GLOBAL_NODES: dict[str, dict] = {
             "  **主线能否用一句话说清「主角要做什么、谁在挡」**\n"
             "说不清 = 前 6000 字主线不清晰，约 80% 评估不通过。\n"
             "顺带查：悬念接力表是否存在空窗（大悬念解决后 3 章内无新钩子接入）。\n"
-            "先输出 3 个拒稿理由再裁决。写入 {BOOK}/_pipeline/judgments_N08.json。回执 ≤100 字。"
+            "先输出 3 个拒稿理由再裁决。写入 {BOOK}/_pipeline/judgments_N08.json，"
+            "格式同 N04：{\"verdict\":\"pass|block\",\"summary\":\"...\",\"items\":[{\"criterion\":\"...\","
+            "\"quote\":\"卷纲连续12-30字原文\",\"source\":\"大纲/卷纲_第一卷.md\",\"verdict\":\"pass|fail\","
+            "\"level\":\"A|B\",\"fix\":\"修复指令\"}]}。\n"
+            "level \"B\"（默认）= 硬伤，有它就打回重写；level \"A\" = 提示，只记录不阻断。\n"
+            "quote 必须是卷纲里连续原文，严禁省略号跳跃。回执 ≤100 字。"
         ),
     },
     "N09d": {
@@ -175,7 +180,7 @@ GLOBAL_NODES: dict[str, dict] = {
             "你是{PLATFORM}签约评审（红队模式）。这是**终审**，不写稿、不改稿。\n"
             "读取：\n"
             "  {QIMAO}/03_评分卡.md                 （判定项与 B/A 级别，唯一标准）\n"
-            "  {QIMAO}/01_投稿方案.md               （收稿范围 / 唯一一次评估机会）\n"
+            "  {QIMAO}/01_投稿方案.md               （收稿范围 / 签约方式与钱）\n"
             "  {BOOK}/投稿包/全文.md                 （整合后的交付文本）\n"
             "  {BOOK}/_pipeline/endgame_findings.json（N18/N19 的机械扫描结果）\n"
             "  {BOOK}/设定/角色.md                   （人物登记表，判「未知人物」）\n"
@@ -322,6 +327,9 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 f"  {{QIMAO}}/harness/style-anchor.json    （文风锚，取 2 段正例切片）\n"
                 f"  {{SKILL}}/references/writing-contract.md    （**手法手册，先读**）\n\n"
                 f"写出 {b}/正文/第{n:03d}章_<标题>.md，单章 **≥2000 字**。\n\n"
+                "【写入方式（**必须分段写**）】单次 write_file 的 content 控制在 1000–1200 字以内。\n"
+                "  第一次 write_file（不带 append）写开头，之后每次 write_file 设 append=true 追加，\n"
+                "  分 2–3 次写完整章。一次性输出整章会触到模型长度上限、整段作废、白烧轮次。\n\n"
                 "【核心差异】被拒稿写「然后」，签约作品写「所以」。\n"
                 "  反例：「陈志海绕到后头去抬，王婶喊了一声慢，三个人这才把车顺下去。」——只有事件\n"
                 "  正例：「正因为空得太干净，他才确信这一栏不是没人填，而是被人抹掉过。」——有因果\n\n"
@@ -335,17 +343,16 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 "  4. 数字落地法：数字后下一句必须写它造成的后果或反应，不许罗列\n\n"
                 "  5. 段落切分：每段 18–30 字（1–2 句），对应 33–54 段/千字。\n"
                 "     场景切换/动作转换/心理另起都要断段。AI 天然爱写长段，必须主动切。\n\n"
-                "【生死线（N13 会卡，**上下限都要**）】\n"
-                "  · 因果连接/千字 **1.0–6.0**（超过 6.0 说明每段都硬塞因果，像说教）\n"
-                "  · 叙述动作词/千字 **≤41**（年代题材）\n"
-                "  · 问句/千字 2.0–11.7\n"
-                "  · 段/千字 **33–54**（低于 33 = 段落太长）\n"
-                "  · 字数 ≥2000\n\n"
+                "【生死线（N13 会卡，**上下限都要**）——下面是本书所属平台的实测区间，不要用别处的数字】\n"
+                "{GENRE_BOUNDS}\n\n"
                 "【开篇铁律】第 1 章前 200 字必须是当下冲突，不许环境描写、不许回忆倒叙。\n"
                 "【衔接】无缝接上上一章末尾 600 字的语气与场景。\n"
                 "【追踪】按 shapes **完整填好** tracking.json 事务（delta / 角色快照 / 伏笔 / 时间线 / context.position）；"
                 "字段条数上限：continuity_risks ≤5、active_character_names ≤6、long_term_constraints ≤6、"
-                "next_chapter_commitments ≤5、recent_chapters ≤3——超出会被 tracking_commit 拒收、N16 封板失败\n\n"
+                "next_chapter_commitments ≤5、recent_chapters ≤3——超出会被 tracking_commit 拒收、N16 封板失败。\n"
+                "**控制字段原样保留，一个字都不要改**：schema_version / mode / chapter / "
+                "expected_state_revision（改了会被 N16 以 tracking state changed 拒收）；"
+                "只填 chapter_title / delta / context.position / character_snapshots。\n\n"
                 "交付前按 writing-contract.md 第三节自检清单逐项过一遍，任一项不过先自己改。\n"
                 "回执 ≤100 字，格式 {\"written\":\"...\",\"words\":N}"
             ),
@@ -362,7 +369,8 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 f"读取 {b}/_pipeline/findings_C{n}.json（N13 脚本报错与 N15 审查意见已统一汇入）。\n"
                 f"读取 {{SKILL}}/references/writing-contract.md 的「四个可操作手法」。\n"
                 f"只改 findings 指向的段落，**不重写整章**；改完必须同步更新 "
-                f"{b}/.story/work/第{n:03d}章/tracking.json。\n\n"
+                f"{b}/.story/work/第{n:03d}章/tracking.json（schema_version / mode / chapter / "
+                f"expected_state_revision 四个控制字段原样保留，改了 N16 会拒收）。\n\n"
                 "【按 findings 类型选手法（**注意方向：偏高用反向手法**）】\n"
                 "  · 因果连接 偏低 → 手法1 段落收尾法（补「正因为/这才/原来」）\n"
                 "  · 因果连接 偏高(>6.0) → 反向：删掉部分段落的因果收尾，留 20%–30% 用纯动作或纯对话收\n"
@@ -375,6 +383,8 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 "  · 句长中位 偏低(<15) → 手法6 句长控制（叙述句写长到 25–40 字，对话保持短）\n"
                 "  · 字数不足 → 加「一个回合的博弈」，不是加形容词\n\n"
                 "硬规则：同一处失败 2 次就停下报 blocked，不要第 3 次自己猜；不许注水凑字数；不许删剧情。\n"
+                "写入方式：单次 write_file 的 content 控制在 1000–1200 字以内；改完的整章分 2–3 次写"
+                "（首次不带 append，之后 append=true），避免触到长度上限整段作废。\n"
                 "回执 ≤100 字。"
             ),
         },
@@ -446,8 +456,8 @@ def volume_nodes(st: dict, book: Path, v: int) -> dict[str, dict]:
                 f"读取 {b}/大纲/卷纲_第{v}卷.md，产出 {b}/大纲/目录_第{v}卷.md。\n"
                 f"**必须正好 {size} 行**（第 {start}–{end} 章），每行一章：\n"
                 "  章号 / 一句话事件 / 本章爽点 / 章末钩子 / 预估字数（1800–2400）\n"
-                "第 1 行对应第 {start} 章，第 {size} 行对应第 {end} 章——**行号即章号偏移，不能错位**。\n"
-                + (f"另外把本卷第 1–12 章另存一份 {b}/大纲/目录_前12章.md（兼容旧工具）。\n" if v == 1 else "")
+                f"第 1 行对应第 {start} 章，第 {size} 行对应第 {end} 章——**行号即章号偏移，不能错位**。\n"
+                + (f"另外把本卷前 {min(12, size)} 章另存一份 {b}/大纲/目录_前12章.md（兼容旧工具）。\n" if v == 1 else "")
                 + "回执 ≤100 字。"
             ),
         },
@@ -535,6 +545,13 @@ def judgment_policy(node_id: str) -> dict:
         return {"sources": ["设定/"], "mechanical_ids": set()}
     if node_id == "N08":
         return {"sources": ["大纲/卷纲_第一卷.md"], "mechanical_ids": set()}
+    # 卷级 verify（2026-10-25 补）：此前没有 V* 分支，落到 sources=[] 全禁，
+    # 导致 V{v}.N08 连它本该审的卷纲都引用不了。
+    if node_id.startswith("V") and node_id.endswith(".N08"):
+        v = node_id[1:].split(".", 1)[0]
+        return {"sources": [f"大纲/卷纲_第{v}卷.md"], "mechanical_ids": set()}
+    if node_id.startswith("V") and node_id.endswith(".N20"):
+        return {"sources": ["正文/"], "mechanical_ids": MECHANICAL_N20_IDS}
     if node_id.startswith("C") and node_id.endswith(".N15"):
         chapter = int(node_id.split(".")[0][1:])
         return {"sources": [f"正文/第{chapter:03d}章_"], "mechanical_ids": set()}

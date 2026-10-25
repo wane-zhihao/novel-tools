@@ -1,0 +1,179 @@
+{
+ "schema_version": 2,
+ "book": "重生八零：从废品站开始",
+ "genre": "dushi",
+ "target_words": 6000,
+ "max_chapters": 3,
+ "platform": "zongheng",
+ "plan": {
+  "vol_size": 22,
+  "vol_llm_cap": 80
+ },
+ "uncontrollable": [],
+ "created_at": "2026-10-25T16:58:18+0800",
+ "current_chapter": 1,
+ "chapters_committed": 1,
+ "words_total": 0,
+ "cursor": "C1.N14",
+ "nodes": {
+  "N01": {
+   "status": "done",
+   "at": "2026-10-25T16:58:22+0800",
+   "output": "{\"last_committed_chapter\": 0, \"state_revision\": 0}\n"
+  },
+  "N02": {
+   "status": "done",
+   "at": "2026-10-25T16:58:22+0800",
+   "output": "style anchor 已校准：F:\\小说\\platforms\\zongheng\\harness\\style-anchor.json（正例切片 3 段）"
+  },
+  "N03": {
+   "status": "done",
+   "at": "2026-10-25T17:23:25+0800",
+   "evidence": [
+    "大纲\\选题报告.md"
+   ],
+   "sha256": [
+    "d863cc67b7ab3a0d9da28921e420b1152af61be8bc070b87423cce1b78273c7d"
+   ],
+   "attempts": 5
+  },
+  "N04": {
+   "status": "done",
+   "at": "2026-10-25T17:43:04+0800",
+   "evidence": [
+    "_pipeline\\judgments_N04.json"
+   ],
+   "sha256": [
+    "c92483669852bdc55f3e4cb51c598bc480de7754d4d64f95c8b1e1e6d16f153b"
+   ],
+   "attempts": 3
+  },
+  "N05": {
+   "status": "done",
+   "at": "2026-10-25T17:48:49+0800",
+   "evidence": [
+    "设定\\题材定位.md"
+   ],
+   "sha256": [
+    "c0491e7367bf46a726c7825ee96ec3efa085cdb79bfbdd929554caab8d1bcfc4"
+   ],
+   "attempts": 1
+  },
+  "N06": {
+   "status": "done",
+   "at": "2026-10-25T19:19:03+0800",
+   "evidence": [
+    "_pipeline\\judgments_N06.json"
+   ],
+   "sha256": [
+    "291385473b99e845dff4229c7064b0ee9187e5d42d6ac54d09ca25052e014eca"
+   ],
+   "attempts": 1
+  },
+  "V1.N07": {
+   "status": "done",
+   "at": "2026-10-25T19:21:48+0800",
+   "evidence": [
+    "大纲\\卷纲_第1卷.md"
+   ],
+   "sha256": [
+    "279da33b1458721033e8f777d4d47cadc4976cbfb8aa57e9af44dedfda4a1daa"
+   ],
+   "attempts": 1
+  },
+  "V1.N08": {
+   "status": "done",
+   "at": "2026-10-25T19:26:47+0800",
+   "evidence": [
+    "_pipeline\\judgments_V1.N08.json"
+   ],
+   "sha256": [
+    "e2fb8ab161dfb521d4bfe52c709bfd10683f966e36dbfb52b113dbc507053a60"
+   ],
+   "attempts": 2
+  },
+  "V1.N09d": {
+   "status": "done",
+   "at": "2026-10-25T19:36:22+0800",
+   "evidence": [
+    "大纲\\目录_第1卷.md"
+   ],
+   "sha256": [
+    "96d809d7a24ee37a6845746ed26c6adb86ce051db5503e6ea0957d687969d821"
+   ],
+   "attempts": 2
+  },
+  "C1.N09": {
+   "status": "done",
+   "at": "2026-10-25T19:38:21+0800",
+   "evidence": [
+    "大纲\\细纲_第001章.md"
+   ],
+   "sha256": [
+    "19983d6ea848720ebda2aa7c04b35cdd795a17cdfe3f917b1f584c12a093e1b4"
+   ],
+   "attempts": 1
+  },
+  "C1.N10": {
+   "status": "done",
+   "at": "2026-10-25T19:38:24+0800",
+   "output": "ty\": \"advisory\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"本章禁止提前释放列了 6 条\",\n      \"expected\": \"章级只写本章特有的三五条；卷级常任禁忌写在卷纲「本卷禁碰的终局底牌」，不逐章复读\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"把与卷纲常任重复的条目删掉，只留本章特有；本项不阻断。\"\n    },\n    {\n      \"id\": \"outline.setting-refs-exist\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"0 处项目内引用全部存在\",\n      \"expected\": \"细纲引用的每个项目内 .md 文件都真实存在——不许把槽位指向查无实据的权威文件\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"修正引用路径；或按新增物三级先把缺的设定落档（「写了要报」直接补并登记、「先问作者」进排纲底稿的供给自查提案），再在细纲引用。\"\n    },\n    {\n      \"id\": \"outline.wordcount-target\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"字数目标：1900；字数口径 visible_chars_v1：true\",\n      \"expected\": \"字数目标为 500-20000 的正整数（可写「2300 字」「约 2300」「2,300」，可带括号备注），并声明 字数口径：visible_chars_v1；作者给了上下限时另写一行「字数范围：2000-2600」\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只补字数目标、字数范围或字数口径行，不调整情节安排。\"\n    }\n  ],\n  \"failures\": [],\n  \"advisories\": [\n    {\n      \"id\": \"outline.release-brevity\",\n      \"ok\": false,\n      \"severity\": \"advisory\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"本章禁止提前释放列了 6 条\",\n      \"expected\": \"章级只写本章特有的三五条；卷级常任禁忌写在卷纲「本卷禁碰的终局底牌」，不逐章复读\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"把与卷纲常任重复的条目删掉，只留本章特有；本项不阻断。\"\n    }\n  ],\n  \"repair_scope\": []\n}\n"
+  },
+  "C1.N11": {
+   "status": "done",
+   "at": "2026-10-25T19:38:25+0800",
+   "output": "上下文已组装 -> F:\\WorkBuddy AI\\Novel Platform\\_phase0\\e2e\\追踪\\上下文.md（6359 字符）"
+  },
+  "C1.N12": {
+   "status": "done",
+   "at": "2026-10-25T19:50:15+0800",
+   "evidence": [
+    "正文\\第001章_腊月不搬家.md"
+   ],
+   "sha256": [
+    "dbcda12754984f474218a002a1be074ddb2ba8e5a28737fa66447a141a75dc31"
+   ],
+   "attempts": 3
+  },
+  "C1.N13": {
+   "status": "done",
+   "at": "2026-10-25T20:00:34+0800",
+   "output": "blocking=0 advisory=0 metrics={\"visible_chars\": 1744, \"paragraphs_per_1000\": 47.6, \"sent_len_median\": 14, \"causal_per_1000\": 1.72, \"narration_action_density\": 41.36, \"action_density\": 36.7, \"action_chain_max\": 5, \"number_per_1000\": 26.95, \"question_per_1000\": 5.16, \"multi_actor_sent_ratio\": 0.079}"
+  },
+  "C1.N14": {
+   "status": "pending",
+   "attempts": 4,
+   "started_at": "2026-10-25T20:03:21+0800"
+  },
+  "C1.N15": {
+   "status": "done",
+   "at": "2026-10-25T20:02:10+0800",
+   "evidence": [
+    "_pipeline\\judgments_C1.N15.json"
+   ],
+   "sha256": [
+    "b7270a863bc5691b7c198b330eaa19a8a4b74b24bededcaa49f10242792f4e70"
+   ],
+   "attempts": 1
+  },
+  "C1.N16": {
+   "status": "failed",
+   "at": "2026-10-25T20:03:21+0800",
+   "output": "{\"schema\":\"story-chapter-error/v1\",\"status\":\"error\",\"error_code\":\"CHECK_FAILED\",\"message\":\"active core character 顾秀英 has no current snapshot\"}\n"
+  }
+ },
+ "decisions_taken": [
+  {
+   "at_node": "resume",
+   "issue": "state 记 0 章 / tracking 账本记 1 章",
+   "applied_rule": "以 tracking 账本为准，越界章节节点打回 pending"
+  }
+ ],
+ "pending_questions": [],
+ "blocked_reason": null,
+ "relay_count": 0,
+ "fix_rounds": {},
+ "n20_rounds": 0,
+ "global_fix_rounds": {},
+ "llm_rounds": 14
+}
