@@ -30,6 +30,31 @@ test("读写书内文本文件", () => withBook((bookDir, tools) => {
   assert.match(listing.content, /正文\//);
 }));
 
+test("append 追加与 .json 合法性守卫", () => withBook((bookDir, tools) => {
+  const first = tools.execute("write_file", { path: "大纲/长文.md", content: "第一段。" });
+  assert.equal(first.ok, true);
+  const appended = tools.execute("write_file", { path: "大纲/长文.md", content: "第二段。", append: true });
+  assert.equal(appended.ok, true);
+  assert.equal(readFileSync(join(bookDir, "大纲", "长文.md"), "utf8"), "第一段。第二段。");
+  assert.match(appended.content, /已追加/);
+
+  // 合法 JSON 放行
+  const goodJson = tools.execute("write_file", { path: "大纲/x.json", content: '{"a":1}' });
+  assert.equal(goodJson.ok, true);
+
+  // 截断的半截 JSON 被拦下（真书实证：模型把 tracking.json 写成 3636 字符中断，
+  // 直到 N16 封板才被 storyctl 拒，白烧一整轮）
+  const badJson = tools.execute("write_file", { path: "大纲/x.json", content: '{"a":1,"b":"半截' });
+  assert.equal(badJson.ok, false);
+  assert.match(badJson.content, /不是合法 JSON/);
+  assert.equal(readFileSync(join(bookDir, "大纲", "x.json"), "utf8"), '{"a":1}', "非法写入不应覆盖原文件");
+
+  // 对已存在 JSON 追加 → 拼出非法文档，同样拦下并给出改法
+  const appendJson = tools.execute("write_file", { path: "大纲/x.json", content: '{"c":2}', append: true });
+  assert.equal(appendJson.ok, false);
+  assert.match(appendJson.content, /append/);
+}));
+
 test("路径越界被拒绝", () => withBook((bookDir, tools) => {
   const outsideRelative = tools.execute("write_file", { path: "../outside.md", content: "x" });
   assert.equal(outsideRelative.ok, false);

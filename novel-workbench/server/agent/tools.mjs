@@ -291,6 +291,19 @@ export function createToolExecutor({
     if (Buffer.byteLength(after, "utf8") > maxWriteBytes) {
       return fail("TOO_LARGE", `追加后总内容超过上限 ${maxWriteBytes}，请拆到不同文件或精简`);
     }
+    // .json 目标必须写完整合法 JSON：真书实证模型会把 tracking.json 写成截断的
+    // 半截文档（3636 字符中断），直到 N16 封板才被 storyctl 拒，白烧一整轮。
+    // 追加模式对已存在的 JSON 几乎必然产生非法文档，这里一并拦下。
+    if (ext === ".json") {
+      try {
+        JSON.parse(after);
+      } catch (error) {
+        const hint = append && before !== null
+          ? "；注意：对已存在的 JSON 用 append 会拼出非法文档，请改用覆盖写入（省略 append）写完整 JSON"
+          : "；请一次性写完整 JSON（可精简字段，但结构必须闭合）";
+        return fail("INVALID_JSON", `写入后不是合法 JSON（${error.message}）${hint}`);
+      }
+    }
     try {
       backupExisting(target, rel);
       mkdirSync(dirname(target), { recursive: true });
