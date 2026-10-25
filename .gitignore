@@ -68,3 +68,6 @@ agents.json
 # 版本与投稿包（生成物）
 **/_pipeline/versions/
 **/_pipeline/submissions/
+
+# 本地临时脚本/探针（不进仓库）
+.tmp-*

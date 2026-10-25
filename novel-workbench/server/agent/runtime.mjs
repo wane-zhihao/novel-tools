@@ -312,6 +312,18 @@ export class AgentRuntime {
         throw new BudgetExceededError(`completion token 超过预算 ${budget}`);
       }
       if (!reply.toolCalls.length) {
+        // 输出被长度上限截断：DeepSeek 会丢弃截断中的 tool_calls，表现为
+        // finish=length + 空 content + 零工具调用（真书实证连续 13 轮空转，
+        // 每次烧满 4096 completion）。必须引导分段写入，推一把没用。
+        if (reply.finishReason === "length") {
+          this.emit({ type: "node_truncated", node: instruction.node, step, completion: reply.usage.completion });
+          messages.push({ role: "assistant", content: "（上一条输出触到长度上限被截断，工具调用未发出）" });
+          messages.push({
+            role: "user",
+            content: "上一次输出触到长度上限被截断，整段作废。请分段写入：先调用 write_file 写前半部分（约 1000–1200 字，不带 append），成功后再调用 write_file 并设 append=true 追加剩余部分。分 2–3 次写完。",
+          });
+          continue;
+        }
         // 空回复不停摆：模型（实测 deepseek-flash）会在长任务中途返回无工具、
         // 无文字的轮次，直接结束会白烧一次 attempt。推一把让它继续干活。
         if (!String(reply.content ?? "").trim()) {
@@ -339,10 +351,21 @@ export class AgentRuntime {
         })),
       });
       for (const call of reply.toolCalls) {
-        let args = {};
+        let args = null;
         try {
           args = JSON.parse(call.arguments || "{}");
         } catch {}
+        // 参数 JSON 非法（多为长度上限截断）时不能拿空对象硬执行——会撞出
+        // 误导性错误（如「只允许写入文本文件：(无扩展名)」），模型据此乱改。
+        if (!args || typeof args !== "object") {
+          this.emit({ type: "tool_call", node: instruction.node, tool: call.name, path: null, ok: false });
+          messages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            content: `ERROR[TYPE] 工具参数不是合法 JSON（长度 ${(call.arguments || "").length} 字符，很可能被长度上限截断）。请缩小单次写入量：先 write_file 写前半部分，再用 append=true 追加剩余部分。`,
+          });
+          continue;
+        }
         const result = this.tools.execute(call.name, args);
         this.emit({
           type: "tool_call",

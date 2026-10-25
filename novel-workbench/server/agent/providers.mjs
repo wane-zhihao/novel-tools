@@ -130,6 +130,7 @@ export class OpenAIProvider {
       return {
         content: typeof message.content === "string" ? message.content : "",
         toolCalls,
+        finishReason: typeof data?.choices?.[0]?.finish_reason === "string" ? data.choices[0].finish_reason : "",
         usage: {
           prompt: Number(data.usage?.prompt_tokens) || 0,
           completion: Number(data.usage?.completion_tokens) || 0,

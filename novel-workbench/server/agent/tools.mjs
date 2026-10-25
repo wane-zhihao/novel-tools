@@ -84,7 +84,7 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "write_file",
-      description: "把完整内容写入书目录内的文本文件，父目录会自动创建。",
+      description: "把内容写入书目录内的文本文件，父目录会自动创建。默认覆盖整个文件；append=true 时追加到文件末尾（用于分次写长文）。",
       parameters: {
         type: "object",
         properties: {
@@ -92,7 +92,8 @@ export const TOOL_DEFINITIONS = [
             type: "string",
             description: "相对书目录的路径（如 大纲/选题报告.md）；书目录内的绝对路径也可以。禁止写 _pipeline/ 控制文件。",
           },
-          content: { type: "string", description: "完整文件内容（不是补丁）" },
+          content: { type: "string", description: "要写入的内容（不是补丁）。单次调用内容不宜超过 1500 字，长文请分 2–3 次，后续调用带 append=true。" },
+          append: { type: "boolean", description: "true = 追加到文件末尾；省略或 false = 覆盖整个文件。" },
         },
         required: ["path", "content"],
       },
@@ -284,20 +285,30 @@ export function createToolExecutor({
     if (typeof args?.content !== "string") return fail("CONTENT", "content 必须是字符串");
     const bytes = Buffer.byteLength(args.content, "utf8");
     if (bytes > maxWriteBytes) return fail("TOO_LARGE", `内容 ${bytes} 字节超过上限 ${maxWriteBytes}`);
+    const append = args?.append === true;
     const before = existsSync(target) ? readFileSync(target, "utf8") : null;
+    const after = append ? `${before ?? ""}${args.content}` : args.content;
+    if (Buffer.byteLength(after, "utf8") > maxWriteBytes) {
+      return fail("TOO_LARGE", `追加后总内容超过上限 ${maxWriteBytes}，请拆到不同文件或精简`);
+    }
     try {
       backupExisting(target, rel);
       mkdirSync(dirname(target), { recursive: true });
       const temp = `${target}.${process.pid}.${Date.now()}.tmp`;
-      writeFileSync(temp, args.content, "utf8");
+      writeFileSync(temp, after, "utf8");
       renameSync(temp, target);
     } catch (error) {
       return fail("WRITE", `写入失败：${error.message}`);
     }
     try {
-      onFileWrite?.({ relativePath: rel, before, after: args.content });
+      onFileWrite?.({ relativePath: rel, before, after });
     } catch {}
-    return { ok: true, content: `已写入 ${rel}（${bytes} 字节）` };
+    return {
+      ok: true,
+      content: append
+        ? `已追加到 ${rel}（本次 ${bytes} 字节，全文 ${Buffer.byteLength(after, "utf8")} 字节）`
+        : `已写入 ${rel}（${bytes} 字节）`,
+    };
   }
 
   function listDir(args) {
