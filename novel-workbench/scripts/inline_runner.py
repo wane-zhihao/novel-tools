@@ -522,6 +522,100 @@ def _chapter_check(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     return 0, summary
 
 
+def _normalize_tracking(txn: Path, st: dict) -> list[str]:
+    """封板前把 tracking.json 规整到 schema 允许的形状。
+
+    **为什么要有**：writer 产出的 tracking 经常不合 schema，而 storyctl 的报错是
+    硬失败，会把整章打回 N14 重写。端到端实跑时第 1 章因此卡了 4 轮：
+      · continuity_risks 8 条 > 上限 5
+      · character_snapshots 有 6 个，但 delta.character_changes 只有 5 个
+        （周慕松本章没出场却进了 active 名单）→ 循环矛盾：
+        放快照里说"不在 delta"，不放快照里说"active 缺快照"
+      · delta 5541 字节 > 上限 3072
+
+    这些都是**结构性不一致**，不需要 LLM 判断，确定性规整即可。
+    返回做了哪些修正，写进 N16 输出便于审计。
+    """
+    notes: list[str] = []
+    try:
+        d = json.loads(txn.read_text(encoding="utf-8"))
+    except Exception:
+        return notes
+    if not isinstance(d, dict):
+        return notes
+
+    ctx = d.setdefault("context", {})
+    delta = d.setdefault("delta", {})
+
+    # ① character_snapshots 必须恰好等于 delta 里改动的角色
+    changed = [c.get("name") for c in (delta.get("character_changes") or [])
+               if isinstance(c, dict) and c.get("name")]
+    snap = d.get("character_snapshots") or {}
+    if isinstance(snap, dict) and changed:
+        changed_set = set(changed)
+        extra = [k for k in snap if k not in changed_set]
+        for k in extra:
+            del snap[k]
+        if extra:
+            notes.append(f"快照删多余角色 {extra}")
+        missing = [n for n in changed if n not in snap]
+        if missing:
+            # 不能凭空编造快照内容，只能把它从 active 里摘掉并记录
+            notes.append(f"⚠ {missing} 在 delta 里但没有快照，已从 active 摘除")
+
+    # ② active_character_names ⊆ snapshots
+    act = ctx.get("active_character_names") or []
+    if isinstance(act, list) and snap:
+        keep = [x for x in act if x in snap]
+        if keep != act:
+            notes.append(f"active 摘除 {[x for x in act if x not in snap]}")
+            ctx["active_character_names"] = keep
+
+    # ③ continuity_risks ≤ 5
+    risks = ctx.get("continuity_risks") or []
+    if isinstance(risks, list) and len(risks) > 5:
+        notes.append(f"continuity_risks {len(risks)} → 5（丢弃 {len(risks) - 5} 条）")
+        ctx["continuity_risks"] = risks[:5]
+
+    # ④ delta 体积 ≤ 3072
+    def _size() -> int:
+        return len(json.dumps(delta, ensure_ascii=False).encode())
+
+    if _size() > 3072:
+        before = _size()
+        # 先压时间线 objective_fact
+        for ev in delta.get("timeline_events") or []:
+            if isinstance(ev, dict):
+                for k in ("objective_fact", "note", "detail"):
+                    if isinstance(ev.get(k), str) and len(ev[k]) > 44:
+                        ev[k] = ev[k][:42] + "…"
+        # 再压伏笔
+        for f in delta.get("foreshadow_changes") or []:
+            if isinstance(f, dict):
+                for k in ("description", "note", "detail"):
+                    if isinstance(f.get(k), str) and len(f[k]) > 34:
+                        f[k] = f[k][:32] + "…"
+        # 再压角色变化
+        for c in delta.get("character_changes") or []:
+            if isinstance(c, dict):
+                for k in ("change", "note", "detail"):
+                    if isinstance(c.get(k), str) and len(c[k]) > 44:
+                        c[k] = c[k][:42] + "…"
+        # 再压承诺
+        cm = delta.get("next_chapter_commitments") or []
+        if isinstance(cm, list):
+            delta["next_chapter_commitments"] = [
+                (x[:26] + "…") if isinstance(x, str) and len(x) > 28 else x for x in cm]
+        # 最后压 result
+        if isinstance(delta.get("result"), str) and len(delta["result"]) > 54:
+            delta["result"] = delta["result"][:52] + "…"
+        notes.append(f"delta 压缩 {before}B → {_size()}B")
+
+    if notes:
+        txn.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    return notes
+
+
 def _commit_chapter(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     """C{n}.N16：原子封板 + 回写 words_total。
 
@@ -548,6 +642,8 @@ def _commit_chapter(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     txn = book / ".story" / "work" / f"第{chapter:03d}章" / "tracking.json"
     if not txn.is_file():
         return 2, f"找不到追踪事务 {txn}——writer 必须在 N12 按 shapes 填好它"
+    # 封板前自动规整 tracking（结构性问题不该靠 LLM 重写整章来修）
+    _notes = _normalize_tracking(txn, st)
     cmd = [cfg["PYTHON"], cfg["STORYCTL"], "chapter", "commit",
            "--project", str(book), "--chapter", str(chapter), "--input", str(txn)]
     rc, out = run_script(cmd, book, timeout=300)
@@ -558,7 +654,8 @@ def _commit_chapter(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     st["words_total"] = sum(int(v.get("actual") or 0) for v in records.values()
                             if isinstance(v, dict))
     _mark_findings_resolved(book, chapter)
-    return 0, out + f"\nwords_total={st['words_total']}"
+    _tail = ("\n规整: " + "；".join(_notes)) if _notes else ""
+    return 0, out + f"\nwords_total={st['words_total']}" + _tail
 
 
 def _mark_findings_resolved(book: Path, chapter: int) -> None:

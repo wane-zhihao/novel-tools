@@ -382,6 +382,62 @@ def cmd_init(a) -> int:
     return 0
 
 
+def _heal_from_tracking(book: Path, st: dict) -> list[str]:
+    """以 追踪/_tracking-state.json 为账本，修正 state.json 里的派生字段。
+
+    **为什么要有**：words_total 和 chapters_committed 都是 tracking 账本的派生值，
+    但写回 state 的路径不止一条（N16 封板、崩溃窗口重跑、人工 resume）。
+    端到端实跑时出现过「封板 1 章但 words_total=0」——状态漂移后
+    字数检查、卷预算、里程碑判定全部失真。
+
+    账本是真值，state 是缓存。这里单向以账本覆盖，并返回修正说明。
+    """
+    notes: list[str] = []
+    try:
+        tk = json.loads((book / "追踪" / "_tracking-state.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return notes
+    if not isinstance(tk, dict):
+        return notes
+
+    records = tk.get("wordcount_records") or {}
+    expected_words = sum(int(v.get("actual") or 0) for v in records.values()
+                         if isinstance(v, dict))
+    if expected_words != int(st.get("words_total") or 0):
+        notes.append(f"words_total {st.get('words_total')} → {expected_words}")
+        st["words_total"] = expected_words
+
+    try:
+        last = int(tk.get("last_committed_chapter") or 0)
+    except (TypeError, ValueError):
+        last = 0
+    if last > int(st.get("chapters_committed") or 0):
+        notes.append(f"chapters_committed {st.get('chapters_committed')} → {last}")
+        st["chapters_committed"] = last
+        # **不要动 current_chapter**：它是游标派生的（C{n} 节点用 current_chapter+1），
+        # 由 next_cursor 推进。这里改它会让 C1.N14 解析成 C2.N14 而失效。
+        # 2026-10-25 实测踩过：自愈把 current_chapter 从 0 改成 1，
+        # cursor 仍是 C1.N14，cursor_spec 返回 None，next 直接报 done。
+
+    # 游标落后于账本：第 n 章已经封板（账本有记录），游标却还在改它。
+    # 这是崩溃/人工 resume 留下的悬空态，按账本往前推。
+    cur = st.get("cursor") or ""
+    m = re.match(r"C(\d+)\.", cur)
+    if m and last >= 1:
+        n = int(m.group(1))
+        if n <= last:
+            st["current_chapter"] = last
+            if last >= int(st.get("max_chapters") or 0):
+                st["cursor"] = "N17"
+            else:
+                st["cursor"] = f"C{last + 1}.N09"
+            notes.append(f"游标 {cur} 落后于已封板第 {last} 章 → {st['cursor']}")
+
+    if notes:
+        save_state(book, st)
+    return notes
+
+
 def cmd_status(a) -> int:
     book = Path(a.book).resolve()
     st = load_state(book)
@@ -549,6 +605,10 @@ def cmd_relay(a) -> int:
 
 def cmd_next(a) -> int:
     book = Path(a.book).resolve()
+    # 每次推进前先以账本校正派生字段（漂移会让字数检查/卷预算/里程碑全失真）
+    _st0 = load_state(book)
+    if _st0:
+        _heal_from_tracking(book, _st0)
     st = load_state(book)
     if not st:
         print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
