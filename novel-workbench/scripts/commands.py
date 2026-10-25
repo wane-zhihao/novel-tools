@@ -355,6 +355,67 @@ def _tracking_preflight(book: Path, node: str) -> str:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _text_preflight(book: Path, node: str, st: dict) -> dict | None:
+    """N12/N14 的正文预检：在 done 时就跑一遍闸门，不合格就拒绝 done。
+
+    **为什么要有**：验证本来就存在（C{n}.N13 每轮重跑 storyctl+gate 并**覆盖**
+    findings），但它发生在**下一步**。所以 N14 漏改一处，就要等下一轮 N13 才发现，
+    白白烧掉一整轮 LLM（实测第 1 章第 2 轮说「三条已逐条处理」，实际漏了
+    「不是工期，是他最后一次机会」，第 3 轮才被 N13 抓回来）。
+
+    把这一步前移到 done，subagent 就能在**同一轮内**改完再交。
+
+    拦截线 = blocking + 高优 advisory（HIGH_PRIORITY_ADVISORY）。
+    其余 advisory 只记录不拦——否则会逼模型重写整段、把轮次耗光。
+
+    fail-open：同一节点连续拒绝 2 次后放行，交给 N13/N14 的 fix_rounds 接管。
+    没有这个兜底，一个改不动的章会让 done 永远失败、整条链卡死。
+    """
+    m = re.match(r"^C(\d+)\.N(12|14)$", node)
+    if not m:
+        return None
+    chapter = int(m.group(1))
+    if not (book / "正文").exists():
+        return None
+
+    attempts = int((st.get("text_preflight_attempts") or {}).get(node, 0))
+    if attempts >= 2:
+        # 已连续拒过 2 次 → 放行，让下游的 fix_rounds / 终停机制接管
+        return None
+
+    try:
+        from inline_runner import _chapter_check, HIGH_PRIORITY_ADVISORY
+        rc, res = _chapter_check(book, chapter, st, _write=False)
+    except Exception:
+        return None                       # 预检自身失败不阻断流程
+    if rc != 0 or not isinstance(res, dict):
+        return None                       # 工具硬失败 → 交给 N13/N16 兜底
+
+    items = res.get("items") or []
+    blocking = [x for x in items if isinstance(x, dict) and x.get("blocking")]
+    high_adv = [x for x in items if isinstance(x, dict)
+                and not x.get("blocking")
+                and str(x.get("id") or x.get("criterion") or "") in HIGH_PRIORITY_ADVISORY]
+    if not blocking and not high_adv:
+        st.pop("text_preflight_attempts", None)
+        return None
+
+    st["text_preflight_attempts"] = {**(st.get("text_preflight_attempts") or {}),
+                                     node: attempts + 1}
+    save_state(book, st)
+
+    def _brief(x: dict) -> dict:
+        return {"id": x.get("id") or x.get("criterion"),
+                "level": x.get("level", "B"),
+                "name": str(x.get("name") or "")[:160]}
+
+    return {
+        "blocking": [_brief(x) for x in blocking[:8]],
+        "advisory": [_brief(x) for x in high_adv[:5]],
+        "attempt": attempts + 1,
+    }
+
+
 def cmd_done(a) -> int:
     book = Path(a.book).resolve()
     st = load_state(book)
@@ -431,6 +492,21 @@ def cmd_done(a) -> int:
             "error": "tracking_preflight_failed",
             "detail": (f"{preflight_error}。修法：只改 .story/work/第NNN章/tracking.json "
                        "（字段名/枚举/id 形态/字节上限），正文不用重写；改完重新 done。"),
+        }, ensure_ascii=False))
+        return 2
+
+    # N12/N14：正文也先过一遍闸门，别等下一轮 N13 才发现漏改
+    text_err = _text_preflight(book, a.node, st)
+    if text_err:
+        print(json.dumps({
+            "error": "text_preflight_failed",
+            "blocking": text_err["blocking"],
+            "high_priority_advisory": text_err["advisory"],
+            "attempt": text_err["attempt"],
+            "hint": ("闸门仍未通过，**在同一轮内改完再交**，不要另起一轮。"
+                     "按 id 逐条处理：em-dash/not-is-comparison 等句式类需重写该句；"
+                     "长段需断段；字数超需删冗余但不删剧情。"
+                     "连续 2 次不过会自动放行，交给 N13/N14 走定点改写。"),
         }, ensure_ascii=False))
         return 2
 

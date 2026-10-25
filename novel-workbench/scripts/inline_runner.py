@@ -464,7 +464,9 @@ def _gate_findings(result: dict) -> tuple[list[dict], dict]:
     return items, result.get("metrics") or {}
 
 
-def _chapter_check(book: Path, chapter: int, st: dict, _allow_mech: bool = True) -> tuple[int, str]:
+def _chapter_check(book: Path, chapter: int, st: dict,
+                   _allow_mech: bool = True,
+                   _write: bool = True) -> tuple[int, object]:
     """C{n}.N13：storyctl 质量复检 + 平台闸门，统一写 findings_C{n}.json。
 
     有阻断项也返回 0：交给 C{n}.N14 定点改写，而不是把整条流水线停死。
@@ -517,13 +519,17 @@ def _chapter_check(book: Path, chapter: int, st: dict, _allow_mech: bool = True)
     gate_items, metrics = _gate_findings(gates[0])
     items += gate_items
 
-    # 机械项确定性修复：破折号/半角标点/省略号改法唯一，不该烧一轮 LLM。
+    # 机械项确定性修复：省略号/半角标点/垃圾行改法唯一，不该烧一轮 LLM。
     # 端到端实测 5 轮 N14 里有 3 轮只在做这个，而且 N14 还会漏。
     # 修完立刻重跑一遍本函数复检；第二次不再修（_allow_mech=False），防死循环。
     if _allow_mech:
         _n, _notes = mechanical_fix(book, chapter, items)
         if _n:
-            return _chapter_check(book, chapter, st, _allow_mech=False)
+            return _chapter_check(book, chapter, st, _allow_mech=False, _write=_write)
+
+    # 干跑模式（预检用）：不写盘，直接把结果给调用方判断
+    if not _write:
+        return 0, {"items": items, "metrics": metrics}
 
     doc = write_chapter_findings(book, chapter, items, metrics)
     summary = (f"blocking={doc['blocking_count']} advisory={doc['advisory_count']} "
@@ -654,23 +660,65 @@ def _normalize_tracking(txn: Path, st: dict, prev_ctx: dict | None = None) -> li
 
 
 # ─── 机械项确定性修复 ────────────────────────────────────────────────────────
-# 为什么要有：端到端跑 2 章实测，5 轮 N14 里有 3 轮只在做字符串替换
-# （破折号 → 标点、半角 → 全角、... → ……），而且 N14 还会漏（第 1 章第 2 轮
-# 漏了「不是工期，是他最后一次机会」）。这类问题正则可判、改法唯一，
-# 不该烧一整轮 LLM，也不该指望模型自觉。
+# 为什么要有：端到端跑 2 章实测，5 轮 N14 里有 3 轮只在做字符串替换，
+# 而且 N14 还会漏（第 1 章第 2 轮漏了「不是工期，是他最后一次机会」）。
+# 这类问题正则可判、改法唯一，不该烧一整轮 LLM。
+#
+# ⚠ 注意：check-ai-patterns.js 里 `mechanical` 的含义是「必须清零」，
+# **不等于「改法唯一」**。破折号被标为 mechanical，但源码要求按功能改写
+# （打断→动作、拖长音→省略、插入→逗号或冒号），所以这里不做，交给 N14。
 
-_MECH_IDS = {"em-dash", "PUNCTUATION_NOT_NORMALIZED", "ellipsis",
-             "punctuation_not_normalized", "half-width-punct"}
+# 高优 advisory：指出结构问题、且局部就能改的。只这些会在预检里拦 done，
+# 其余 advisory 只记录不拦（否则会逼模型重写整段、把轮次耗光）。
+HIGH_PRIORITY_ADVISORY = {
+    "low-connective-density-tic",   # 补连接词，局部可改
+    "formulaic-parallelism",        # 排比句式，局部可改
+}
+
+
+def _punct_subtypes(items: list) -> set:
+    """从 PUNCTUATION_NOT_NORMALIZED 的 name 里抽子类型。
+
+    storyctl 的 name 形如 `<路径>:3:25: ellipsis: 替换为「，」。`，
+    子类型有 ellipsis / em-dash / double-hyphen / quote-style。
+    必须区分：省略号可以机械换成逗号，破折号不行（要按功能改写，交给 N14）。
+    """
+    import re as _re
+    out = set()
+    for x in items:
+        if not isinstance(x, dict):
+            continue
+        if str(x.get("id") or x.get("criterion") or "") != "PUNCTUATION_NOT_NORMALIZED":
+            continue
+        m = _re.search(r":\s*(ellipsis|em-dash|double-hyphen|quote-style)\s*:",
+                       str(x.get("name") or ""))
+        if m:
+            out.add(m.group(1))
+        else:
+            out.add("unknown")
+    return out
+
+
+# 纯删除类：删掉不影响上下文的（只处理「整行就是占位符/元信息」的明确情形）
+_PURE_DELETE_IDS = {"placeholder-leak", "meta-leak", "verbatim-repeat"}
+_PLACEHOLDER_LINE = r"^\s*[\[（(【]?\s*(?:待补充|待定|TODO|TBD|XXX|\?\?)\s*[\]）)】]?\s*$"
+_META_LINE = r"^\s*[（(【]\s*(?:本章|作者注|注[:：]|说明[:：]).{0,40}[）)】]\s*$"
 
 
 def mechanical_fix(book: Path, chapter: int, items: list | None = None) -> tuple[int, list[str]]:
-    """就地修掉机械类 findings，返回 (修了几处, 说明列表)。
+    """就地修掉**改法唯一**的机械类 findings，返回 (修了几类, 说明列表)。
 
-    只处理**改法唯一**的三类：
-      · 破折号「——」→ 按上下文选「，」或「：」
-      · 半角标点（中文字符之间）→ 全角
-      · 省略号「...」→「……」
-    禁用句式（不是X是Y）**不在这里改**——它需要重新组织句子，交给 N14。
+    只做三类，且**按 finding 类型分别触发**（此前是「有任一机械项就三种全做」，
+    会把只报了标点的章顺手改掉破折号，与「破折号交给 N14」的约定冲突）：
+
+      · 省略号 `...` / `……` → 逗号（本平台禁用省略号，storyctl 明确要求）
+      · 中文之间的半角标点 → 全角
+      · 纯删除类：整行占位符 / 整行元信息 / 连续重复行
+
+    **不在这里改**（都要语义判断，交给 N14）：
+      · 破折号「——」——源码要求按功能改写（打断→动作、拖长音→省略、插入→逗号或冒号）
+      · 禁用句式（不是X是Y / 是X不是Y / 声音不大却 / 没有X没有Y / 章末总结）
+      · long-paragraph 断段、period-stutter 合句、micro-action-tic（删「了一下」会不通）
     """
     import re as _re
 
@@ -683,9 +731,15 @@ def mechanical_fix(book: Path, chapter: int, items: list | None = None) -> tuple
         except Exception:
             return 0, []
         items = doc if isinstance(doc, list) else (doc.get("items") or [])
-    mech = [x for x in items if isinstance(x, dict)
-            and str(x.get("id") or x.get("criterion") or "") in _MECH_IDS]
-    if not mech:
+
+    ids = {str(x.get("id") or x.get("criterion") or "")
+           for x in items if isinstance(x, dict)}
+    subtypes = _punct_subtypes(items)
+
+    want_ellipsis = "ellipsis" in subtypes or "ellipsis" in ids
+    want_halfwidth = "PUNCTUATION_NOT_NORMALIZED" in ids or "half-width-punct" in ids
+    want_delete = bool(ids & _PURE_DELETE_IDS)
+    if not (want_ellipsis or want_halfwidth or want_delete):
         return 0, []
 
     files = sorted((book / "正文").glob(f"第{chapter:03d}章_*.md"))
@@ -696,29 +750,48 @@ def mechanical_fix(book: Path, chapter: int, items: list | None = None) -> tuple
     before = text
     notes: list[str] = []
 
-    # ① 破折号：后面接完整分句用「，」，后面接补充说明用「：」
-    n = text.count("——")
-    if n:
-        text = _re.sub(r"——(?=[\u4e00-\u9fa5「『（])", "，", text)
-        notes.append(f"破折号 {n} → 逗号")
+    # ① 省略号 → 逗号（仅在闸门报了 ellipsis 子类型时）
+    if want_ellipsis:
+        for _el in ("...", "……"):
+            if _el in text:
+                c = text.count(_el)
+                text = text.replace(_el, "，")
+                notes.append(f"省略号「{_el}」{c} → 逗号")
 
-    # ② 省略号：**本平台禁止省略号**，storyctl 明确要求换成「，」
-    #    （实测：原稿两章 0 处 ……、0 处 ...，闸门见到就报 PUNCTUATION_NOT_NORMALIZED）
-    for _el in ("...", "……"):
-        if _el in text:
-            c = text.count(_el)
-            text = text.replace(_el, "，")
-            notes.append(f"省略号「{_el}」{c} → 逗号")
+    # ② 中文字符之间的半角标点 → 全角
+    if want_halfwidth:
+        pairs = {",": "，", ";": "；", ":": "：", "?": "？", "!": "！"}
+        fixed = 0
+        for half, full in pairs.items():
+            pat = _re.compile(r"(?<=[\u4e00-\u9fa5])" + _re.escape(half) + r"(?=[\u4e00-\u9fa5])")
+            text, k = pat.subn(full, text)
+            fixed += k
+        if fixed:
+            notes.append(f"半角标点 {fixed} → 全角")
 
-    # ③ 中文字符之间的半角标点 → 全角
-    pairs = {",": "，", ";": "；", ":": "：", "?": "？", "!": "！"}
-    fixed_punct = 0
-    for half, full in pairs.items():
-        pat = _re.compile(r"(?<=[\u4e00-\u9fa5])" + _re.escape(half) + r"(?=[\u4e00-\u9fa5])")
-        text, k = pat.subn(full, text)
-        fixed_punct += k
-    if fixed_punct:
-        notes.append(f"半角标点 {fixed_punct} → 全角")
+    # ③ 纯删除类：只删「整行就是垃圾」的，不碰正文句子
+    if want_delete:
+        lines = text.split("\n")
+        keep, dropped = [], 0
+        prev_nonempty = None
+        for ln in lines:
+            s = ln.strip()
+            if s and _re.fullmatch(_PLACEHOLDER_LINE, s):
+                dropped += 1
+                continue
+            if s and _re.fullmatch(_META_LINE, s):
+                dropped += 1
+                continue
+            # 连续完全相同的行 = 复制粘贴残留
+            if s and s == prev_nonempty:
+                dropped += 1
+                continue
+            if s:
+                prev_nonempty = s
+            keep.append(ln)
+        if dropped:
+            text = "\n".join(keep)
+            notes.append(f"删除垃圾行/重复行 {dropped} 行")
 
     if text != before:
         src.write_text(text, encoding="utf-8")
@@ -764,19 +837,32 @@ def _commit_chapter(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     records = state.get("wordcount_records") or {}
     st["words_total"] = sum(int(v.get("actual") or 0) for v in records.values()
                             if isinstance(v, dict))
-    _mark_findings_resolved(book, chapter)
+    _rec = records.get(str(chapter)) or {}
+    _mark_findings_resolved(book, chapter, {
+        k: _rec.get(k) for k in ("actual", "target", "metric", "status", "resolution")
+        if _rec.get(k) is not None
+    })
     _tail = ("\n规整: " + "；".join(_notes)) if _notes else ""
     return 0, out + f"\nwords_total={st['words_total']}" + _tail
 
 
-def _mark_findings_resolved(book: Path, chapter: int) -> None:
-    """封板成功后给本章 findings 盖上已解决戳，Dashboard 才不会把已修复项当现行问题。"""
+def _mark_findings_resolved(book: Path, chapter: int, metrics: dict | None = None) -> None:
+    """封板成功后给本章 findings 盖上已解决戳，Dashboard 才不会把已修复项当现行问题。
+
+    注意 `resolved_blocking` 的含义（2026-10-25 修）：
+    此前写的是 `blocking_count`（**封板前的旧值**），读起来像「解决了 3 项」，
+    实际是「当时有 3 项待解决」。N16 commit 内部已重跑 check，能走到这里就说明
+    阻断项已经清零，所以这里写 0，并另存封板时的实测指标备查。
+    """
     path = book / "_pipeline" / f"findings_C{chapter}.json"
     doc = _read_json(path, default=None)
     if not isinstance(doc, dict):
         return
     doc["resolved_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S%z")
-    doc["resolved_blocking"] = doc.get("blocking_count", 0)
+    doc["resolved_blocking"] = 0
+    doc["resolved_was_blocking"] = doc.get("blocking_count", 0)
+    if metrics:
+        doc["resolved_metrics"] = metrics
     _write_json(path, doc)
 
 
