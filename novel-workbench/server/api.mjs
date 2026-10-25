@@ -410,6 +410,29 @@ export function createApi({
     if (loaded.errors.length) {
       throw new HttpError(400, "invalid_agent_config", "Agent 配置有误", { errors: loaded.errors });
     }
+    // real 模式逐角色校验：mode=real 但角色仍指向 mock 时，占位文本会被静默写进
+    // 正文（数据污染）。此前界面只有一个「AI 未连接」chip，并不阻止执行。
+    // 不做的事：不自动改写 role.provider——模型名属于用户显式配置，服务端猜模型名
+    // 是静默魔法；fail-closed + 指路，而不是代用户做决定。
+    if (mode === "real") {
+      const { providers } = agentPayload(row.id);
+      const byName = new Map((providers ?? []).map((p) => [p.name, p]));
+      for (const [roleName, role] of Object.entries(loaded.config.roles ?? {})) {
+        // 角色指向不存在 provider 的情况由 validateAgentConfig 先行拦截
+        const provider = byName.get(role?.provider);
+        if (!provider) continue;
+        if (provider.type === "mock") {
+          throw new HttpError(400, "ai_roles_not_configured",
+            `角色「${roleName}」仍是演练模式（mock），真实执行会写入占位文本。请在设置里切换真实模型`,
+            { role: roleName, provider: provider.name });
+        }
+        if (!provider.configured) {
+          throw new HttpError(400, "provider_key_missing",
+            `角色「${roleName}」需要的 ${provider.name} 还没有密钥`,
+            { role: roleName, provider: provider.name, env: provider.env });
+        }
+      }
+    }
     const config = structuredClone(loaded.config);
     if (mode === "mock") {
       for (const role of Object.keys(config.roles ?? {})) {
