@@ -277,6 +277,10 @@ def cmd_init(a) -> int:
         "genre": a.genre,
         "target_words": int(a.target_words),
         "max_chapters": int(a.max_chapters),
+        # 平台与卷计划：老书没有这两个键，代码里一律用 .get() 回落（七猫兼容）
+        "platform": getattr(a, "platform", None) or "qimao",
+        "plan": ({"vol_size": int(a.vol_size)} if getattr(a, "vol_size", 0) else None),
+        "uncontrollable": [],
         "created_at": now(),
         "current_chapter": 0,
         "chapters_committed": 0,
@@ -567,6 +571,9 @@ def main():
     p = sub.add_parser("init")
     for x in ("--title", "--genre", "--target-words", "--max-chapters", "--book"):
         p.add_argument(x, required=(x != "--title"))
+    # 平台与卷：不传则 platform=qimao、plan=None（完全走老路径）
+    p.add_argument("--platform", default="qimao", help="qimao | zongheng")
+    p.add_argument("--vol-size", type=int, default=0, help="每卷章数，0=不分卷")
 
     for name in ("next", "status"):
         p = sub.add_parser(name); p.add_argument("--book", required=True)

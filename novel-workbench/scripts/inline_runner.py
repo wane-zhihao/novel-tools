@@ -44,6 +44,41 @@ def utf8_env() -> dict:
     return {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
 
 
+def platform_cfg(st: dict) -> dict:
+    """取当前书的平台配置。st["platform"] 缺省 qimao（老书兼容）。
+
+    返回 {DIR, GENRE_BASE, STYLE_ANCHOR, GENRES}。
+    """
+    cfg = _cfg()
+    name = (st or {}).get("platform") or "qimao"
+    plats = cfg.get("PLATFORMS") or {}
+    if name not in plats:
+        raise RuntimeError(f"UNKNOWN_PLATFORM {name!r}，可用：{list(plats)}")
+    return plats[name]
+
+
+def genre_baseline(st: dict) -> dict:
+    """取本书题材的基准区间。
+
+    **取不到必须硬报错**——此前是 `.get(genre) or {}` 静默返回空，
+    导致纵横的 dushi/xuanhuan/lishi 在七猫 baselines 里查不到时，
+    S5 上下文静默输出 null 指标而不报错（2026-10-25 修）。
+    """
+    pc = platform_cfg(st)
+    genre = (st or {}).get("genre") or ""
+    doc = _read_json(Path(pc["GENRE_BASE"]), default={}) or {}
+    baselines = doc.get("baselines") or {}
+    blk = baselines.get(genre)
+    if blk is None and not (st or {}).get("platform"):
+        # 老书（state 里没有 platform 键）：保留原静默回落，避免破坏七猫既有书
+        return {}
+    if blk is None:
+        raise RuntimeError(
+            f"GENRE_BASELINE_MISSING genre={genre!r} 白名单={list(baselines)} "
+            f"平台={(st or {}).get('platform') or 'qimao'}")
+    return blk
+
+
 def run_script(cmd: list[str], cwd: Path, timeout: int = 180) -> tuple[int, str]:
     """统一的脚本执行入口：锁 UTF-8、锁 cwd、锁超时。"""
     try:
@@ -295,12 +330,11 @@ def _assemble_context(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     characters = "\n".join(snap_lines).strip() or "（无角色快照）"
 
     # S5 文风锚
-    anchor_doc = _read_json(Path(cfg["QIMAO_STYLE_ANCHOR"]), default={}) or {}
+    _pc = platform_cfg(st)
+    anchor_doc = _read_json(Path(_pc["STYLE_ANCHOR"]), default={}) or {}
     target = anchor_doc.get("target") or {}
-    baseline = {}
-    genre_doc = _read_json(Path(cfg["QIMAO_GENRE_BASE"]), default={}) or {}
     genre = st.get("genre") or ""
-    baseline = (genre_doc.get("baselines") or {}).get(genre) or {}
+    baseline = genre_baseline(st)
     style_lines = [
         "平台实测区间（并集）：" + json.dumps(
             {k: target.get(k) for k in ("paragraphs_per_1000", "sent_len_median", "dialog_ratio")},
@@ -456,7 +490,7 @@ def _chapter_check(book: Path, chapter: int, st: dict) -> tuple[int, str]:
         return 2, f"storyctl 返回未知状态：{status!r}"
 
     gate_cmd = [cfg["PYTHON"], cfg["GATE_RUNNER"],
-                "--platform", cfg["QIMAO_PLATFORM_DIR"], "--json"]
+                "--platform", platform_cfg(st)["DIR"], "--json"]
     genre = st.get("genre")
     if genre:
         gate_cmd += ["--genre", genre]
@@ -600,8 +634,10 @@ def _ai_scan(book: Path) -> tuple[int, str]:
     return 0, f"N18 扫描 {len(files)} 章：blocking={blocking} total={len(items)}"
 
 
-def _load_genre_baselines(book: Path, cfg: dict, genre: str) -> dict:
-    doc = _read_json(Path(cfg["QIMAO_GENRE_BASE"]), default={}) or {}
+def _load_genre_baselines(book: Path, cfg: dict, genre: str, st: dict | None = None) -> dict:
+    """题材基准。走 platform_cfg 以便纵横用 dushi/xuanhuan/lishi。"""
+    pc = platform_cfg(st or {})
+    doc = _read_json(Path(pc["GENRE_BASE"]), default={}) or {}
     return (doc.get("baselines") or {}).get(genre) or {}
 
 
@@ -619,7 +655,7 @@ def _style_probe_module(cfg: dict):
 
 def _style_drift(book: Path, cfg: dict, st: dict, files: list[Path]) -> tuple[list[dict], str, bool]:
     cmd = [cfg["PYTHON"], cfg["GATE_RUNNER"],
-           "--platform", cfg["QIMAO_PLATFORM_DIR"], "--json"]
+           "--platform", platform_cfg(st)["DIR"], "--json"]
     genre = st.get("genre")
     if genre:
         cmd += ["--genre", genre]
@@ -632,7 +668,7 @@ def _style_drift(book: Path, cfg: dict, st: dict, files: list[Path]) -> tuple[li
         return [], f"style 指标不可用（rc={rc}）：{out[-300:]}", True
 
     items: list[dict] = []
-    baseline = _load_genre_baselines(book, cfg, genre or "")
+    baseline = _load_genre_baselines(book, cfg, genre or "", st)
     sp = _style_probe_module(cfg)
     dialog_by_name = {}
     if sp is not None:
@@ -758,7 +794,8 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
     words_total = sum(int(v.get("actual") or 0) for v in records.values()
                       if isinstance(v, dict))
     committed = int(state.get("last_committed_chapter") or st.get("chapters_committed") or 0)
-    genre_doc = _read_json(Path(cfg["QIMAO_GENRE_BASE"]), default={}) or {}
+    _pc = platform_cfg(st)
+    genre_doc = _read_json(Path(_pc["GENRE_BASE"]), default={}) or {}
     genre_label = ((genre_doc.get("baselines") or {}).get(st.get("genre") or "") or {}).get(
         "label") or st.get("genre") or "未指定"
     endgame = _read_json(book / "_pipeline" / "endgame_findings.json", default={}) or {}
@@ -777,7 +814,7 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
     rows = []
     sp = _style_probe_module(cfg)
     gate_cmd = [cfg["PYTHON"], cfg["GATE_RUNNER"],
-                "--platform", cfg["QIMAO_PLATFORM_DIR"], "--json"]
+                "--platform", platform_cfg(st)["DIR"], "--json"]
     if st.get("genre"):
         gate_cmd += ["--genre", st["genre"]]
     gate_cmd += [str(p) for p in chapters]
@@ -1064,7 +1101,7 @@ def run_node_script(book: Path, st: dict, spec: dict) -> tuple[int, str]:
     if nid == "N02":
         # 诚实化（C 级）：N02 不创作文风锚，只校验上游 style-anchor.json 的
         # 校准状态；缺失时按 plan 5.1 的失败处置标 provisional 续跑。
-        anchor = Path(_cfg()["QIMAO_STYLE_ANCHOR"])
+        anchor = Path(platform_cfg(st)["STYLE_ANCHOR"])
         if anchor.is_file():
             doc = _read_json(anchor, default={}) or {}
             samples = len(doc.get("samples") or doc.get("positive_samples") or [])

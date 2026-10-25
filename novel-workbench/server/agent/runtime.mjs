@@ -311,7 +311,20 @@ export class AgentRuntime {
       if (budget && this.usage.completion + usage.completion > budget) {
         throw new BudgetExceededError(`completion token 超过预算 ${budget}`);
       }
-      if (!reply.toolCalls.length) return { text: reply.content, usage, toolSteps };
+      if (!reply.toolCalls.length) {
+        // 空回复不停摆：模型（实测 deepseek-flash）会在长任务中途返回无工具、
+        // 无文字的轮次，直接结束会白烧一次 attempt。推一把让它继续干活。
+        if (!String(reply.content ?? "").trim()) {
+          this.emit({ type: "node_nudge", node: instruction.node, step });
+          messages.push({ role: "assistant", content: null });
+          messages.push({
+            role: "user",
+            content: "继续执行：按指令用 write_file 把产物写到指定路径；写完用 ≤100 字回执。不要再浏览目录。",
+          });
+          continue;
+        }
+        return { text: reply.content, usage, toolSteps };
+      }
       toolSteps += reply.toolCalls.length;
       messages.push({
         role: "assistant",
