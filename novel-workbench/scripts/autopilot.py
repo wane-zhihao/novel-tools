@@ -249,7 +249,7 @@ def release_next_lock(path: Path) -> None:
 # ─── 节点表（PART 3 填充） ────────────────────────────────────────────────────
 
 from pipeline_spec import (          # noqa: E402
-    GLOBAL_NODES, chapter_nodes, next_cursor, first_cursor, milestones,
+    GLOBAL_NODES, chapter_nodes, volume_nodes, next_cursor, first_cursor, milestones,
 )
 
 # ─── 内联脚本执行（PART 2 填充） ──────────────────────────────────────────────
@@ -329,6 +329,7 @@ def cmd_status(a) -> int:
         "blocked_reason": st["blocked_reason"],
         "pending_questions": len(st["pending_questions"]),
         "fix_rounds": st.get("fix_rounds") or {},
+        "global_fix_rounds": st.get("global_fix_rounds") or {},
         "n20_rounds": st.get("n20_rounds", 0),
         "llm_rounds": st.get("llm_rounds", 0),
         "words_total_drift": drift,
@@ -561,6 +562,9 @@ def cursor_spec(st: dict, book: Path):
     if cur.startswith("C"):
         n = st["current_chapter"] + 1
         return chapter_nodes(st, book, n).get(cur)
+    if cur.startswith("V"):
+        v = int(cur.split(".", 1)[0][1:])
+        return volume_nodes(st, book, v).get(cur)
     return GLOBAL_NODES.get(cur)
 
 

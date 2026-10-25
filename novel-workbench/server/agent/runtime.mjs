@@ -316,7 +316,10 @@ export class AgentRuntime {
         // 无文字的轮次，直接结束会白烧一次 attempt。推一把让它继续干活。
         if (!String(reply.content ?? "").trim()) {
           this.emit({ type: "node_nudge", node: instruction.node, step });
-          messages.push({ role: "assistant", content: null });
+          // 注意：DeepSeek 严格校验 assistant 消息——content 为 null/空且无
+          // tool_calls 会 400（content or tool_calls must be set）。给个非空
+          // 占位内容，nudge 本体放 user 轮。
+          messages.push({ role: "assistant", content: "（继续）" });
           messages.push({
             role: "user",
             content: "继续执行：按指令用 write_file 把产物写到指定路径；写完用 ≤100 字回执。不要再浏览目录。",

@@ -177,6 +177,26 @@ def _handle_verify_block(book: Path, st: dict, node: str, j: dict, jf: Path) -> 
                           "round": rounds + 1, "reason": summary[:300]}, ensure_ascii=False))
         return 1
 
+    # 全局闸门（plan 5.1）：N04/N06/N08 block 回对应 writer 节点，≤2 轮，
+    # 第 3 轮终停。打回意见在 _pipeline/judgments_<node>.json，writer 节点
+    # 的 prompt 会读它（真书首日实证：缺此回路时一次 block 就整链终停）。
+    global_retry = {"N04": "N03", "N06": "N05", "N08": "N07"}
+    if node in global_retry:
+        target = global_retry[node]
+        rounds = int(st.get("global_fix_rounds", {}).get(node, 0))
+        if rounds >= 2:
+            return _terminal_block(
+                book, st, node,
+                f"{node} 连续 {rounds + 1} 轮仍 block：{summary[:300]}", jf,
+                {"hint": "闸门打回 2 轮仍未过，需人工判断"})
+        st["global_fix_rounds"] = {**(st.get("global_fix_rounds") or {}), node: rounds + 1}
+        st["cursor"] = target
+        st["nodes"][node] = {"status": "failed", "at": now(), "judgments": str(jf)}
+        save_state(book, st)
+        print(json.dumps({"ok": True, "blocked": True, "routed_to": target,
+                          "round": rounds + 1, "reason": summary[:300]}, ensure_ascii=False))
+        return 1
+
     return _terminal_block(book, st, node, f"{node} 判定 block：{summary[:300]}", jf)
 
 
@@ -421,6 +441,7 @@ def cmd_resume(a) -> int:
     # 就再次终停——恢复路径只给一次机会。
     st["fix_rounds"] = {}
     st["n20_rounds"] = 0
+    st["global_fix_rounds"] = {}
     st.pop("recheck_chapter", None)
     clear_token(book)
     try:
