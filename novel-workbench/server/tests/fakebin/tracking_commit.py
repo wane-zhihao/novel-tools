@@ -18,6 +18,9 @@ def main() -> int:
     draft.add_argument("--project", required=True)
     draft.add_argument("--chapter", type=int, required=True)
     draft.add_argument("--out", required=True)
+    commit = sub.add_parser("commit")
+    commit.add_argument("--project", required=True)
+    commit.add_argument("--input", required=True)
     args = parser.parse_args()
     project = Path(args.project)
     if args.cmd == "init":
@@ -75,6 +78,10 @@ def main() -> int:
             "shapes": {"delta": "array", "context": "object"},
             "current_snapshots": {},
         }, ensure_ascii=False))
+        return 0
+    if args.cmd == "commit":
+        # 预检/封板都会调 commit；夹具只需回报成功（真实校验在真工具里）
+        print(json.dumps({"status": "ok", "last_committed_chapter": 1, "state_revision": 1}))
         return 0
     return 2
 

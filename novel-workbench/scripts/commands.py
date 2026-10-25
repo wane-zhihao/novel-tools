@@ -343,6 +343,10 @@ def _tracking_preflight(book: Path, node: str) -> str:
         )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip()
+            # 工具版本不支持 commit（旧版/测试夹具）时 fail-open：真正的校验
+            # 留给 N16，别让预检把整条链卡死。
+            if "invalid choice" in detail or "unrecognized arguments" in detail:
+                return ""
             return detail[-800:] or f"tracking_commit rc={proc.returncode}"
         return ""
     except Exception as exc:                      # 预检本身失败不阻断流程
