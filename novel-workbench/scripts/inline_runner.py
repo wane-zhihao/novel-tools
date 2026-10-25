@@ -343,7 +343,7 @@ def _assemble_context(book: Path, chapter: int, st: dict) -> tuple[int, str]:
             {k: baseline.get(k) for k in ("paragraphs_per_1000", "sent_len_median", "dialog_ratio")},
             ensure_ascii=False),
     ]
-    samples = anchor_doc.get("samples") or anchor_doc.get("positive_samples") or []
+    samples = (anchor_doc.get("samples") or anchor_doc.get("positive_samples") or (anchor_doc.get("positive_anchors") or {}).get("samples") or [])
     if samples:
         for i, s in enumerate(samples[:2], 1):
             text = s if isinstance(s, str) else (s.get("text") if isinstance(s, dict) else "")
