@@ -23,6 +23,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from pipeline_spec import milestones  # 里程碑唯一定义处（pipeline_spec.milestones）
+
 HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
 
@@ -30,7 +32,6 @@ from pipeline_spec import STATION_MIN_WORDS  # noqa: E402  (只依赖常量，�
 
 DRIFT_PARAGRAPH_DELTA = 5.0
 FORESHADOW_MIN_RATE = 0.70
-MILESTONE_CHAPTERS = (1, 3, 6, 10)
 
 
 def _cfg():

@@ -20,6 +20,44 @@ from pathlib import Path
 
 # ─── 全局节点 N01–N09d ────────────────────────────────────────────────────────
 
+# ─── 卷与里程碑（纯函数推导，不建第二真相源）────────────────────────────
+# 只存 st["plan"] = {"vol_size": N}；卷边界每次由 max_chapters 推导，
+# 所以 resume 不需要重建卷数据，改 max_chapters 也不会与卷计划打架。
+
+def vol_size(st: dict) -> int:
+    return (st.get("plan") or {}).get("vol_size", 22)
+
+
+def span(st: dict, v: int) -> tuple[int, int]:
+    """第 v 卷的 (起始章, 结束章)，均含端点，章号从 1 开始。"""
+    size, total = vol_size(st), st["max_chapters"]
+    return (v - 1) * size + 1, min(v * size, total)
+
+
+def volumes(st: dict) -> list[tuple[int, int, int]]:
+    """[(卷号, 起始章, 结束章)]。无 plan 时视为单卷全书。"""
+    total, size = st["max_chapters"], vol_size(st)
+    n = (total + size - 1) // size
+    return [(v, *span(st, v)) for v in range(1, n + 1)]
+
+
+def vol_of(st: dict, n: int) -> int:
+    return (n - 1) // vol_size(st) + 1
+
+
+def milestones(st: dict) -> tuple[int, ...]:
+    """N15 审查点。
+
+    无 plan（老书）：(1, 3, 6, 10) —— 与改造前逐字一致，保证七猫不回退。
+    有 plan：黄金三章固定 (1,3,6,10) + 每 20 章一个 + 末章。
+    """
+    if not st.get("plan"):
+        return (1, 3, 6, 10)
+    m = st["max_chapters"]
+    pts = {1, 3, 6, 10, m} | set(range(20, m, 20))
+    return tuple(sorted(x for x in pts if 1 <= x <= m))
+
+
 GLOBAL_NODES: dict[str, dict] = {
     "N01": {
         "id": "N01", "kind": "script", "name": "初始化",
@@ -292,7 +330,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
             "id": f"C{n}.N15", "kind": "verify", "model": "reasoning", "role": "judge", "name": "阶段质量闸门",
             "evidence": f"_pipeline/judgments_C{n}.N15.json", "min_size": 200,
             "skippable": True,
-            "prompt": _n15_prompt(n, prev, b),
+            "prompt": _n15_prompt(n, prev, b, st),
         },
         f"C{n}.N16": {
             "id": f"C{n}.N16", "kind": "script", "name": "章末原子封板",
@@ -307,7 +345,7 @@ def _chapter_path(b: str, n: int) -> str:
     return str(hits[0]) if hits else f"{b}/正文/第{n:03d}章_*.md"
 
 
-def _n15_prompt(n: int, prev: int, b: str) -> str:
+def _n15_prompt(n: int, prev: int, b: str, st: dict | None = None) -> str:
     """N15 清单按章分级：修复指令只能作用于当前章（前序章已封板）。"""
     if n == 1:
         scope = ("**首章铁律**：前 200 字有冲突（主角陷入困境：退婚/背叛/陷害/侮辱/破产/误会/灾难/生死危机/利益冲突）；"
@@ -320,7 +358,7 @@ def _n15_prompt(n: int, prev: int, b: str) -> str:
         scope = ("**黄金三章闭环**：读第 1–3 章。查三章内是否有至少一次反转、"
                  "前 600 字冲突是否升级、前 6000 字主线是否可用一句话说清。")
         src = "、".join(_chapter_path(b, i) for i in (1, 2, 3))
-    elif n in (6, 10):
+    elif n in milestones(st or {}):
         scope = ("**Milestone Gate**：节奏是否拖沓、伏笔回收率、主线推进是否过半、"
                  "是否存在悬念空窗（大悬念解决后 3 章内无新钩子）。")
         src = f"{b}/正文/ 下全部已写章节"
@@ -370,7 +408,11 @@ def judgment_policy(node_id: str) -> dict:
     return {"sources": [], "mechanical_ids": set()}
 
 
-CHAPTER_SEQ = [f"C{{n}}.N{k:02d}" for k in (9, 10, 11, 12, 13, 14, 15, 16)]
+# 单章节点顺序，只在这里定义一次（此前 :397 又硬编码了一遍 [9..16]，两处易不同步）
+CHAPTER_STAGES = (9, 10, 11, 12, 13, 14, 15, 16)
+# 卷级节点顺序（每卷开头跑一次，替代原来一次性的 N07/N08/N09d）
+VOLUME_STAGES = ("N07", "N08", "N09d")
+
 GLOBAL_SEQ = ["N01", "N02", "N03", "N04", "N05", "N06", "N07", "N08", "N09d",
               "__chapters__", "N17", "N18", "N19", "N20", "N21"]
 # N20f 不在线性序列里：只有 N20 判 block 时才由 commands.cmd_done 把 cursor 指过去，
@@ -391,16 +433,34 @@ def next_cursor(st: dict) -> str:
     if cur == "N20":                  # 终审 pass 才走到这里；block 由 cmd_done 直接指到 N20f
         return "N21"
 
+    # ── 卷级节点：V{v}.N07 → N08 → N09d → 本卷第 1 章 ──────────────
+    if cur.startswith("V"):
+        head, key = cur.split(".", 1)
+        v = int(head[1:])
+        if key in VOLUME_STAGES and VOLUME_STAGES.index(key) + 1 < len(VOLUME_STAGES):
+            return f"{head}.{VOLUME_STAGES[VOLUME_STAGES.index(key) + 1]}"
+        start, _ = span(st, v)
+        st["current_chapter"] = start - 1          # 下一章的 n = start
+        return f"C{start}.N09"
+
     if cur.startswith("C"):
         n = st["current_chapter"] + 1
         key = cur.split(".", 1)[1]              # N09..N16
-        idx = [f"N{k:02d}" for k in (9, 10, 11, 12, 13, 14, 15, 16)].index(key)
-        if idx + 1 < 8:
-            return f"C{n}.N{[9,10,11,12,13,14,15,16][idx + 1]:02d}"
+        idx = CHAPTER_STAGES.index(int(key[1:]))
+        if idx + 1 < len(CHAPTER_STAGES):
+            return f"C{n}.N{CHAPTER_STAGES[idx + 1]:02d}"
         # 一章走完：若由 N16 封板成功，章号 +1
         st["current_chapter"] = n
         st["chapters_committed"] = n
-        if n >= st["max_chapters"] or st["words_total"] >= st["target_words"]:
+        if n >= st["max_chapters"]:
+            # 新书（有 plan）走全书汇总；老书维持 N17
+            return "N17" if not st.get("plan") else "N17g"
+        if st.get("plan"):
+            size = vol_size(st)
+            if n % size == 0:                  # 卷末 → 下一卷卷纲
+                return f"V{n // size + 1}.N07"
+        elif st["words_total"] >= st["target_words"]:
+            # 老书的字数早停保留原样；新书不早停（否则 25 万字在第 125 章就跳走）
             return "N17"
         return f"C{n + 1}.N09"
 
@@ -410,4 +470,7 @@ def next_cursor(st: dict) -> str:
     nxt = GLOBAL_SEQ[i + 1]
     if nxt == "__chapters__":
         return "C1.N09"
+    # 新书：N06 之后不进一次性 N07，而是进第 1 卷的卷纲
+    if nxt == "N07" and st.get("plan"):
+        return "V1.N07"
     return nxt

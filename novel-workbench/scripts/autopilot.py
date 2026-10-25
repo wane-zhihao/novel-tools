@@ -249,14 +249,14 @@ def release_next_lock(path: Path) -> None:
 # ─── 节点表（PART 3 填充） ────────────────────────────────────────────────────
 
 from pipeline_spec import (          # noqa: E402
-    GLOBAL_NODES, chapter_nodes, next_cursor, first_cursor,
+    GLOBAL_NODES, chapter_nodes, next_cursor, first_cursor, milestones,
 )
 
 # ─── 内联脚本执行（PART 2 填充） ──────────────────────────────────────────────
 
 from inline_runner import (          # noqa: E402
     run_node_script, verify_quote, chapter_has_blocking, append_chapter_findings,
-    snapshot_chapter, snapshot_body, MILESTONE_CHAPTERS, extract_json,
+    snapshot_chapter, snapshot_body, extract_json,
     record_snapshot_manifest, restore_best_snapshot,
 )
 
@@ -377,8 +377,9 @@ def _auto_skip_reason(book: Path, st: dict, spec: dict) -> str | None:
             return "N13 无 B 级 findings，无需定点改写"
     if nid.endswith(".N15"):
         ch = st["current_chapter"] + 1
-        if ch not in MILESTONE_CHAPTERS:
-            return f"第{ch}章非里程碑章（只在 {MILESTONE_CHAPTERS} 做阶段审查）"
+        _ms = milestones(st)
+        if ch not in _ms:
+            return f"第{ch}章非里程碑章（只在 {_ms} 做阶段审查）"
     return None
 
 

@@ -65,11 +65,14 @@ export const TOOL_DEFINITIONS = [
     type: "function",
     function: {
       name: "read_file",
-      description: "读取书目录内的文本文件。大文件可用 offset/limit 分段读取。",
+      description: "读取书目录内或只读参考目录内的文本文件。大文件可用 offset/limit 分段读取。",
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "相对书目录的路径，例如 大纲/细纲_第003章.md" },
+          path: {
+            type: "string",
+            description: "相对书目录的路径（如 大纲/细纲_第003章.md），或书目录内的绝对路径，或只读参考目录内的绝对路径（如 F:\\小说\\platforms\\qimao\\01_投稿方案.md）。不要用 ../ 逃逸书目录。",
+          },
           offset: { type: "integer", minimum: 0, description: "从第几个字符开始，默认 0" },
           limit: { type: "integer", minimum: 1, maximum: 60000, description: "最多读取多少字符，默认 40000" },
         },
@@ -85,7 +88,10 @@ export const TOOL_DEFINITIONS = [
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "相对书目录的路径" },
+          path: {
+            type: "string",
+            description: "相对书目录的路径（如 大纲/选题报告.md）；书目录内的绝对路径也可以。禁止写 _pipeline/ 控制文件。",
+          },
           content: { type: "string", description: "完整文件内容（不是补丁）" },
         },
         required: ["path", "content"],
@@ -100,7 +106,10 @@ export const TOOL_DEFINITIONS = [
       parameters: {
         type: "object",
         properties: {
-          path: { type: "string", description: "相对书目录的目录，默认 ." },
+          path: {
+            type: "string",
+            description: "相对书目录的目录，或只读参考目录内的绝对路径，默认 .（书根目录）",
+          },
         },
       },
     },

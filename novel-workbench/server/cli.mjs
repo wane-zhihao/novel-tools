@@ -6,6 +6,7 @@ import { rebuild, syncAll, syncBook } from "./sync.mjs";
 import { loadAgentConfig } from "./agent-config.mjs";
 import { defaultDataDir } from "./paths.mjs";
 import { effectiveSettings } from "./settings.mjs";
+import { secretInfo } from "./secrets.mjs";
 import { AgentRuntime } from "./agent/runtime.mjs";
 
 function parseArgs(argv) {
@@ -125,7 +126,7 @@ async function handleRun(options) {
     console.error(`不是工作台书目录（缺少 _pipeline/state.json）：${bookDir}`);
     return 2;
   }
-  const loaded = loadAgentConfig({ bookDir, dataDir: defaultDataDir() });
+  const loaded = loadAgentConfig({ bookDir, dataDir: defaultDataDir(), secretNames: new Set(secretInfo({ dataDir: defaultDataDir() }).names.map((n) => n.name)) });
   for (const warning of loaded.warnings) console.error(`警告：${warning}`);
   if (loaded.errors.length) {
     for (const error of loaded.errors) console.error(`错误：${error}`);
@@ -229,7 +230,7 @@ async function main() {
   const roots = options.roots.length ? options.roots : effectiveSettings({ dataDir }).books_roots;
 
   if (options.command === "config") {
-    const result = loadAgentConfig({ bookDir: options.book, dataDir });
+    const result = loadAgentConfig({ bookDir: options.book, dataDir, secretNames: new Set(secretInfo({ dataDir }).names.map((n) => n.name)) });
     if (options.json) console.log(JSON.stringify(result, null, 2));
     else printConfig(result);
     return result.errors.length ? 1 : 0;
