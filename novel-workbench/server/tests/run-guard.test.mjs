@@ -41,7 +41,9 @@ before(async () => {
 
 after(async () => {
   await workspace?.close();
-  rmSync(tempRoot, { recursive: true, force: true });
+  // Windows 上 close 后 SQLite 句柄释放有延迟，rmSync 会撞 EPERM；仓库既有测试
+  // （v2-content withBook）用 maxRetries 兜同样的问题，这里沿用。
+  rmSync(tempRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   delete process.env.DEEPSEEK_API_KEY;
 });
 
@@ -81,5 +83,13 @@ test("real 模式 + 角色指向缺密钥的服务：provider_key_missing", asyn
 test("mock 模式不受前置校验影响（演练入口保留）", async () => {
   const res = await post(`/api/books/${bookId}/run`, { mode: "mock", max_steps: 1 });
   assert.equal(res.status, 202, JSON.stringify(res.body));
-  await post(`/api/books/${bookId}/stop`);
+  // 必须等 run 到终态：after() 会删 tempRoot，若后台仍在执行会撞 SQLite/文件竞态。
+  // run 结束时内存快照会被回收（body.run 变 null），或状态离开 running/stopping。
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const { run } = await fetch(`${base}/api/books/${bookId}/run?since=0`).then((r) => r.json());
+    if (!run || !["running", "stopping"].includes(run.status)) break;
+    if (Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 150));
+  }
 });
