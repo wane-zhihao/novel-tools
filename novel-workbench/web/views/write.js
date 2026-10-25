@@ -1,4 +1,4 @@
-import { api } from "../lib/api.js";
+import { api, commitChapter } from "../lib/api.js";
 import { el, clear, fmtNumber, toast, renderMarkdown } from "../lib/dom.js";
 
 const AUTOSAVE_MS = 1200;
@@ -54,6 +54,81 @@ export async function renderWrite({ bookId, chapter, go, state }) {
     saveState.textContent = text;
   }
 
+  // ── 定稿 ──────────────────────────────────────────────────────────────
+  // 一个函数覆盖三种入口：定稿（append）/ 重新定稿（revision）/ 字数越界后的放行。
+  // 错误一律走「一句话原因 + 一个主出口」，不把后端 detail 直接抛给用户。
+  let committing = false;
+
+  async function runCommit(mode = "auto", { acceptLength = false } = {}) {
+    if (committing) return;
+    committing = true;
+    setSaveState("saving", "正在定稿…");
+    try {
+      if (dirty) await save();
+      const result = await commitChapter(bookId, chapter, {
+        mode, acceptCurrentLength: acceptLength,
+      });
+      const words = fmtNumber(result.words ?? 0);
+      if (result.already) {
+        setSaveState("saved", "已定稿");
+        showBanner(`这一章已经是定稿状态（${words} 字），没有重复提交。`, "warn");
+      } else {
+        setSaveState("saved", "已定稿");
+        showBanner(`第 ${chapter} 章已定稿 · ${words} 字 · 闸门 ${result.gate?.blocking_count ?? 0} 阻断。`, "ok");
+        data.dirty = false;
+        data.committed = true;
+        // commitButton 在下方渲染时创建；这里按 DOM 查，避免声明顺序耦合
+        const btn = view.querySelector(".write-foot .button-primary");
+        if (btn) {
+          btn.textContent = "已定稿";
+          btn.setAttribute("disabled", "disabled");
+        }
+      }
+      // 不自动跳转：定稿是本章终点，用户可能还要看一眼闸门结论或接着写下一章。
+      // 结论留在页面上，由用户自己决定下一步（点「下一章」或回书房）。
+    } catch (error) {
+      setSaveState("error", "定稿失败");
+      const map = {
+        gate_blocked: {
+          text: `没过闸门：${(error.details?.gate?.blocking_count ?? 0)} 条阻断，先改再定稿。`,
+          actions: [{ label: "去审：看问题", onClick: () => go(`#/books/${bookId}/revise/${chapter}`) }],
+        },
+        length_out_of_band: {
+          text: "字数不在本章目标区间内。",
+          actions: [{ label: "按当前字数定稿",
+            onClick: () => runCommit(mode, { acceptLength: true }) }],
+        },
+        tracking_missing: {
+          text: "这一章还没有故事记录，不能直接定稿（会损坏后续章节的上下文）。",
+          actions: [{ label: "让 AI 写这一章", onClick: () => go(`#/books/${bookId}/write/${chapter}`) }],
+        },
+        tracking_invalid: {
+          text: "这一章的故事记录不合格，需要重建后再定稿。",
+          actions: [{ label: "去审：看详情", onClick: () => go(`#/books/${bookId}/revise/${chapter}`) }],
+        },
+        chapter_gap: {
+          text: error.message || "不能跳过前面未定稿的章节。",
+          actions: [{ label: "去定前一章",
+            onClick: () => go(`#/books/${bookId}/write/${Math.max(1, chapter - 1)}`) }],
+        },
+        chapter_busy: {
+          text: "流水线正卡在一个节点上，先恢复或停止再定稿。",
+          actions: [],
+        },
+        run_running: {
+          text: "这一章还在写，等运行结束再定稿。",
+          actions: [],
+        },
+      };
+      const hit = map[error.code] ?? { text: error.message || "定稿失败。", actions: [] };
+      // 把错误码留在 DOM 上：用户看到人话，排障时能直接读到 code
+      banner.dataset.errorCode = error.code ?? "unknown";
+      showBanner(hit.text, "danger", hit.actions);
+    } finally {
+      committing = false;
+    }
+  }
+
   function updateWords() {
     const count = editor.value.replace(/\s+/g, "").length;
     wordLabel.textContent = `${fmtNumber(count)} 字`;
@@ -84,7 +159,7 @@ export async function renderWrite({ bookId, chapter, go, state }) {
       return;
     }
     if (data.committed && !allowCommittedEdit) {
-      const ok = window.confirm("本章已封板。修改后需要重新定稿，并会让投稿包过期。继续修改？");
+      const ok = window.confirm("本章已定稿。修改后需要重新定稿，并会让投稿包过期。继续修改？");
       if (!ok) return;
       allowCommittedEdit = true;
     }
@@ -107,7 +182,13 @@ export async function renderWrite({ bookId, chapter, go, state }) {
       localStorage.removeItem(localKey());
       setSaveState("saved", "已保存");
       updateWords();
-      if (saved.dirty) showBanner("本章已修改，等你在制作台重新定稿后才会更新投稿包。", "warn");
+      if (saved.dirty) {
+        // 定稿入口就在这里，不再把用户支去制作台
+        showBanner("已保存。这章改过，投稿包还是旧的。", "warn", [
+          { label: "重新定稿", onClick: () => runCommit("revision") },
+          { label: "对比改了什么", onClick: () => go(`#/books/${bookId}/revise/${chapter}`) },
+        ]);
+      }
     } catch (error) {
       if (error.code === "content_conflict") {
         setSaveState("error", "有冲突");
@@ -195,7 +276,7 @@ export async function renderWrite({ bookId, chapter, go, state }) {
         onclick: () => go(`#/books/${bookId}/write/${item.number}`),
       },
         el("strong", { text: item.title || `第${item.number}章` }),
-        el("span", { text: `${fmtNumber(item.words)} 字${item.dirty ? " · 待定稿" : ""}` }))),
+        el("span", { text: `${fmtNumber(item.words)} 字${item.dirty ? " · 待重新定稿" : ""}` }))),
       data.exists ? null : el("button", {
         class: "chapter-item", type: "button", "aria-current": "true",
         onclick: () => go(`#/books/${bookId}/write/${chapter}`),
@@ -239,6 +320,17 @@ export async function renderWrite({ bookId, chapter, go, state }) {
         onclick: save,
       })));
 
+  const committed = data.committed === true;
+  const commitButton = el("button", {
+    class: "button button-small button-primary", type: "button",
+    text: committed ? (data.dirty ? "重新定稿" : "已定稿") : "定稿",
+    title: committed
+      ? "用当前正文重跑闸门并更新本章故事记录"
+      : "把这一章写进故事账本，之后才能投稿",
+    disabled: committed && !data.dirty ? "disabled" : null,
+    onclick: () => runCommit(committed ? "revision" : "append"),
+  });
+
   const foot = el("footer", { class: "write-foot" },
     el("span", { class: "small" }, wordLabel, " · 每 1.2 秒自动保存"),
     el("div", { class: "inline-fields" },
@@ -251,11 +343,7 @@ export async function renderWrite({ bookId, chapter, go, state }) {
         class: "button button-small button-quiet", type: "button", text: "下一章",
         onclick: () => go(`#/books/${bookId}/write/${chapter + 1}`),
       }),
-      el("button", {
-        class: "button button-small", type: "button", text: "去制作台：闸门与定稿",
-        title: "将离开书房，打开制作台查看闸门结论并重新定稿",
-        onclick: () => { window.location.href = `/studio.html#/books/${bookId}`; },
-      })));
+      commitButton));
 
   view.replaceChildren(el("div", { class: "write-view" },
     rail,

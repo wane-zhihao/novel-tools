@@ -32,6 +32,17 @@ export async function api(path, { method = "GET", body = null } = {}) {
   return data;
 }
 
+/** 单章定稿。mode 省略=自动（下一章走 append，已定稿章走 revision）。 */
+export function commitChapter(bookId, chapter, options = {}) {
+  return api(`/api/books/${bookId}/chapters/${chapter}/commit`, {
+    method: "POST",
+    body: {
+      mode: options.mode ?? "auto",
+      accept_current_length: options.acceptCurrentLength === true,
+    },
+  });
+}
+
 export function openStudio(bookId) {
   const suffix = bookId ? `#/books/${bookId}` : "";
   window.location.href = `/studio.html${suffix}`;

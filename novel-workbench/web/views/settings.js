@@ -95,8 +95,7 @@ export async function renderSettings({ state }) {
     el("label", { class: "field" }, el("span", { text: "Python" }), el("input", { name: "python", value: effective.python ?? "" })),
     el("label", { class: "field" }, el("span", { text: "story-long-write 技能目录" }), el("input", { name: "story_long_write", value: effective.story_long_write ?? "" })),
     el("div", { class: "inline-fields" },
-      el("button", { class: "button button-primary", type: "submit", text: "保存路径" }),
-      el("a", { class: "button", href: "/studio.html", text: "打开制作台" })));
+      el("button", { class: "button button-primary", type: "submit", text: "保存路径" })));
   pathForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(pathForm).entries());

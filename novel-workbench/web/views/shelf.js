@@ -53,7 +53,7 @@ export async function renderShelf({ state, go, openNewBook, retry }) {
         el("button", { class: "button", type: "button", onclick: () => go(`#/books/${book.id}/revise`), text: "看 AI 改动" }),
         el("button", { class: "button", type: "button", onclick: () => go(`#/books/${book.id}/submit`), text: "投稿检查" }))),
     el("div", { class: "hero-stats" },
-      el("div", { class: "hero-stat" }, el("span", { text: "已封板" }), el("b", { text: `${book.chapters_committed} 章` })),
+      el("div", { class: "hero-stat" }, el("span", { text: "已定稿" }), el("b", { text: `${book.chapters_committed} 章` })),
       el("div", { class: "hero-stat" }, el("span", { text: "字数" }), el("b", { text: fmtNumber(book.words_total) })),
       el("div", { class: "hero-stat" }, el("span", { text: "目标" }), el("b", { text: fmtNumber(book.target_words) })),
       el("div", { class: "progress", "aria-label": "章节进度" },
@@ -65,7 +65,7 @@ export async function renderShelf({ state, go, openNewBook, retry }) {
   const todos = el("section", {},
     el("h2", { class: "section-title", text: "今天可以做的三件事" }),
     el("div", { class: "todo-grid" },
-      todoCard("待定稿", dirty ? `${dirty} 章修改后还没重新定稿` : "没有待定稿的章节", dirty ? `#/books/${book.id}/revise` : null, go),
+      todoCard("待重新定稿", dirty ? `${dirty} 章改过但还没重新定稿` : "没有待重新定稿的章节", dirty ? `#/books/${book.id}/revise` : null, go),
       todoCard("看 AI 改动", withVersions ? `${withVersions} 章有历史版本` : "还没有 AI 改动", `#/books/${book.id}/revise`, go),
       todoCard("投稿", book.words_total >= 20000 ? "字数已到 2 万，可以检查投稿包" : `还差 ${fmtNumber(20000 - book.words_total)} 字到 2 万`, `#/books/${book.id}/submit`, go)));
 

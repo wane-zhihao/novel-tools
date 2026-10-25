@@ -46,7 +46,7 @@ export async function renderRevise({ bookId, go }) {
         el("div", {}, el("h1", { class: "page-title", text: "AI 改动" }), el("p", { class: "page-sub", text: "每次 AI 写正文都会留下版本，你可以对比、回滚。" }))),
       el("div", { class: "empty" },
         el("strong", { text: "还没有版本" }),
-        el("p", { text: "先写到第一章，或者让制作台跑一次 AI 初稿。" }),
+        el("p", { text: "先写到第一章，或者在稿纸上点「让 AI 写」。" }),
         el("button", { class: "button button-primary", type: "button", onclick: () => go(`#/books/${bookId}/write/1`), text: "去写第一章" }))));
     return;
   }
@@ -67,7 +67,7 @@ export async function renderRevise({ bookId, go }) {
         el("p", { class: "page-sub", text: "默认自动跑；每次写入都留版本。看不过去就一键回滚。" }))));
   const chapterTabs = el("div", { class: "tabs" });
   // B14 中期：闸门结论只读面板——作者在「改」视图原地看到本章闸门结果，
-  // 不必跳制作台（完整节点仍在制作台）。
+  // 闸门结论就地展示，不再跳外部控制台。
   const gatePanel = el("div", { class: "gate-panel" });
   const versionList = el("div", { class: "version-list" });
   const diffHead = el("div", { class: "diff-head" });
@@ -109,18 +109,14 @@ export async function renderRevise({ bookId, go }) {
             text: `${blocking} 阻断 / ${advisory} 提示`,
           })
         : null,
-      findings?.resolved_at ? el("span", { class: "chip chip-ok", text: "已封板解决" }) : null,
-      el("a", {
-        class: "link-button", href: `/studio.html#/books/${bookId}`,
-        text: "去制作台看完整节点",
-      }))];
+      findings?.resolved_at ? el("span", { class: "chip chip-ok", text: "已定稿解决" }) : null)];
     if (report.warning) {
       rows.push(el("p", { class: "muted small", text: report.warning }));
     }
     if (!findings && !report.gates) {
       rows.push(el("p", {
         class: "muted small",
-        text: "这一章还没跑过闸门。写完正文后，闸门会随制作台链路自动跑（N13）。",
+        text: "这一章还没跑过闸门。写完正文定稿时会自动跑一次闸门。",
       }));
     }
     const items = (findings?.items ?? []).slice(0, 10);
