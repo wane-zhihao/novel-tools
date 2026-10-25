@@ -315,6 +315,24 @@ body.focus-mode .paper { max-width: 780px; }
 .revise { display: flex; flex-direction: column; gap: 20px; max-width: 1080px; margin: 0 auto; }
 .revise-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px; }
 .version-layout { display: grid; grid-template-columns: minmax(200px, 0.55fr) minmax(0, 1.45fr); gap: 16px; align-items: start; }
+
+/* B14 中期：「改」视图内的闸门结论只读面板 */
+.gate-panel {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface);
+}
+.gate-panel .gate-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.gate-panel .gate-row .link-button { margin-left: auto; }
+.gate-panel .gate-items { margin: 2px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.gate-panel .gate-items li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 13px; }
+/* link-button 原只在制作台定义；v2 面板复用，补一份同语义样式 */
+.link-button {
+  align-self: flex-start; padding: 0; border: 0; background: none;
+  color: var(--seal); font-size: 12px; cursor: pointer; text-decoration: underline;
+  min-height: 0;
+}
+.link-button:hover { color: var(--seal-ink); }
 .version-list { display: flex; flex-direction: column; gap: 6px; max-height: 70vh; overflow: auto; }
 .version-item {
   display: flex; flex-direction: column; gap: 3px; text-align: left;

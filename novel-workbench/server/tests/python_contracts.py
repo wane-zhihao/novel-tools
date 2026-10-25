@@ -180,6 +180,29 @@ def test_evidence_pattern_mismatch(root: Path) -> None:
     assert rc == 0, f"匹配模式的证据应放行：rc={rc}"
 
 
+def test_done_token_via_env(root: Path) -> None:
+    """审查 C1：令牌可经 WB_STEP_TOKEN 环境变量传递（不走 argv）。"""
+    from commands import cmd_done
+    from autopilot import write_token
+    book = make_state_book(root, "c1")
+    write_token(book, "tok-c1", "N03")
+    write(book / "大纲" / "选题报告.md", "选题" * 300)
+    os.environ["WB_STEP_TOKEN"] = "tok-c1"
+    try:
+        # 不传 --token，靠环境变量
+        rc = cmd_done(Args(book=str(book), node="N03", token="",
+                           evidence=["大纲/选题报告.md"]))
+        assert rc == 0, f"env 令牌应放行：rc={rc}"
+        # 环境变量错了仍然拒（--token 空 + env 错 = 空令牌）
+        write_token(book, "tok-c1b", "N04")
+        os.environ["WB_STEP_TOKEN"] = "wrong"
+        rc = cmd_done(Args(book=str(book), node="N04", token="",
+                           evidence=["大纲/选题报告.md"]))
+        assert rc == 2, "错误的 env 令牌必须被拒"
+    finally:
+        os.environ.pop("WB_STEP_TOKEN", None)
+
+
 def test_block_and_resume_need_token(root: Path) -> None:
     """审查 B5：在途 block 要令牌；人工阻断态 resume 要 --force。"""
     from commands import cmd_block, cmd_resume
@@ -298,6 +321,7 @@ def main() -> int:
         test_n21_blocked(root)
         test_next_lock(root)
         test_evidence_pattern_mismatch(root)
+        test_done_token_via_env(root)
         test_block_and_resume_need_token(root)
         test_resume_resets_rounds(root)
         test_n14_done_rechecks_n13(root)

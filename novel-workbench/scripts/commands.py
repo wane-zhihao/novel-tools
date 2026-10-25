@@ -265,7 +265,10 @@ def cmd_done(a) -> int:
     st = load_state(book)
     if not st:
         print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
-    if not token_ok(book, a.node, a.token):
+    # 令牌优先取 --token；省略时回退 WB_STEP_TOKEN 环境变量（审查 C1：运行时
+    # 改走 env，避免令牌出现在本机进程管理器的命令行里）。
+    token = a.token or os.environ.get("WB_STEP_TOKEN", "")
+    if not token_ok(book, a.node, token):
         print(json.dumps({"error": "token_mismatch",
                           "hint": "可能是 subagent 越权调用，或 node 与令牌不匹配"},
                          ensure_ascii=False))
@@ -306,7 +309,9 @@ def cmd_done(a) -> int:
 
     # verify 节点：裁决必须有证据；文本项 quote 必须命中允许的 source
     if spec["kind"] == "verify":
-        jf = files[-1]
+        # 裁决文件按名定位（不假设 files 顺序）：evidence-spec 模式比对已保证
+        # 每个文件匹配某模式，这里取 judgments 文件本身。
+        jf = next((f for f in files if f.name.startswith("judgments")), files[-1])
         try:
             j = json.loads(jf.read_text(encoding="utf-8"))
         except Exception as e:
@@ -351,7 +356,7 @@ def cmd_skip(a) -> int:
     book = Path(a.book).resolve()
     st = load_state(book)
     if not st:
-        return 2
+        print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
     if not token_ok(book, a.node, a.token):
         print(json.dumps({"error": "token_mismatch"}, ensure_ascii=False)); return 2
     spec = cursor_spec(st, book)
@@ -370,7 +375,7 @@ def cmd_block(a) -> int:
     book = Path(a.book).resolve()
     st = load_state(book)
     if not st:
-        return 2
+        print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
     # 审查 B5：有节点在途时，block 也要令牌——否则任何进程一句话停摆整链。
     held = read_token(book)
     token = getattr(a, "token", "") or ""

@@ -66,12 +66,75 @@ export async function renderRevise({ bookId, go }) {
         el("h1", { class: "page-title", text: "AI 改了什么" }),
         el("p", { class: "page-sub", text: "默认自动跑；每次写入都留版本。看不过去就一键回滚。" }))));
   const chapterTabs = el("div", { class: "tabs" });
+  // B14 中期：闸门结论只读面板——作者在「改」视图原地看到本章闸门结果，
+  // 不必跳制作台（完整节点仍在制作台）。
+  const gatePanel = el("div", { class: "gate-panel" });
   const versionList = el("div", { class: "version-list" });
   const diffHead = el("div", { class: "diff-head" });
   const diffBody = el("div", { class: "diff" });
   const diffPanel = el("div", { class: "diff-panel" }, diffHead, diffBody);
-  page.append(chapterTabs, el("div", { class: "version-layout" }, versionList, diffPanel));
+  page.append(chapterTabs, gatePanel, el("div", { class: "version-layout" }, versionList, diffPanel));
   view.replaceChildren(page);
+
+  let gateToken = 0;
+  function gateStatusChip(report) {
+    const status = report.gates?.status;
+    if (status === "block") return el("span", { class: "chip chip-danger", text: "闸门未通过" });
+    if (status === "pass") return el("span", { class: "chip chip-ok", text: "闸门通过" });
+    if (status === "warn") return el("span", { class: "chip chip-warn", text: "有提示项" });
+    return null;
+  }
+
+  async function paintGate() {
+    const token = ++gateToken;
+    clear(gatePanel).append(el("p", { class: "muted small", text: "正在读取闸门结论…" }));
+    let report;
+    try {
+      report = await api(`/api/books/${bookId}/report?chapter=${chapter}`);
+    } catch (error) {
+      if (token !== gateToken) return;
+      clear(gatePanel).append(el("p", { class: "muted small", text: `闸门结论读取失败：${error.message}` }));
+      return;
+    }
+    if (token !== gateToken) return;
+    const findings = report.findings ?? null;
+    const blocking = Number(findings?.blocking_count ?? 0);
+    const advisory = Number(findings?.advisory_count ?? 0);
+    const rows = [el("div", { class: "gate-row" },
+      el("strong", { text: `第 ${chapter} 章闸门结论` }),
+      gateStatusChip(report),
+      findings
+        ? el("span", {
+            class: `chip ${blocking > 0 ? "chip-danger" : "chip-ok"}`,
+            text: `${blocking} 阻断 / ${advisory} 提示`,
+          })
+        : null,
+      findings?.resolved_at ? el("span", { class: "chip chip-ok", text: "已封板解决" }) : null,
+      el("a", {
+        class: "link-button", href: `/studio.html#/books/${bookId}`,
+        text: "去制作台看完整节点",
+      }))];
+    if (report.warning) {
+      rows.push(el("p", { class: "muted small", text: report.warning }));
+    }
+    if (!findings && !report.gates) {
+      rows.push(el("p", {
+        class: "muted small",
+        text: "这一章还没跑过闸门。写完正文后，闸门会随制作台链路自动跑（N13）。",
+      }));
+    }
+    const items = (findings?.items ?? []).slice(0, 10);
+    if (items.length) {
+      rows.push(el("ul", { class: "gate-items" }, ...items.map((item) => el("li", {},
+        el("span", {
+          class: `chip ${item.level === "B" ? "chip-danger" : "chip-warn"}`,
+          text: item.level === "B" ? "阻断" : "提示",
+        }),
+        el("span", { text: item.name || item.criterion || item.id || "问题" }),
+        item.note ? el("span", { class: "muted small", text: String(item.note).slice(0, 80) }) : null))));
+    }
+    clear(gatePanel).append(...rows);
+  }
 
   function paintTabs() {
     clear(chapterTabs).append(...withVersions.map((item) => {
@@ -89,6 +152,7 @@ export async function renderRevise({ bookId, go }) {
 
   async function load() {
     paintTabs();
+    paintGate();
     clear(versionList).append(el("p", { class: "muted small", text: "正在读取版本…" }));
     try {
       const data = await api(`/api/books/${bookId}/versions?chapter=${chapter}`);

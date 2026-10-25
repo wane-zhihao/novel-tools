@@ -54,7 +54,8 @@ test("合法 N04 判词通过", () => withBook((ctx) => {
       criterion: "选题可投",
       verdict: "pass",
       source: "大纲/选题报告.md",
-      quote: "年代文选题：厂办顶职",
+      // 连续 ≥12 字（审查 C 级：代码下限对齐 prompt 的 12–30，标点归一化后 13 字）
+      quote: "厂办顶职，亲情背叛与清誉危机",
     }],
   });
   assert.deepEqual(bad, []);

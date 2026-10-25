@@ -26,8 +26,8 @@ import argparse
 import hashlib
 import json
 import os
-import random
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -45,7 +45,9 @@ HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
 CONFIG_PATH = SKILL_DIR / "config.json"
 STATE_REL = "_pipeline/state.json"
-TOKEN_LEN = 6
+# 令牌熵（审查 C1）：secrets 生成 8 hex（32bit）——random 可预测、原 24bit 爆破
+# 成本低。注意令牌语义是"速度 bump"不是隔离（审查 A1），别再写成机械隔离。
+TOKEN_HEX_LEN = 8
 
 IRON_RULES = [
     "禁止向用户提问或请求确认——分歧按 references/decisions.md 默认决策表处理，记入 pending_questions 后继续",
@@ -125,9 +127,15 @@ def save_state(book: Path, st: dict) -> None:
     # 旧版把令牌写在 state 里；现在令牌在 _pipeline/.step_token，落盘时清掉残留字段
     st.pop("step_token", None)
     st.pop("step_token_node", None)
+    _atomic_write(p, json.dumps(st, ensure_ascii=False, indent=1) + "\n")
+
+
+def _atomic_write(p: Path, text: str) -> None:
+    """原子写：临时文件 + replace，避免中断写出半截文件（C 级：manifest/relay 同理）。"""
+    p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{time.time_ns()}.tmp")
-    tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    tmp.replace(p)          # 原子替换，避免中断写出半截文件
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(p)
 
 
 def write_workbench_manifest(book: Path) -> None:
@@ -146,8 +154,7 @@ def write_workbench_manifest(book: Path) -> None:
                 return
         except json.JSONDecodeError:
             pass
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(manifest, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    _atomic_write(p, json.dumps(manifest, ensure_ascii=False, indent=1) + "\n")
 
 
 def sha256_of(path: Path) -> str:
@@ -167,7 +174,7 @@ def norm_cjk(s: str) -> str:
 # 文件，state.json 不再含任何令牌字段。
 
 def new_token() -> str:
-    return f"{random.randrange(16 ** TOKEN_LEN):0{TOKEN_LEN}x}"
+    return secrets.token_hex(TOKEN_HEX_LEN // 2)
 
 
 def token_path(book: Path) -> Path:
@@ -388,8 +395,7 @@ def _write_relay(book: Path, st: dict) -> None:
         "> 人工粘贴上一条命令即可接管；不要手动改 state.json。\n"
     )
     p = book / "_pipeline" / "relay.md"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
+    _atomic_write(p, content)
 
 
 def _recoverable_commit_error(out: str) -> bool:
@@ -532,7 +538,7 @@ def cmd_next(a) -> int:
         "kind": spec["kind"],
         "chapter": ch if spec["id"].startswith("C") else None,
         "evidence": evidence,
-        "resolved_evidence": _resolve_evidence(book, evidence),
+        "resolved_evidence": evidence,
         "_iron_rules": IRON_RULES,
         "done_cmd_for_orchestrator_only": done_cmd,
         "subagent_role": spec["role"],
@@ -567,7 +573,9 @@ def main():
     d = sub.add_parser("done")
     d.add_argument("--book", required=True)
     d.add_argument("--node", required=True)
-    d.add_argument("--token", required=True)
+    # --token 可省略：运行时经 WB_STEP_TOKEN 环境变量传递（审查 C1，argv 对本机
+    # 进程管理器可见）；编排者按 next 输出的 done_cmd 显式传 --token。
+    d.add_argument("--token", required=False, default="")
     d.add_argument("--evidence", action="append", required=True)
 
     s = sub.add_parser("skip")

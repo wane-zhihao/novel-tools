@@ -145,6 +145,12 @@ export function serveStaticFile(response, filePath) {
     "Content-Type": type,
     "Content-Length": statSync(filePath).size,
     "Cache-Control": "no-cache",
+    // 审查 C4：本地工作台也是浏览器上下文——提示注入若能在页面里落脚本，
+    // CSP 是最后一道闸。style-src 需 'unsafe-inline'：界面用 setAttribute 设
+    // 行内样式（lib/dom.js）；script-src 严格（事件监听不走 CSP）。
+    "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
   });
   createReadStream(filePath).pipe(response);
 }

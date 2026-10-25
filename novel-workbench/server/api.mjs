@@ -34,6 +34,18 @@ import {
 const FINDING_LIMIT = 200;
 const RUN_LIMIT = 50;
 
+// 审查 C2：autopilot init/resume 的原始输出含绝对路径，回包给浏览器前把用户
+// 目录前缀替换为 %USERPROFILE%（其余盘符路径保留——本地调试要用）。仅回环
+// 可达，属低危卫生项。
+const HOME_PREFIXES = [homedir(), homedir().replaceAll("\\", "/")].filter(Boolean);
+function redactHome(text) {
+  let out = String(text ?? "");
+  for (const prefix of HOME_PREFIXES) {
+    if (prefix) out = out.replaceAll(prefix, "%USERPROFILE%");
+  }
+  return out;
+}
+
 function runPython(python, args, { cwd, timeoutMs = 120_000, env = {} } = {}) {
   return new Promise((accept) => {
     execFile(
@@ -275,7 +287,7 @@ export function createApi({
         if (init.code !== 0) {
           throw new HttpError(400, "init_failed", "autopilot init 失败", {
             exit_code: init.code,
-            output: `${init.stdout}${init.stderr}`.slice(-1200),
+            output: redactHome(`${init.stdout}${init.stderr}`.slice(-1200)),
           });
         }
       } else {
@@ -410,7 +422,7 @@ export function createApi({
     );
     if (result.code !== 0) {
       throw new HttpError(400, "resume_failed", "恢复失败", {
-        output: `${result.stdout}${result.stderr}`.slice(-800),
+        output: redactHome(`${result.stdout}${result.stderr}`.slice(-800)),
       });
     }
     syncBook(db, row.path, { force: true });

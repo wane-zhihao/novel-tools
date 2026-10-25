@@ -1075,7 +1075,9 @@ def run_node_script(book: Path, st: dict, spec: dict) -> tuple[int, str]:
 
 # ─── verify 节点的原文引用硬校验（暗坑6） ─────────────────────────────────────
 
-def verify_quote(quote: str, chapter_text: str, min_len: int = 8) -> bool:
+def verify_quote(quote: str, chapter_text: str, min_len: int = 12) -> bool:
+    """原文引用硬校验（暗坑6）。min_len=12 与 judge prompt 的"连续 12–30 字"对齐
+    （审查 C 级：此前代码只卡 ≥8，比提示词松）。"""
     q, t = _norm(quote), _norm(chapter_text)
     return len(q) >= min_len and q in t
 

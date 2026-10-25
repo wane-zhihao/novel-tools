@@ -229,16 +229,18 @@ export class AgentRuntime {
     if (!held?.token || held.node !== node) {
       return { code: 2, payload: { error: "token_missing", message: "找不到与当前节点匹配的 step_token" }, stderr: "" };
     }
+    // 审查 C1：令牌经 WB_STEP_TOKEN 环境变量传递，不再走 argv——本机进程
+    // 管理器（任务管理器/Process Explorer）能读到命令行，env 至少不进列表。
     const args = [
       this.paths.autopilot, "done", "--book", this.bookDir,
-      "--node", node, "--token", held.token,
+      "--node", node,
     ];
     for (const path of evidence) args.push("--evidence", path);
     const result = await runCommand(this.paths.python, args, {
       cwd: this.bookDir,
       timeoutMs: 300_000,
       signal: this.signal ?? undefined,
-      env: { WORKBENCH_CONFIG: this.paths.configPath },
+      env: { WORKBENCH_CONFIG: this.paths.configPath, WB_STEP_TOKEN: held.token },
     });
     return { ...result, payload: parseLastJson(result.stdout) };
   }
