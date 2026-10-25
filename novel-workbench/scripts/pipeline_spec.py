@@ -502,7 +502,7 @@ def _n15_prompt(n: int, prev: int, b: str, st: dict | None = None) -> str:
 
     prev_range = f"第 1–{prev} 章" if prev >= 1 else "无前序章（本章是第 1 章）"
     return (
-        f"你是{PLATFORM}签约评审（红队模式）。只读 {src}。\n"
+        f"你是{{PLATFORM}}签约评审（红队模式）。只读 {src}。\n"
         f"审查范围：{scope}\n\n"
         f"**铁律：你的修复指令只能作用于第 {n} 章**——{prev_range}已在各自章末封板，"
         "严禁要求推翻它们。若问题只能靠改前序章解决，请判 block 并说明。\n\n"
