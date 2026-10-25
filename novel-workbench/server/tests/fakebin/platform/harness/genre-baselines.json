@@ -1,1 +1,11 @@
-{}
+{
+  "platform": "qimao",
+  "version": "0.0.0-test",
+  "baselines": {
+    "niandai": {
+      "sent_len_median": [15, 27],
+      "paragraphs_per_1000": [33.1, 54.1],
+      "dialog_ratio": [0.1, 0.4]
+    }
+  }
+}

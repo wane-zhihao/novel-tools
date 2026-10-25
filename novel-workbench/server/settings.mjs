@@ -441,6 +441,24 @@ export function effectiveSettings({ dataDir = defaultDataDir(), env = process.en
 }
 
 export function pipelineConfig(settings) {
+  // PLATFORMS 合成（并行会话加 PLATFORMS 契约后的补丁）：仓库 config.json 是
+  // 默认源（含 zongheng 等全部平台），settings 里的 qimao 路径覆盖 qimao 项；
+  // 仓库配置没有 PLATFORMS 时（老配置）从 settings 合成 qimao。没有这一步，
+  // env/设置驱动的 pipeline.json 缺 PLATFORMS，platform_cfg 直接硬报错。
+  const base = (() => {
+    try {
+      return loadWorkbenchConfig();
+    } catch {
+      return {};
+    }
+  })();
+  const platforms = structuredClone(base.PLATFORMS ?? {});
+  const qimao = { ...(platforms.qimao ?? {}) };
+  if (settings.platform_dir) qimao.DIR = settings.platform_dir;
+  if (settings.qimao_genre_base) qimao.GENRE_BASE = settings.qimao_genre_base;
+  if (settings.qimao_style_anchor) qimao.STYLE_ANCHOR = settings.qimao_style_anchor;
+  qimao.GENRES = qimao.GENRES ?? [];
+  platforms.qimao = qimao;
   return {
     PYTHON: settings.python,
     NODE: settings.node,
@@ -462,6 +480,7 @@ export function pipelineConfig(settings) {
     GATE_RUNNER: settings.gate_runner,
     STYLE_PROBE: settings.style_probe,
     CLARITY_ORG_PROBE: settings.clarity_org_probe,
+    PLATFORMS: platforms,
     WORKBENCH_READ_ROOTS: settings.read_roots,
   };
 }

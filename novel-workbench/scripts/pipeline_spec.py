@@ -72,9 +72,9 @@ GLOBAL_NODES: dict[str, dict] = {
         "id": "N03", "kind": "llm", "model": "default", "role": "scout", "name": "选题报告",
         "evidence": "大纲/选题报告.md", "min_size": 600,
         "prompt": (
-            "你是七猫系选题参谋。任务：写一份选题报告。\n"
+            "你是{PLATFORM}系选题参谋。任务：写一份选题报告。\n"
             "第一步，只读这三份资料（用 read_file，路径照抄即可）：\n"
-            "  {QIMAO}/01_投稿方案.md   （站点门槛 / 收稿范围 / 唯一一次评估机会）\n"
+            "  {QIMAO}/01_投稿方案.md   （站点门槛 / 收稿范围 / 签约方式与钱）\n"
             "  {QIMAO}/02_写作方案.md   （平台调性 / 开篇四关）\n"
             "  {QIMAO}/harness/genre-baselines.json  （爽文/年代两组的实测基准）\n"
             "第二步，读完立即用 write_file 把报告写入 {BOOK}/大纲/选题报告.md。"
@@ -90,9 +90,9 @@ GLOBAL_NODES: dict[str, dict] = {
         "id": "N04", "kind": "verify", "model": "reasoning", "role": "judge", "name": "选题闸门",
         "evidence": "_pipeline/judgments_N04.json", "min_size": 200,
         "prompt": (
-            "你是七猫签约评审（红队模式）。只读 {BOOK}/大纲/选题报告.md，"
+            "你是{PLATFORM}签约评审（红队模式）。只读 {BOOK}/大纲/选题报告.md，"
             "对照 {QIMAO}/01_投稿方案.md 的收稿范围与「每部作品只有一次评估机会」的约束。\n"
-            "先输出「这个选题最可能被七猫编辑拒掉的 3 个理由」，再做裁决。\n"
+            "先输出「这个选题最可能被{PLATFORM}编辑拒掉的 3 个理由」，再做裁决。\n"
             "写入 {BOOK}/_pipeline/judgments_N04.json：\n"
             '  {"verdict":"pass|block","summary":"...","items":[{"criterion":"...","quote":"报告原文连续12-30字","source":"大纲/选题报告.md","verdict":"pass|fail"}]}\n'
             "quote 必须是报告中连续原文，严禁省略号跳跃。回执 ≤100 字。"
@@ -116,7 +116,7 @@ GLOBAL_NODES: dict[str, dict] = {
         "evidence": "_pipeline/judgments_N06.json", "min_size": 200,
         "prompt": (
             "只读 {BOOK}/设定/ 下 5 个文件。核查：五个文件是否齐全、角色是否有明确动机、"
-            "世界观是否过度庞杂（七猫清单：设定太庞杂是硬伤）、文风是否与年代基准兼容。\n"
+            "世界观是否过度庞杂（{PLATFORM}清单：设定太庞杂是硬伤）、文风是否与年代基准兼容。\n"
             "先输出 3 个最可能被拒的理由再裁决。写入 {BOOK}/_pipeline/judgments_N06.json，"
             "格式同 N04，source 填具体文件名。回执 ≤100 字。"
         ),
@@ -172,7 +172,7 @@ GLOBAL_NODES: dict[str, dict] = {
         "id": "N20", "kind": "verify", "model": "reasoning", "role": "judge", "name": "评分卡终审",
         "evidence": "_pipeline/judgments_N20.json", "min_size": 200,
         "prompt": (
-            "你是七猫签约评审（红队模式）。这是**终审**，不写稿、不改稿。\n"
+            "你是{PLATFORM}签约评审（红队模式）。这是**终审**，不写稿、不改稿。\n"
             "读取：\n"
             "  {QIMAO}/03_评分卡.md                 （判定项与 B/A 级别，唯一标准）\n"
             "  {QIMAO}/01_投稿方案.md               （收稿范围 / 唯一一次评估机会）\n"
@@ -186,7 +186,7 @@ GLOBAL_NODES: dict[str, dict] = {
             "  B 级（任一 fail → verdict=block）：1–4 开篇四关、8–9 场景切换/过渡、"
             "14 段落重复、16 未知人物；\n"
             "  A 级（只记录，不阻断）：10–11 主线收束/利用率、15 题材漂移。\n\n"
-            "先输出「最可能被七猫编辑拒稿的 3 个理由」，再逐项裁决。\n"
+            "先输出「最可能被{PLATFORM}编辑拒稿的 3 个理由」，再逐项裁决。\n"
             "每条 item 必须给 quote（正文连续 12–30 字原文），source 填具体章节文件路径；"
             "纯机械项可 quote 留空，但必须写 metric（{\"actual\":...,\"expected\":...}）。\n"
             "裁决：任一 B 项 fail → verdict=block。summary 必须列出**只能靠改 正文/ 解决的章节清单**；"
@@ -502,11 +502,11 @@ def _n15_prompt(n: int, prev: int, b: str, st: dict | None = None) -> str:
 
     prev_range = f"第 1–{prev} 章" if prev >= 1 else "无前序章（本章是第 1 章）"
     return (
-        f"你是七猫签约评审（红队模式）。只读 {src}。\n"
+        f"你是{PLATFORM}签约评审（红队模式）。只读 {src}。\n"
         f"审查范围：{scope}\n\n"
         f"**铁律：你的修复指令只能作用于第 {n} 章**——{prev_range}已在各自章末封板，"
         "严禁要求推翻它们。若问题只能靠改前序章解决，请判 block 并说明。\n\n"
-        "先输出「最可能被七猫编辑拒稿的 3 个理由」，再做裁决。\n\n"
+        "先输出「最可能被{PLATFORM}编辑拒稿的 3 个理由」，再做裁决。\n\n"
         "【删除测试（判「白描 vs 流水账」，机械指标做不到这一层）】\n"
         "探针会给出本章最长的 3 条「纯动作链」（连续不含因果/心理的动作句）。\n"
         "对每条链逐句问：**删掉这一句，后面 3 句内是否出现依赖它的指代、后果或状态变化？**\n"

@@ -83,17 +83,30 @@ PYTHON = CFG["PYTHON"]
 NODE_BIN = CFG.get("NODE", "")
 
 
-def render_prompt(template: str, book: Path) -> str:
+def render_prompt(template: str, book: Path, st: dict | None = None) -> str:
     """渲染 prompt 模板里的路径占位符。
 
     节点表只存模板（与具体书无关）；{QIMAO} / {STORY_LONG_WRITE} / {BOOK}
     在 next 输出时才替换成真实绝对路径——换一本书跑，同一份节点表不用改。
+
+    **{QIMAO} 按书所属平台解析**（2026-10-25 修）：
+    此前无论什么书都替换成七猫目录，导致纵横书读七猫的判据文档、跑七猫的闸门。
+    {PLATFORM} 给平台名（用于文案里的「七猫/纵横」），{PLATFORM_DIR} 同 {QIMAO}。
     """
+    st = st or {}
+    name = st.get("platform") or "qimao"
+    plats = CFG.get("PLATFORMS") or {}
+    pdir = (plats.get(name) or {}).get("DIR") or CFG["QIMAO_PLATFORM_DIR"]
+    label = {"qimao": "七猫", "zongheng": "纵横"}.get(name, name)
+    # 归一成 / 分隔，避免 "F:////小说////platforms/zongheng" 这类混合斜杠
+    pdir = str(pdir).replace("\\", "/")
     return (template
-            .replace("{QIMAO}", CFG["QIMAO_PLATFORM_DIR"])
+            .replace("{QIMAO}", pdir)
+            .replace("{PLATFORM_DIR}", pdir)
+            .replace("{PLATFORM}", label)
             .replace("{STORY_LONG_WRITE}", CFG["STORY_LONG_WRITE"])
             .replace("{SKILL}", str(SKILL_DIR))
-            .replace("{BOOK}", str(book)))
+            .replace("{BOOK}", str(book).replace("\\", "/")))
 
 
 def utf8_env() -> dict:
@@ -249,7 +262,7 @@ def release_next_lock(path: Path) -> None:
 # ─── 节点表（PART 3 填充） ────────────────────────────────────────────────────
 
 from pipeline_spec import (          # noqa: E402
-    GLOBAL_NODES, chapter_nodes, volume_nodes, next_cursor, first_cursor, milestones,
+    GLOBAL_NODES, chapter_nodes, volume_nodes, next_cursor, first_cursor, milestones, vol_of, span, vol_size,
 )
 
 # ─── 内联脚本执行（PART 2 填充） ──────────────────────────────────────────────
@@ -279,7 +292,7 @@ def cmd_init(a) -> int:
         "max_chapters": int(a.max_chapters),
         # 平台与卷计划：老书没有这两个键，代码里一律用 .get() 回落（七猫兼容）
         "platform": getattr(a, "platform", None) or "qimao",
-        "plan": ({"vol_size": int(a.vol_size)} if getattr(a, "vol_size", 0) else None),
+        "plan": ({"vol_size": int(a.vol_size), "vol_llm_cap": int(getattr(a, "vol_llm_cap", 0) or 80)} if getattr(a, "vol_size", 0) else None),
         "uncontrollable": [],
         "created_at": now(),
         "current_chapter": 0,
@@ -388,12 +401,49 @@ def _auto_skip_reason(book: Path, st: dict, spec: dict) -> str | None:
     return None
 
 
-def _write_relay(book: Path, st: dict) -> None:
+# 计入预算的节点类型（llm 创作 + judge 审查；script 节点不花 chat 轮）
+_BILLABLE = {"N07", "N08", "N09d", "N09", "N12", "N14", "N15", "N20", "N20f", "N20g"}
+
+
+def _vol_llm_used(st: dict) -> int:
+    """当前卷已消耗的 llm/verify 节点数（近似 chat 轮消耗）。"""
+    if not st.get("plan"):
+        return 0
+    v = vol_of(st, st["current_chapter"] + 1)
+    n = 0
+    for nid, rec in (st.get("nodes") or {}).items():
+        if not isinstance(rec, dict) or rec.get("status") != "done":
+            continue
+        stage = nid.split(".", 1)[-1]
+        if stage not in _BILLABLE:
+            continue
+        if nid.startswith("V"):
+            if int(nid[1:].split(".", 1)[0]) == v:
+                n += 1
+        elif nid.startswith("C"):
+            if vol_of(st, int(nid[1:].split(".", 1)[0])) == v:
+                n += 1
+    return n
+
+
+def vol_budget(st: dict) -> int:
+    return int((st.get("plan") or {}).get("vol_llm_cap", 80))
+
+
+def _write_relay(book: Path, st: dict, reason: str = "定期接力") -> None:
+    _vol = ""
+    if st.get("plan"):
+        _v = vol_of(st, st["chapters_committed"] + 1)
+        _s, _e = span(st, _v)
+        _vol = (f"- 当前卷：第 {_v} 卷（第 {_s}–{_e} 章），本卷已用 "
+                f"{_vol_llm_used(st)}/{vol_budget(st)} 预算\n")
     content = (
         "# 接力口令\n\n"
         f"- 书：{st['book']}\n"
         f"- 已封板：{st['chapters_committed']} 章 / {st['words_total']} 字\n"
         f"- 当前 cursor：`{st['cursor']}`\n"
+        f"- 停止原因：{reason}\n"
+        f"{_vol}"
         f"- 续跑命令：\n\n"
         "```\n"
         f'"{PYTHON}" "{HERE / "autopilot.py"}" next --book "{book}"\n'
@@ -416,6 +466,15 @@ def _recoverable_commit_error(out: str) -> bool:
     if isinstance(data, dict) and data.get("status") == "error":
         return data.get("error_code") != "TOOL_UNAVAILABLE"
     return "找不到追踪事务" in out
+
+
+def cmd_relay(a) -> int:
+    """只写接力口令并打印，不推进游标。runtime 预算耗尽时调它。"""
+    book = Path(a.book).resolve()
+    st = load_state(book)
+    _write_relay(book, st, getattr(a, "reason", None) or "手动/预算耗尽")
+    print((book / "_pipeline" / "relay.md").read_text(encoding="utf-8"))
+    return 0
 
 
 def cmd_next(a) -> int:
@@ -506,9 +565,27 @@ def cmd_next(a) -> int:
             st["cursor"] = f"C{ch}.N15"
         else:
             st["cursor"] = next_cursor(st)
-        if spec["id"].endswith(".N16") and st["chapters_committed"] % 3 == 0:
-            _write_relay(book, st)
+        if spec["id"].endswith(".N16"):
+            _done = st["chapters_committed"]
+            if st.get("plan"):
+                # 卷边界才写接力口令（每 22 章一次，不是每 3 章）
+                if _done and _done % vol_size(st) == 0:
+                    _write_relay(book, st, f"第 {vol_of(st, _done)} 卷写完")
+            elif _done % 3 == 0:
+                _write_relay(book, st)
         save_state(book, st)
+
+    # 卷预算闸门：超了就在卷内停下，写接力口令，不发令牌
+    if st.get("plan") and spec and spec.get("kind") in ("llm", "verify"):
+        used, cap = _vol_llm_used(st), vol_budget(st)
+        if used >= cap:
+            _write_relay(book, st, f"第 {vol_of(st, st['current_chapter'] + 1)} 卷预算用尽（{used}/{cap}）")
+            save_state(book, st)
+            print(json.dumps({"status": "volume_budget", "node": spec["id"],
+                              "vol_used": used, "vol_cap": cap,
+                              "relay": str(book / "_pipeline" / "relay.md")},
+                             ensure_ascii=False))
+            return 0
 
     # llm / verify 节点：发令牌，交还控制权
     spec = cursor_spec(st, book)
@@ -549,7 +626,7 @@ def cmd_next(a) -> int:
         "done_cmd_for_orchestrator_only": done_cmd,
         "subagent_role": spec["role"],
         "subagent_model": spec.get("model", "default"),
-        "subagent_prompt": render_prompt(spec["prompt"], book),
+        "subagent_prompt": render_prompt(spec["prompt"], book, st),
     }, ensure_ascii=False))
     return 0
 
@@ -578,9 +655,15 @@ def main():
     # 平台与卷：不传则 platform=qimao、plan=None（完全走老路径）
     p.add_argument("--platform", default="qimao", help="qimao | zongheng")
     p.add_argument("--vol-size", type=int, default=0, help="每卷章数，0=不分卷")
+    p.add_argument("--vol-llm-cap", type=int, default=80,
+                   help="每卷 llm 节点预算上限（默认 80，约够 22 章）")
 
     for name in ("next", "status"):
         p = sub.add_parser(name); p.add_argument("--book", required=True)
+
+    rl = sub.add_parser("relay", help="只写接力口令，不推进游标（预算耗尽时调）")
+    rl.add_argument("--book", required=True)
+    rl.add_argument("--reason", default="")
 
     d = sub.add_parser("done")
     d.add_argument("--book", required=True)
@@ -624,6 +707,8 @@ def main():
             return cmd_next(a)
         finally:
             release_next_lock(lock)
+    if a.cmd == "relay":
+        return cmd_relay(a)
     if a.cmd in ("done", "skip", "block", "resume"):
         from commands import cmd_done, cmd_skip, cmd_block, cmd_resume
         handlers = {"done": cmd_done, "skip": cmd_skip,

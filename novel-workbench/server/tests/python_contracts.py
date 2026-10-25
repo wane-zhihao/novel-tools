@@ -52,7 +52,10 @@ def probe(path):
     write(fake / "ai-patterns.js", "console.log(JSON.stringify({findings: []}));\n")
     write(fake / "degeneration.js", "console.log(JSON.stringify({findings: []}));\n")
     write(fake / "tracking_commit.py", "print('{}')\n")
-    write(fake / "genre.json", "{}\n")
+    write(fake / "genre.json", json.dumps({"baselines": {"niandai": {
+        "sent_len_median": [15, 27], "paragraphs_per_1000": [33.1, 54.1],
+        "dialog_ratio": [0.1, 0.4]}}}, ensure_ascii=False))
+    write(fake / "style_anchor.json", json.dumps({"samples": []}, ensure_ascii=False))
     config = {
         "PYTHON": sys.executable,
         "NODE": os.environ.get("FAKE_NODE") or sys.executable,
@@ -67,6 +70,14 @@ def probe(path):
         "GATE_RUNNER": str(fake / "gate_runner.py"),
         "STYLE_PROBE": str(fake / "style_probe.py"),
         "QIMAO_STYLE_ANCHOR": str(fake / "style_anchor.json"),
+        "PLATFORMS": {
+            "qimao": {
+                "DIR": str(fake),
+                "GENRE_BASE": str(fake / "genre.json"),
+                "STYLE_ANCHOR": str(fake / "style_anchor.json"),
+                "GENRES": ["niandai"],
+            },
+        },
     }
     path = root / "pipeline.json"
     write(path, json.dumps(config, ensure_ascii=False))

@@ -27,18 +27,18 @@
   "_note": "严禁在代码里硬编码相对路径 ../../；一律从本文件取根目录。",
   "PLATFORMS": {
     "qimao": {
-      "DIR": "F:\\小说\\platforms\\qimao",
-      "GENRE_BASE": "F:\\小说\\platforms\\qimao\\harness\\genre-baselines.json",
-      "STYLE_ANCHOR": "F:\\小说\\platforms\\qimao\\harness\\style-anchor.json",
+      "DIR": "F:/小说/platforms/qimao",
+      "GENRE_BASE": "F:/小说/platforms/qimao/harness/genre-baselines.json",
+      "STYLE_ANCHOR": "F:/小说/platforms/qimao/harness/style-anchor.json",
       "GENRES": [
         "shuangwen",
         "niandai"
       ]
     },
     "zongheng": {
-      "DIR": "F://小说//platforms//zongheng",
-      "GENRE_BASE": "F://小说//platforms//zongheng//harness//genre-baselines.json",
-      "STYLE_ANCHOR": "F://小说//platforms//zongheng//harness//style-anchor.json",
+      "DIR": "F:/小说/platforms/zongheng",
+      "GENRE_BASE": "F:/小说/platforms/zongheng/harness/genre-baselines.json",
+      "STYLE_ANCHOR": "F:/小说/platforms/zongheng/harness/style-anchor.json",
       "GENRES": [
         "dushi",
         "xuanhuan",

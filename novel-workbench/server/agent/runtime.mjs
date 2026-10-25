@@ -429,9 +429,18 @@ export class AgentRuntime {
       if (done.code === 1 && payload.error === "verify_blocked") {
         return { status: "blocked", error: payload.reason ?? "终审未通过", attempt, usage: agent.usage };
       }
-      if (done.code === 2 && payload.error === "quote_check_failed") {
-        feedback = `引用校验失败，以下条目的 quote 不是正文连续原文：${JSON.stringify(payload.items ?? []).slice(0, 800)}`;
-        this.emit({ type: "node_retry", node: instruction.node, reason: "引用校验失败，回喂重写" });
+      if (done.code === 2) {
+        // 可恢复的 done 拒绝全部回喂给模型重写，不白烧 attempt（真书实证：
+        // judge 复用上一轮判词文件被 stale_evidence 拒；writer 证据过小/
+        // 不匹配 spec 同理）。引用校验/证据陈旧/证据模式/ judgments 不可读
+        // 都在此列。token/cursor 类状态错误喂了也无害——有 maxAttempts 上限。
+        const detail = payload.detail
+          ?? (payload.items ? JSON.stringify(payload.items).slice(0, 800) : "");
+        feedback = `done 被拒绝（${payload.error ?? "unknown"}）：`
+          + `${detail || payload.message || payload.reason || ""}。`
+          + "请修正后重新写入全部证据文件（不要沿用旧文件），再回执。";
+        feedback = feedback.slice(0, 900);
+        this.emit({ type: "node_retry", node: instruction.node, reason: `${payload.error}: 回喂重写` });
         continue;
       }
       return {
