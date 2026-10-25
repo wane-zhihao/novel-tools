@@ -464,7 +464,7 @@ def _gate_findings(result: dict) -> tuple[list[dict], dict]:
     return items, result.get("metrics") or {}
 
 
-def _chapter_check(book: Path, chapter: int, st: dict) -> tuple[int, str]:
+def _chapter_check(book: Path, chapter: int, st: dict, _allow_mech: bool = True) -> tuple[int, str]:
     """C{n}.N13：storyctl 质量复检 + 平台闸门，统一写 findings_C{n}.json。
 
     有阻断项也返回 0：交给 C{n}.N14 定点改写，而不是把整条流水线停死。
@@ -516,6 +516,15 @@ def _chapter_check(book: Path, chapter: int, st: dict) -> tuple[int, str]:
         })
     gate_items, metrics = _gate_findings(gates[0])
     items += gate_items
+
+    # 机械项确定性修复：破折号/半角标点/省略号改法唯一，不该烧一轮 LLM。
+    # 端到端实测 5 轮 N14 里有 3 轮只在做这个，而且 N14 还会漏。
+    # 修完立刻重跑一遍本函数复检；第二次不再修（_allow_mech=False），防死循环。
+    if _allow_mech:
+        _n, _notes = mechanical_fix(book, chapter, items)
+        if _n:
+            return _chapter_check(book, chapter, st, _allow_mech=False)
+
     doc = write_chapter_findings(book, chapter, items, metrics)
     summary = (f"blocking={doc['blocking_count']} advisory={doc['advisory_count']} "
                f"metrics={json.dumps(metrics, ensure_ascii=False)}")
@@ -642,6 +651,79 @@ def _normalize_tracking(txn: Path, st: dict, prev_ctx: dict | None = None) -> li
     if notes:
         txn.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
     return notes
+
+
+# ─── 机械项确定性修复 ────────────────────────────────────────────────────────
+# 为什么要有：端到端跑 2 章实测，5 轮 N14 里有 3 轮只在做字符串替换
+# （破折号 → 标点、半角 → 全角、... → ……），而且 N14 还会漏（第 1 章第 2 轮
+# 漏了「不是工期，是他最后一次机会」）。这类问题正则可判、改法唯一，
+# 不该烧一整轮 LLM，也不该指望模型自觉。
+
+_MECH_IDS = {"em-dash", "PUNCTUATION_NOT_NORMALIZED", "ellipsis",
+             "punctuation_not_normalized", "half-width-punct"}
+
+
+def mechanical_fix(book: Path, chapter: int, items: list | None = None) -> tuple[int, list[str]]:
+    """就地修掉机械类 findings，返回 (修了几处, 说明列表)。
+
+    只处理**改法唯一**的三类：
+      · 破折号「——」→ 按上下文选「，」或「：」
+      · 半角标点（中文字符之间）→ 全角
+      · 省略号「...」→「……」
+    禁用句式（不是X是Y）**不在这里改**——它需要重新组织句子，交给 N14。
+    """
+    import re as _re
+
+    if items is None:
+        f = book / "_pipeline" / f"findings_C{chapter}.json"
+        if not f.is_file():
+            return 0, []
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            return 0, []
+        items = doc if isinstance(doc, list) else (doc.get("items") or [])
+    mech = [x for x in items if isinstance(x, dict)
+            and str(x.get("id") or x.get("criterion") or "") in _MECH_IDS]
+    if not mech:
+        return 0, []
+
+    files = sorted((book / "正文").glob(f"第{chapter:03d}章_*.md"))
+    if not files:
+        return 0, []
+    src = files[0]
+    text = src.read_text(encoding="utf-8")
+    before = text
+    notes: list[str] = []
+
+    # ① 破折号：后面接完整分句用「，」，后面接补充说明用「：」
+    n = text.count("——")
+    if n:
+        text = _re.sub(r"——(?=[\u4e00-\u9fa5「『（])", "，", text)
+        notes.append(f"破折号 {n} → 逗号")
+
+    # ② 省略号：**本平台禁止省略号**，storyctl 明确要求换成「，」
+    #    （实测：原稿两章 0 处 ……、0 处 ...，闸门见到就报 PUNCTUATION_NOT_NORMALIZED）
+    for _el in ("...", "……"):
+        if _el in text:
+            c = text.count(_el)
+            text = text.replace(_el, "，")
+            notes.append(f"省略号「{_el}」{c} → 逗号")
+
+    # ③ 中文字符之间的半角标点 → 全角
+    pairs = {",": "，", ";": "；", ":": "：", "?": "？", "!": "！"}
+    fixed_punct = 0
+    for half, full in pairs.items():
+        pat = _re.compile(r"(?<=[\u4e00-\u9fa5])" + _re.escape(half) + r"(?=[\u4e00-\u9fa5])")
+        text, k = pat.subn(full, text)
+        fixed_punct += k
+    if fixed_punct:
+        notes.append(f"半角标点 {fixed_punct} → 全角")
+
+    if text != before:
+        src.write_text(text, encoding="utf-8")
+        return len(notes), notes
+    return 0, []
 
 
 def _commit_chapter(book: Path, chapter: int, st: dict) -> tuple[int, str]:

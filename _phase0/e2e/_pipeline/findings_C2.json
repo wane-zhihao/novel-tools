@@ -1,11 +1,11 @@
 {
  "chapter": 2,
- "generated_at": "2026-10-25T20:41:24+0800",
+ "generated_at": "2026-10-25T21:06:29+0800",
  "items": [],
  "metrics": {
   "visible_chars": 1729,
   "paragraphs_per_1000": 53.8,
-  "sent_len_median": 10.0,
+  "sent_len_median": 10,
   "causal_per_1000": 17.35,
   "narration_action_density": 38.7,
   "action_density": 37.02,
@@ -15,7 +15,5 @@
   "multi_actor_sent_ratio": 0.025
  },
  "blocking_count": 0,
- "advisory_count": 0,
- "resolved_at": "2026-10-25T20:41:30",
- "resolved_blocking": 0
+ "advisory_count": 0
 }
