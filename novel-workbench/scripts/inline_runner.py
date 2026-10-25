@@ -522,7 +522,7 @@ def _chapter_check(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     return 0, summary
 
 
-def _normalize_tracking(txn: Path, st: dict) -> list[str]:
+def _normalize_tracking(txn: Path, st: dict, prev_ctx: dict | None = None) -> list[str]:
     """封板前把 tracking.json 规整到 schema 允许的形状。
 
     **为什么要有**：writer 产出的 tracking 经常不合 schema，而 storyctl 的报错是
@@ -577,7 +577,35 @@ def _normalize_tracking(txn: Path, st: dict) -> list[str]:
         notes.append(f"continuity_risks {len(risks)} → 5（丢弃 {len(risks) - 5} 条）")
         ctx["continuity_risks"] = risks[:5]
 
-    # ④ delta 体积 ≤ 3072
+    # ④ 被丢弃的 context 条目必须声明为 retired（否则 preflight 会拦）
+    #    端到端实跑第 2 章时踩到：writer 没继承上一章的 continuity_risks，
+    #    也没声明 retired，preflight 直接判 tracking_preflight_failed。
+    if prev_ctx:
+        retired = delta.setdefault("retired_context_items", [])
+        if not isinstance(retired, list):
+            retired = []
+            delta["retired_context_items"] = retired
+        declared = set()
+        for x in retired:
+            if isinstance(x, str):
+                declared.add(x)
+            elif isinstance(x, dict):
+                declared.add(str(x.get("item") or x.get("text") or ""))
+        for field_name in ("continuity_risks", "long_term_constraints",
+                           "next_chapter_commitments"):
+            old_items = prev_ctx.get(field_name) or []
+            new_items = set(ctx.get(field_name) or [])
+            for item in old_items:
+                if item in new_items:
+                    continue
+                if item in declared:
+                    continue
+                # 原文已不在新 context 里 → 记账为 retired
+                retired.append(item if isinstance(item, str) else str(item))
+                declared.add(item)
+                notes.append(f"{field_name} 中 1 条未继承 → 已声明 retired")
+
+    # ⑤ delta 体积 ≤ 3072
     def _size() -> int:
         return len(json.dumps(delta, ensure_ascii=False).encode())
 
@@ -643,7 +671,8 @@ def _commit_chapter(book: Path, chapter: int, st: dict) -> tuple[int, str]:
     if not txn.is_file():
         return 2, f"找不到追踪事务 {txn}——writer 必须在 N12 按 shapes 填好它"
     # 封板前自动规整 tracking（结构性问题不该靠 LLM 重写整章来修）
-    _notes = _normalize_tracking(txn, st)
+    _prev_ctx = (previous.get("context") or {}) if isinstance(previous, dict) else {}
+    _notes = _normalize_tracking(txn, st, _prev_ctx)
     cmd = [cfg["PYTHON"], cfg["STORYCTL"], "chapter", "commit",
            "--project", str(book), "--chapter", str(chapter), "--input", str(txn)]
     rc, out = run_script(cmd, book, timeout=300)

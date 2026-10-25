@@ -26,7 +26,7 @@ from autopilot import (HERE, IRON_RULES, load_state, save_state, sha256_of, now,
                        resolve_evidence)
 from pipeline_spec import GLOBAL_NODES, chapter_nodes, next_cursor, judgment_policy
 from inline_runner import (run_node_script, verify_quote, append_chapter_findings,
-                           append_endgame_findings)
+                           append_endgame_findings, _cfg)
 
 
 def _evidence_matches_spec(book: Path, spec: dict, files: list[Path]) -> str | None:
@@ -280,6 +280,77 @@ def _validate_judgment(book: Path, node_id: str, judgment: dict) -> list[dict]:
     return bad
 
 
+def _tracking_preflight(book: Path, node: str) -> str:
+    """N12/N14 的封板预检：在书副本上跑真实 tracking_commit commit。
+
+    真书实证：事务的 schema 违规（字段名自造、id 非 F001/E001 形态、
+    result 超 480 字节、控制字段被改）此前只能在 N16 封板时才暴露，每错一项
+    就要烧一整轮 N14 定点改写（5-8 分钟 + 十几万 token）。这里把上游校验器
+    提前到 done 时用：副本上 commit 通过才放行，不通过就把原文错误回喂模型，
+    让它在本轮内改完。
+
+    返回空串 = 通过或无法预检（缺事务文件/缺工具，交给 N16 兜底）；
+    非空 = 上游错误原文。
+    """
+    m = re.match(r"^C(\d+)\.N(12|14)$", node)
+    if not m:
+        return ""
+    chapter = int(m.group(1))
+    tx = book / ".story" / "work" / f"第{chapter:03d}章" / "tracking.json"
+    if not tx.is_file():
+        return ""
+    # 先用与 N16 封板前同一套规则规整事务。
+    # 为什么：这些都是**结构性不一致**（快照与 delta 不对齐、risks 超限、
+    # 体积超限、context 条目被丢却没声明 retired），不是内容错误。
+    # 让模型重写整章来修是浪费（端到端实跑时第 1 章因此烧了 4 轮）。
+    try:
+        from inline_runner import _normalize_tracking
+        _prev = {}
+        try:
+            _prev = (json.loads((book / "追踪" / "_tracking-state.json")
+                                .read_text(encoding="utf-8")) or {}).get("context") or {}
+        except (OSError, ValueError):
+            _prev = {}
+        _normalize_tracking(tx, {}, _prev)
+    except Exception:
+        pass
+    cfg = _cfg()
+    tool = cfg.get("TRACKING_COMMIT")
+    python = cfg.get("PYTHON")
+    if not tool or not python or not Path(tool).is_file():
+        return ""
+    # 先跑与 N16 同一个确定性规整器：预检不能比管线自己的规整更严，
+    # 否则 N12/N14 会被 N16 本来能自动修好的结构问题卡住（第 2 章实证）。
+    try:
+        from inline_runner import _normalize_tracking
+        prev = json.loads((book / "追踪" / "_tracking-state.json").read_text(encoding="utf-8"))
+        _normalize_tracking(tx, st, (prev.get("context") or {}) if isinstance(prev, dict) else {})
+    except Exception:
+        pass
+    import shutil
+    import subprocess
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="wb-preflight-"))
+    try:
+        shutil.copytree(book / "追踪", tmp / "追踪")
+        work = tmp / ".story" / "work" / f"第{chapter:03d}章"
+        work.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(tx.parent, work)
+        proc = subprocess.run(
+            [python, tool, "commit", "--project", str(tmp), "--input", str(work / "tracking.json")],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()
+            return detail[-800:] or f"tracking_commit rc={proc.returncode}"
+        return ""
+    except Exception as exc:                      # 预检本身失败不阻断流程
+        return ""
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def cmd_done(a) -> int:
     book = Path(a.book).resolve()
     st = load_state(book)
@@ -348,6 +419,16 @@ def cmd_done(a) -> int:
             verdict = "block"
         if verdict == "block":
             return _handle_verify_block(book, st, a.node, j, jf)
+
+    # N12/N14：事务先过上游校验器，别等到 N16 才发现 schema 不合规
+    preflight_error = _tracking_preflight(book, a.node)
+    if preflight_error:
+        print(json.dumps({
+            "error": "tracking_preflight_failed",
+            "detail": (f"{preflight_error}。修法：只改 .story/work/第NNN章/tracking.json "
+                       "（字段名/枚举/id 形态/字节上限），正文不用重写；改完重新 done。"),
+        }, ensure_ascii=False))
+        return 2
 
     hashes = [sha256_of(f) for f in files]
     st["nodes"][a.node] = {

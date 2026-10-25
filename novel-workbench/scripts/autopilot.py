@@ -421,9 +421,12 @@ def _heal_from_tracking(book: Path, st: dict) -> list[str]:
 
     # 游标落后于账本：第 n 章已经封板（账本有记录），游标却还在改它。
     # 这是崩溃/人工 resume 留下的悬空态，按账本往前推。
+    # **例外**：N14 改写后的复检态（recheck_chapter 已置位）必须保留——那时
+    # 账本里 last 仍是上一章，游标 C{n}.N13 是正常的「改完待复检」，前推会把
+    # 平台闸门复检整段吞掉（python_contracts.test_n13_recheck_routes 回归）。
     cur = st.get("cursor") or ""
     m = re.match(r"C(\d+)\.", cur)
-    if m and last >= 1:
+    if m and last >= 1 and st.get("recheck_chapter") is None:
         n = int(m.group(1))
         if n <= last:
             st["current_chapter"] = last

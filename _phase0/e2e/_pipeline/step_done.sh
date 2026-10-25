@@ -1,0 +1,1 @@
+"C:\Users\Wane-\.workbuddy-ai\binaries\python\versions\3.13.12\python.exe" "F:\WorkBuddy AI\Novel Platform\novel-workbench\scripts\autopilot.py" done --book "F:\WorkBuddy AI\Novel Platform\_phase0\e2e" --node C3.N09 --token 0f08ca3c --evidence "大纲/细纲_第003章.md"

@@ -11,10 +11,10 @@
  },
  "uncontrollable": [],
  "created_at": "2026-10-25T16:58:18+0800",
- "current_chapter": 1,
- "chapters_committed": 1,
- "words_total": 2163,
- "cursor": "C2.N09",
+ "current_chapter": 2,
+ "chapters_committed": 2,
+ "words_total": 4257,
+ "cursor": "C3.N09",
  "nodes": {
   "N01": {
    "status": "done",
@@ -141,7 +141,7 @@
    "output": "blocking=0 advisory=0 metrics={\"visible_chars\": 1744, \"paragraphs_per_1000\": 47.6, \"sent_len_median\": 14, \"causal_per_1000\": 1.72, \"narration_action_density\": 41.36, \"action_density\": 36.7, \"action_chain_max\": 5, \"number_per_1000\": 26.95, \"question_per_1000\": 5.16, \"multi_actor_sent_ratio\": 0.079}"
   },
   "C1.N14": {
-   "status": "running",
+   "status": "pending",
    "attempts": 5,
    "started_at": "2026-10-25T20:15:50+0800"
   },
@@ -162,9 +162,67 @@
    "output": "{\"schema\":\"story-chapter-error/v1\",\"status\":\"error\",\"error_code\":\"CHECK_FAILED\",\"message\":\"active core character 顾秀英 has no current snapshot\"}\n"
   },
   "C2.N09": {
+   "status": "done",
+   "at": "2026-10-25T20:19:44+0800",
+   "evidence": [
+    "大纲\\细纲_第002章.md"
+   ],
+   "sha256": [
+    "9d683cbabfbab73bccbac1f721c5c1bfc2ae8e1da8754b20446a79a9ce1a8793"
+   ],
+   "attempts": 2
+  },
+  "C2.N10": {
+   "status": "done",
+   "at": "2026-10-25T20:20:24+0800",
+   "output": "ty\": \"advisory\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"本章禁止提前释放列了 9 条\",\n      \"expected\": \"章级只写本章特有的三五条；卷级常任禁忌写在卷纲「本卷禁碰的终局底牌」，不逐章复读\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"把与卷纲常任重复的条目删掉，只留本章特有；本项不阻断。\"\n    },\n    {\n      \"id\": \"outline.setting-refs-exist\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"0 处项目内引用全部存在\",\n      \"expected\": \"细纲引用的每个项目内 .md 文件都真实存在——不许把槽位指向查无实据的权威文件\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"修正引用路径；或按新增物三级先把缺的设定落档（「写了要报」直接补并登记、「先问作者」进排纲底稿的供给自查提案），再在细纲引用。\"\n    },\n    {\n      \"id\": \"outline.wordcount-target\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"字数目标：1900；字数口径 visible_chars_v1：true\",\n      \"expected\": \"字数目标为 500-20000 的正整数（可写「2300 字」「约 2300」「2,300」，可带括号备注），并声明 字数口径：visible_chars_v1；作者给了上下限时另写一行「字数范围：2000-2600」\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只补字数目标、字数范围或字数口径行，不调整情节安排。\"\n    }\n  ],\n  \"failures\": [],\n  \"advisories\": [\n    {\n      \"id\": \"outline.release-brevity\",\n      \"ok\": false,\n      \"severity\": \"advisory\",\n      \"file\": \"细纲_第002章.md\",\n      \"evidence\": \"本章禁止提前释放列了 9 条\",\n      \"expected\": \"章级只写本章特有的三五条；卷级常任禁忌写在卷纲「本卷禁碰的终局底牌」，不逐章复读\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"把与卷纲常任重复的条目删掉，只留本章特有；本项不阻断。\"\n    }\n  ],\n  \"repair_scope\": []\n}\n"
+  },
+  "C2.N11": {
+   "status": "done",
+   "at": "2026-10-25T20:20:25+0800",
+   "output": "上下文已组装 -> F:\\WorkBuddy AI\\Novel Platform\\_phase0\\e2e\\追踪\\上下文.md（10229 字符）"
+  },
+  "C2.N12": {
+   "status": "done",
+   "at": "2026-10-25T20:40:38+0800",
+   "evidence": [
+    "正文\\第002章_江不空葬.md"
+   ],
+   "sha256": [
+    "55be9e493dde726dcfd9614c669431eedb478f01dfb47086b47948dcef625432"
+   ],
+   "attempts": 3
+  },
+  "C2.N13": {
+   "status": "done",
+   "at": "2026-10-25T20:41:24+0800",
+   "output": "blocking=0 advisory=0 metrics={\"visible_chars\": 1729, \"paragraphs_per_1000\": 53.8, \"sent_len_median\": 10.0, \"causal_per_1000\": 17.35, \"narration_action_density\": 38.7, \"action_density\": 37.02, \"action_chain_max\": 4, \"number_per_1000\": 13.88, \"question_per_1000\": 3.47, \"multi_actor_sent_ratio\": 0.025}"
+  },
+  "C2.N14": {
+   "status": "done",
+   "at": "2026-10-25T20:41:19+0800",
+   "evidence": [
+    "正文\\第002章_江不空葬.md"
+   ],
+   "sha256": [
+    "a61fe928b4b1f8ac5f88e7b78604190d4275a0db494ba5c9a05176ad6b2f4ca9"
+   ],
+   "attempts": 1
+  },
+  "C2.N15": {
+   "status": "skipped",
+   "at": "2026-10-25T20:41:24+0800",
+   "reason": "第2章非里程碑章（只在 (1, 3) 做阶段审查）"
+  },
+  "C2.N16": {
+   "status": "done",
+   "at": "2026-10-25T20:41:30+0800",
+   "output": "ity\":\"advisory\",\"message\":\"低连接密度：引号外叙述功能词 95.0/千字、白话连接 53.5/千字，且≥30字承接句仅 0%；容易像提纲/电报体。通读后补必要连接和中长句群，别机械注水。\",\"excerpt\":\"七点四十，档案室的门开着 | 昨夜他锁了两道，锁没坏 | 所以是从里头开的 | 原来是留给他看的 | 三秒之后他才弯腰 | 原来这四页纸比他急\",\"review\":\"semantic\"},{\"source\":\"ai-pattern\",\"file\":\"F:\\\\WorkBuddy AI\\\\Novel Platform\\\\_phase0\\\\e2e\\\\正文\\\\第002章_江不空葬.md\",\"line\":21,\"column\":1,\"type\":\"quote-emphasis-tic\",\"severity\":\"advisory\",\"message\":\"引号强调滥用：叙述里 1-4 字短词加引号强调 6 处；只留真正反讽/转述必要的一两处，其余去掉引号直接写，或换成具体动作让读者自己品。\",\"excerpt\":\"缺 不敢动 空棺 棺 穴 沈\",\"review\":\"semantic\"},{\"source\":\"outline-copy\",\"type\":\"OUTLINE_COPY_REVIEW\",\"review\":\"semantic\",\"message\":\"=== 细纲照搬检测（第002章_江不空葬.md）===\\n正文 1729 字，与 细纲_第002章.md 连续重合 >15 字的片段 4 处，共 99 字（5.7%）。\\n逐条对照原文判断：确属把细纲叙述搬进正文就重写——细纲只锁功能与结果，句子在正文现场写；系统面板、誓词、案卷原话、固定专名等功能性重合可保留。每条都要有结论，不为归零机械改写。保留项由主会话补进细纲「复沓锚句」——子代理只重写正文或标 `[需复核]` 交回，不改大纲细纲。\\n  · 34 字「号下午三点龙潭滨江迁坟工地你给我这个信封里面六千让我别往项目部那边查」\\n  · 28 字「填调阅单申请调年专库同源卷郑维山在调阅室当面签字笔尖很稳」\\n  · 19 字「只问一句空葬是棺空还是穴空倪长根往后退」\\n  · 18 字「这一停和那天顾秀英的一停是同一个停法」\"}],\"semantic_advisories\":3,\"tool_errors\":[]},\"compression\":null,\"state_revision\":1,\"tracking_committed\":true,\"next_chapter_started\":false,\"available_actions\":[\"commit\"],\"wordcount\":{\"metric\":\"visible_chars_v1\",\"target\":1900,\"actual\":2094,\"status\":\"internal_pass\",\"resolution\":\"within_user_band\",\"body_sha256\":\"a61fe928b4b1f8ac5f88e7b78604190d4275a0db494ba5c9a05176ad6b2f4ca9\"},\"mode\":\"append\",\"work_dir_removed\":\".story/work/第002章\"}\nWARNING: chapter delta is 2766 bytes; target is <= 1536\n\nwords_total=4257\n规整: delta 压缩 3956B → 3956B"
+  },
+  "C3.N09": {
    "status": "running",
    "attempts": 1,
-   "started_at": "2026-10-25T20:16:11+0800"
+   "started_at": "2026-10-25T20:41:30+0800"
   }
  },
  "decisions_taken": [
@@ -180,5 +238,5 @@
  "fix_rounds": {},
  "n20_rounds": 0,
  "global_fix_rounds": {},
- "llm_rounds": 14
+ "llm_rounds": 17
 }
