@@ -52,3 +52,97 @@ test("mock 运行时用真实 autopilot 推进一步并封住令牌", async () =
     rmSync(bookDir, { recursive: true, force: true });
   }
 });
+
+test("输出触到长度上限：不当空回复结束，改为要求分段写入", async () => {
+  const bookDir = mkdtempSync(join(tmpdir(), "wb-trunc-"));
+  try {
+    // 真书实证：write_file 一次写整章 ≈ 4-6K tokens 被 max_tokens 截断，
+    // DeepSeek 丢弃截断中的 tool_calls → finish=length + 空 content + 零工具调用。
+    const calls = [];
+    const scripted = [
+      { content: "", toolCalls: [], finishReason: "length", usage: { prompt: 100, completion: 4096 } },
+      { content: "回执：已分两段写入", toolCalls: [], finishReason: "stop", usage: { prompt: 120, completion: 20 } },
+    ];
+    const runtime = new AgentRuntime({
+      bookDir,
+      config: {
+        roles: {
+          writer: { provider: "fake", model: "fake-model", max_attempts: 1, max_tokens: 8192 },
+          judge: { provider: "fake", model: "fake-model" },
+        },
+        providers: {},
+      },
+      env: {},
+      providerFactory: () => ({
+        chat: async (request) => {
+          calls.push(request);
+          return scripted[Math.min(calls.length - 1, scripted.length - 1)];
+        },
+      }),
+    });
+    const events = [];
+    runtime.onEvent = (event) => events.push(event);
+    const result = await runtime.runAgent(
+      { node: "C1.N12", subagent_role: "writer", subagent_prompt: "写第 1 章正文", evidence: [] },
+      runtime.config.roles.writer,
+      "",
+      null,
+    );
+    assert.equal(result.text, "回执：已分两段写入");
+    assert.equal(calls.length, 2);
+    const lastUser = calls[1].messages.filter((m) => m.role === "user").at(-1).content;
+    assert.match(lastUser, /分段写入/);
+    assert.match(lastUser, /append=true/);
+    assert.ok(events.some((e) => e.type === "node_truncated"), "应发出 node_truncated 事件");
+    assert.ok(!events.some((e) => e.type === "node_nudge"), "截断不应走通用推一把分支");
+  } finally {
+    rmSync(bookDir, { recursive: true, force: true });
+  }
+});
+
+test("工具参数 JSON 非法（截断）时回喂明确提示，不拿空对象硬执行", async () => {
+  const bookDir = mkdtempSync(join(tmpdir(), "wb-badargs-"));
+  try {
+    const calls = [];
+    const scripted = [
+      {
+        content: "",
+        toolCalls: [{ id: "c1", name: "write_file", arguments: '{"path": "正文/第001章_x.md", "content": "# 第 1 章' }],
+        finishReason: "tool_calls",
+        usage: { prompt: 100, completion: 500 },
+      },
+      { content: "回执：改成分段写", toolCalls: [], finishReason: "stop", usage: { prompt: 120, completion: 20 } },
+    ];
+    const runtime = new AgentRuntime({
+      bookDir,
+      config: {
+        roles: {
+          writer: { provider: "fake", model: "fake-model", max_attempts: 1, max_tokens: 8192 },
+          judge: { provider: "fake", model: "fake-model" },
+        },
+        providers: {},
+      },
+      env: {},
+      providerFactory: () => ({
+        chat: async (request) => {
+          calls.push(request);
+          return scripted[Math.min(calls.length - 1, scripted.length - 1)];
+        },
+      }),
+    });
+    await runtime.runAgent(
+      { node: "C1.N12", subagent_role: "writer", subagent_prompt: "写第 1 章正文", evidence: [] },
+      runtime.config.roles.writer,
+      "",
+      null,
+    );
+    assert.equal(calls.length, 2);
+    const toolMessage = calls[1].messages.filter((m) => m.role === "tool").at(-1).content;
+    assert.match(toolMessage, /不是合法 JSON/);
+    assert.match(toolMessage, /append=true/);
+    assert.ok(!toolMessage.includes("(无扩展名)"), "不应再撞出误导性的扩展名错误");
+    assert.ok(!existsSync(join(bookDir, "正文")), "非法参数不应落任何文件");
+  } finally {
+    rmSync(bookDir, { recursive: true, force: true });
+  }
+});
