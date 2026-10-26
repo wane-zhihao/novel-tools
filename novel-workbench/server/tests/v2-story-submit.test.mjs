@@ -42,6 +42,34 @@ test("故事库索引与文件保存", () => {
   }
 });
 
+test("故事库大纲组按卷动态（多卷书的第二卷也可见）", () => {
+  const root = mkdtempSync(join(tmpdir(), "wb-story-vols-"));
+  const book = join(root, "book");
+  for (const dir of ["正文", "大纲", "设定", "追踪"]) mkdirSync(join(book, dir), { recursive: true });
+  writeFileSync(join(book, "大纲", "卷纲_第一卷.md"), "- 主线：顶职\n", "utf8");
+  writeFileSync(join(book, "大纲", "卷纲_第二卷.md"), "- 主线：南下\n", "utf8");
+  writeFileSync(join(book, "大纲", "目录_第1卷.md"), "1. 换名\n", "utf8");
+  writeFileSync(join(book, "大纲", "目录_第2卷.md"), "1. 南下\n", "utf8");
+  writeFileSync(join(book, "大纲", "细纲_第001章.md"), "- 换名\n", "utf8");
+  try {
+    const index = storyIndex(book);
+    const outline = index.groups.find((group) => group.id === "outline");
+    const paths = outline.docs.map((doc) => doc.path);
+    // 两卷卷纲与两卷目录都要出现在大纲组里（写死单卷时只会有一卷）
+    assert.ok(paths.includes("大纲/卷纲_第一卷.md"), JSON.stringify(paths));
+    assert.ok(paths.includes("大纲/卷纲_第二卷.md"), JSON.stringify(paths));
+    assert.ok(paths.includes("大纲/目录_第1卷.md"), JSON.stringify(paths));
+    assert.ok(paths.includes("大纲/目录_第2卷.md"), JSON.stringify(paths));
+    // 第一卷排在第二卷之前（按卷号自然序，不是字典序 第1/第10/第2）
+    assert.ok(paths.indexOf("大纲/卷纲_第一卷.md") < paths.indexOf("大纲/卷纲_第二卷.md"), JSON.stringify(paths));
+    // 细纲仍走 chapter_outlines，不混进大纲组
+    assert.ok(!paths.some((p) => p.includes("细纲_")), JSON.stringify(paths));
+    assert.equal(index.chapter_outlines.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+});
+
 test("投稿预检与不可变投稿包", () => {
   const root = mkdtempSync(join(tmpdir(), "wb-submit-"));
   const bookPath = makeBook(root);
