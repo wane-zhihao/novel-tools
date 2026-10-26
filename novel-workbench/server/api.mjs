@@ -847,6 +847,11 @@ export function createApi({
       FROM versions WHERE book_id = ? GROUP BY chapter
     `).all(row.id);
     const versionMap = new Map(versions.map((item) => [item.chapter, item]));
+    // 三件事由服务端算好，别让每个界面各数一遍（数错了就误导用户）：
+    // dirty_count 决定投稿包是否过期；last_committed_chapter 是「续写从哪开始」；
+    // blocked_reason 说明为什么停着不动。
+    const dirtyCount = chapters.filter((chapter) => chapter.dirty).length;
+    const committedNumbers = chapters.filter((chapter) => chapter.committed).map((chapter) => chapter.number);
     sendJson(response, 200, {
       chapters: chapters.map((chapter) => ({
         ...chapter,
@@ -854,6 +859,9 @@ export function createApi({
         last_version_at: versionMap.get(chapter.number)?.last_at ?? null,
       })),
       next_chapter: Math.max(1, Number(row.current_chapter) + 1),
+      dirty_count: dirtyCount,
+      last_committed_chapter: committedNumbers.length ? Math.max(...committedNumbers) : null,
+      blocked_reason: row.blocked_reason ?? null,
     });
   }
 

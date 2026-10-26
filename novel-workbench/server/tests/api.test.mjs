@@ -386,3 +386,19 @@ test("until_chapter 参数校验：非法值拒绝，合法值放行到启动（
     await new Promise((r) => setTimeout(r, 150));
   }
 });
+
+test("manuscript 暴露 dirty_count / last_committed_chapter / blocked_reason（1.4）", async () => {
+  const { body } = await request(`/api/books/${bookId}/manuscript`);
+  const chapters = body.chapters ?? [];
+  // 三个字段必须存在（值可以是 null/0），否则 UI 只能自己数、自己猜
+  assert.ok("dirty_count" in body, "缺 dirty_count");
+  assert.ok("last_committed_chapter" in body, "缺 last_committed_chapter");
+  assert.ok("blocked_reason" in body, "缺 blocked_reason");
+
+  const expectedDirty = chapters.filter((c) => c.dirty).length;
+  assert.equal(body.dirty_count, expectedDirty, "dirty_count 应与章节列表自洽");
+
+  const committed = chapters.filter((c) => c.committed).map((c) => c.number);
+  const expectedLast = committed.length ? Math.max(...committed) : null;
+  assert.equal(body.last_committed_chapter, expectedLast, "last_committed_chapter 应是最新已定稿章");
+});
