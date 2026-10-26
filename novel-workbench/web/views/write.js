@@ -1,6 +1,7 @@
 import { api, commitChapter } from "../lib/api.js";
 import { el, clear, fmtNumber, toast, renderMarkdown } from "../lib/dom.js";
 import { errorState } from "../lib/errors.js";
+import { createRunPanel } from "./run-panel.js";
 
 const AUTOSAVE_MS = 1200;
 const MAX_SAVE_WAIT = 10000;
@@ -242,7 +243,13 @@ export async function renderWrite({ bookId, chapter, go, state }) {
     }
   } catch {}
 
+  // Phase 1.2：运行面板放章节栏顶部——写的时候能看见 AI 跑到哪个节点、还活着吗。
+  // 离开本页时销毁，否则轮询定时器会跟着路由泄漏。
+  const runPanel = createRunPanel({ bookId, go });
+  window.addEventListener("hashchange", () => runPanel.destroy(), { once: true });
+
   const rail = el("aside", { class: "chapter-rail", "aria-label": "章节" },
+    runPanel.node,
     el("h2", { text: "章节" }),
     el("div", { class: "chapter-list" },
       ...manuscript.chapters.map((item) => el("button", {

@@ -425,6 +425,20 @@ details.advanced summary { cursor: pointer; font-family: var(--serif); font-size
 .provider-list { display: flex; flex-direction: column; gap: 4px; }
 .setup-foot { display: flex; justify-content: center; }
 
+/* ── 运行面板（Phase 1.2） ── */
+.run-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.run-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+.run-head strong { font-weight: 600; color: var(--ink); }
+.run-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.run-hint { margin: 0; font-size: 12px; color: var(--warn); }
+.run-hint-bad { color: var(--danger); }
+.run-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--ink-3); flex: none; }
+.run-dot-live { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-wash); animation: run-pulse 1.6s ease-in-out infinite; }
+.run-dot-bad { background: var(--danger); }
+.run-dot-idle { background: var(--line); }
+@keyframes run-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .run-dot-live { animation: none; } }
+
 /* ── toast / dialog ── */
 .toast-region { position: fixed; right: 18px; bottom: calc(18px + var(--bottom) + env(safe-area-inset-bottom)); z-index: 90; display: flex; flex-direction: column; gap: 8px; max-width: min(360px, calc(100vw - 36px)); }
 .toast { padding: 10px 14px; border-radius: 10px; background: var(--ink); color: var(--paper); font-size: 13px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 10px; }
