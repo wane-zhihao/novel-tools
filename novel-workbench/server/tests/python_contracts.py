@@ -1016,6 +1016,56 @@ def test_commit_suite(root: Path) -> None:
             os.environ["WORKBENCH_CONFIG"] = prev
 
 
+
+
+def test_init_persists_platform_volume_and_one_line(root: Path) -> None:
+    """开书字段必须真的落进 state：platform / plan.vol_size / one_line。
+
+    此前 JS 层从不传 --platform / --vol-size，Python 支持了也没人用；
+    one_line 更是没有任何消费者，属于纯空转字段。
+    """
+    config = make_config(root / "init-fields-config", "ready")
+    script = SCRIPTS / "autopilot.py"
+    book = root / "init-fields-book"
+    book.mkdir(parents=True, exist_ok=True)
+    init = subprocess.run(
+        [sys.executable, str(script), "init", "--title", "开书字段",
+         "--genre", "shuangwen", "--target-words", "20000", "--max-chapters", "12",
+         "--platform", "zongheng", "--vol-size", "20",
+         "--one-line", "重回九零，从厂办开始", "--book", str(book)],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "WORKBENCH_CONFIG": str(config)}, check=False,
+    )
+    assert init.returncode == 0, (init.returncode, init.stdout, init.stderr)
+    st = json.loads((book / "_pipeline" / "state.json").read_text(encoding="utf-8"))
+    assert st["platform"] == "zongheng", st.get("platform")
+    assert (st.get("plan") or {}).get("vol_size") == 20, st.get("plan")
+    assert st.get("one_line") == "重回九零，从厂办开始", st.get("one_line")
+
+
+def test_render_prompt_injects_one_line(root: Path) -> None:
+    """{ONE_LINE} 必须被替换：填了就带原话，没填也要给人话，不能漏出占位符或 None。"""
+    config = make_config(root / "one-line-config", "ready")
+    previous = os.environ.get("WORKBENCH_CONFIG")
+    os.environ["WORKBENCH_CONFIG"] = str(config)
+    try:
+        from autopilot import render_prompt
+
+        book = root / "one-line-book"
+        filled = render_prompt("卖点：{ONE_LINE}", book, {"one_line": "重回九零，从厂办开始"})
+        assert "重回九零，从厂办开始" in filled, filled
+
+        empty = render_prompt("卖点：{ONE_LINE}", book, {})
+        assert "{ONE_LINE}" not in empty, empty
+        assert "None" not in empty, empty
+        assert len(empty) > 4, empty
+    finally:
+        if previous is None:
+            os.environ.pop("WORKBENCH_CONFIG", None)
+        else:
+            os.environ["WORKBENCH_CONFIG"] = previous
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="wb-py-contracts-") as tmp:
         root = Path(tmp)
@@ -1043,6 +1093,8 @@ def main() -> int:
         test_n13_recheck_routes(root)
         test_rollback_best_snapshot(root)
         test_commit_suite(root)
+        test_init_persists_platform_volume_and_one_line(root)
+        test_render_prompt_injects_one_line(root)
     print("PY_CONTRACTS_OK")
     return 0
 

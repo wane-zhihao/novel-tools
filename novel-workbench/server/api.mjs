@@ -132,7 +132,10 @@ function bookSummary(row) {
   };
 }
 
-function createBookSkeleton(bookPath, { title, genre, targetWords, maxChapters, oneLine }) {
+// 降级骨架：引擎不可用（没装 Python）时也能开书。
+// 字段必须与 autopilot init 写出的 state 同形——两条路径产出不一致的 state，
+// 会让后续节点在「有 plan / 没 plan」上走出不同分支。
+function createBookSkeleton(bookPath, { title, genre, targetWords, maxChapters, oneLine, platform = "qimao", volSize = 0 }) {
   for (const sub of ["正文", "大纲", "设定", "追踪", "投稿包", "_pipeline"]) {
     mkdirSync(join(bookPath, sub), { recursive: true });
   }
@@ -142,12 +145,20 @@ function createBookSkeleton(bookPath, { title, genre, targetWords, maxChapters, 
     genre,
     target_words: targetWords,
     max_chapters: maxChapters,
+    platform,
+    plan: volSize > 0 ? { vol_size: volSize, vol_llm_cap: 80 } : null,
     created_at: new Date().toISOString(),
     current_chapter: 0,
     chapters_committed: 0,
     words_total: 0,
     cursor: "N01",
     nodes: {},
+    budget: {},
+    fix_rounds: {},
+    global_fix_rounds: {},
+    n20_rounds: 0,
+    degraded_volumes: [],
+    volume_advisories: {},
     decisions_taken: [],
     pending_questions: [],
     blocked_reason: null,
@@ -279,6 +290,16 @@ export function createApi({
       if (!Number.isInteger(maxChapters) || maxChapters < 1 || maxChapters > 500) {
         throw new HttpError(400, "invalid_max_chapters", "max_chapters 必须是 1–500 的整数");
       }
+      // 平台与卷：此前 JS 层从不传，Python 侧支持了也等于没用（字段空转）。
+      // 平台决定 prompt 读哪家的判据、投稿包 MANIFEST 走哪家目录。
+      const platform = body.platform ?? "qimao";
+      if (!["qimao", "zongheng", "fanqie"].includes(platform)) {
+        throw new HttpError(400, "invalid_platform", "platform 只能是 qimao / zongheng / fanqie");
+      }
+      const volSize = body.vol_size ?? 0;
+      if (!Number.isInteger(volSize) || volSize < 0 || volSize > 200) {
+        throw new HttpError(400, "invalid_vol_size", "vol_size 必须是 0–200 的整数（0=不分卷）");
+      }
       const root = rootsFor()[0];
       if (!root) throw new HttpError(400, "books_root_missing", "未配置书库根目录，请先在路径设置里指定");
       const folder = sanitizeFolder(body.folder || title);
@@ -307,6 +328,9 @@ export function createApi({
           "--genre", genre,
           "--target-words", String(targetWords),
           "--max-chapters", String(maxChapters),
+          "--platform", platform,
+          "--vol-size", String(volSize),
+          ...(oneLine ? ["--one-line", oneLine] : []),
           "--book", bookPath,
         ], {
           cwd: root,
@@ -320,7 +344,7 @@ export function createApi({
           });
         }
       } else {
-        createBookSkeleton(bookPath, { title, genre, targetWords, maxChapters, oneLine });
+        createBookSkeleton(bookPath, { title, genre, targetWords, maxChapters, oneLine, platform, volSize });
       }
       syncBook(db, bookPath, { force: true });
       const row = db.prepare(`${bookSelect} WHERE b.path = ?`).get(bookPath);

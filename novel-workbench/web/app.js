@@ -323,7 +323,9 @@ form.addEventListener("submit", async (event) => {
       body: {
         title: values.title,
         genre: values.genre,
+        platform: values.platform || "qimao",
         target_words: Number(values.target_words) || 20000,
+        vol_size: Number(values.vol_size) || 0,
         one_line: values.one_line || undefined,
       },
     });

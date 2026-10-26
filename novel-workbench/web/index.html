@@ -58,10 +58,25 @@
           </select>
         </label>
         <label class="field">
+          <span>目标平台</span>
+          <select name="platform">
+            <option value="qimao">七猫</option>
+            <option value="zongheng">纵横</option>
+            <option value="fanqie">番茄</option>
+          </select>
+        </label>
+      </div>
+      <div class="field-row">
+        <label class="field">
           <span>目标字数</span>
           <input name="target_words" type="number" min="5000" step="1000" value="20000">
         </label>
+        <label class="field">
+          <span>每卷章数</span>
+          <input name="vol_size" type="number" min="0" max="200" step="1" value="0">
+        </label>
       </div>
+      <p class="form-note">每卷章数填 0 = 不分卷；长篇建议按卷推进（卷末会先过卷级审查）。</p>
       <label class="field">
         <span>一句话卖点</span>
         <input name="one_line" type="text" maxlength="200" placeholder="一句话说清主角的困境与看点">

@@ -140,9 +140,24 @@ def render_prompt(template: str, book: Path, st: dict | None = None) -> str:
             .replace("{PLATFORM_DIR}", pdir)
             .replace("{PLATFORM}", label)
             .replace("{GENRE_BOUNDS}", bounds)
+            .replace("{ONE_LINE}", _one_line_text(st))
             .replace("{STORY_LONG_WRITE}", CFG["STORY_LONG_WRITE"])
             .replace("{SKILL}", str(SKILL_DIR))
             .replace("{BOOK}", str(book).replace("\\", "/")))
+
+
+def _one_line_text(st: dict) -> str:
+    """把作者的一句话卖点渲染成 prompt 里的一句话。
+
+    为什么要有：开书表单收了这个字段，但此前 Python 侧没有任何消费者——
+    字段存了等于没存。这里给它一个真实出口（N05 设定），并明确「冲突时以
+    选题报告为准」，避免一句话卖点和已通过的选题结论打架时没人裁决。
+    """
+    value = (st or {}).get("one_line")
+    if not value:
+        return "（作者没填一句话卖点，按选题报告的结论自行确定题材定位。）"
+    return (f"作者的一句话卖点：「{value}」。题材定位与角色动机都要能对上这句话；"
+            "若与选题报告冲突，以选题报告为准，并在回执里说明冲突点。")
 
 
 def _genre_bounds_text(st: dict, plats: dict, name: str) -> str:
@@ -375,6 +390,9 @@ def cmd_init(a) -> int:
         # 平台与卷计划：老书没有这两个键，代码里一律用 .get() 回落（七猫兼容）
         "platform": getattr(a, "platform", None) or "qimao",
         "plan": ({"vol_size": int(a.vol_size), "vol_llm_cap": int(getattr(a, "vol_llm_cap", 0) or 80)} if getattr(a, "vol_size", 0) else None),
+        # 作者原话，N05 通过 {ONE_LINE} 拿到；空字符串一律存 null，避免 prompt 里
+        # 出现「卖点：」后面什么都没有
+        "one_line": (getattr(a, "one_line", "") or "").strip() or None,
         "uncontrollable": [],
         "created_at": now(),
         "current_chapter": 0,
@@ -998,6 +1016,10 @@ def main():
     p.add_argument("--vol-size", type=int, default=0, help="每卷章数，0=不分卷")
     p.add_argument("--vol-llm-cap", type=int, default=80,
                    help="每卷 llm 节点预算上限（默认 80，约够 22 章）")
+    # 作者的一句话卖点：进 state 并由 {ONE_LINE} 注入 N05 设定 prompt。
+    # 不落 设定/题材定位.md——那是 N05 的 evidence 文件（min_size 300），
+    # 开书时种一个 20 字的文件会让证据校验误判为已产出。
+    p.add_argument("--one-line", default="", help="一句话卖点（可空）")
 
     for name in ("next", "status", "doctor"):
         p = sub.add_parser(name); p.add_argument("--book", required=True)

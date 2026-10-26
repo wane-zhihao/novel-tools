@@ -107,6 +107,7 @@ GLOBAL_NODES: dict[str, dict] = {
         "prompt": (
             "读取 {BOOK}/大纲/选题报告.md 的结论一节，产出 5 个设定文件：\n"
             "  设定/题材定位.md  设定/文风.md  设定/角色.md  设定/世界观.md  设定/势力.md\n"
+            "{ONE_LINE}\n"
             "文风.md 必须引用 {QIMAO}/harness/genre-baselines.json 中**本书 genre 对应组**的"
             "实测区间（句长中位 / 段每千字 / 对话占比 / 因果密度），把数值抄进去，不要用别处的数字。\n"
             "角色.md 每个角色需有：名字 / 一句话动机 / 核心困境 / 与主角的关系。\n"
