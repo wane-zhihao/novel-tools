@@ -117,7 +117,7 @@ export class RunManager {
     return ACTIVE.has(this.runs.get(bookId)?.status);
   }
 
-  start({ bookId, bookPath, config, mode = "real", maxSteps = Infinity } = {}) {
+  start({ bookId, bookPath, config, mode = "real", maxSteps = Infinity, untilChapter = null } = {}) {
     if (this.active(bookId)) throw new RunConflictError("这本书已有一次执行在进行");
     if (!this.active(bookId) && hasStepToken(bookPath)) {
       throw new RunNeedsResumeError();
@@ -150,11 +150,11 @@ export class RunManager {
       run.bookId, "agent_run", null, null, null, run.mode, run.startedAt,
       null, null, run.id, "running", "[]",
     );
-    run.task = this.execute(run, config, maxSteps);
+    run.task = this.execute(run, config, maxSteps, untilChapter);
     return this.snapshot(bookId);
   }
 
-  async execute(run, config, maxSteps) {
+  async execute(run, config, maxSteps, untilChapter = null) {
     try {
       const paths = resolveRuntimePaths({ dataDir: this.dataDir });
       const runtime = new AgentRuntime({
@@ -163,6 +163,7 @@ export class RunManager {
         config,
         signal: run.controller.signal,
         maxSteps,
+        untilChapter,
         dataDir: this.dataDir,
         paths,
         readRoots: paths.readRoots,

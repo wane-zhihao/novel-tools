@@ -359,3 +359,30 @@ test("未知书与未知接口返回 404", async () => {
   const missingApi = await request("/api/nope");
   assert.equal(missingApi.status, 404);
 });
+
+test("until_chapter 参数校验：非法值拒绝，合法值放行到启动（0.9/1.3）", async () => {
+  const bad = await post(`/api/books/${bookId}/run`, { mode: "mock", until_chapter: "abc" });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.body.error.code, "invalid_until_chapter");
+
+  const zero = await post(`/api/books/${bookId}/run`, { mode: "mock", until_chapter: 0 });
+  assert.equal(zero.status, 400);
+  assert.equal(zero.body.error.code, "invalid_until_chapter");
+
+  // 合法值不该被参数校验拦下（是否 202 取决于当时是否有运行/令牌，两种都算通过校验）
+  const ok = await post(`/api/books/${bookId}/run`, { mode: "mock", until_chapter: 2, max_steps: 1 });
+  assert.ok([202, 409].includes(ok.status), JSON.stringify(ok.body));
+  if (ok.status === 409) {
+    assert.ok(["run_running", "needs_resume"].includes(ok.body.error.code), JSON.stringify(ok.body));
+    return;
+  }
+  // 起了后台 run 就必须等它到终态，否则 teardown 关库会撞「database is not open」
+  await post(`/api/books/${bookId}/stop`);
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const { run } = await request(`/api/books/${bookId}/run?since=0`).then((r) => r.body);
+    if (!run || !["running", "stopping"].includes(run.status)) break;
+    if (Date.now() > deadline) break;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+});

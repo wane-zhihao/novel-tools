@@ -245,7 +245,8 @@ export async function renderWrite({ bookId, chapter, go, state }) {
 
   // Phase 1.2：运行面板放章节栏顶部——写的时候能看见 AI 跑到哪个节点、还活着吗。
   // 离开本页时销毁，否则轮询定时器会跟着路由泄漏。
-  const runPanel = createRunPanel({ bookId, go });
+  // chapter 传进去：「让 AI 写」就变成「只写这一章」，写完停在章末不动下一章
+  const runPanel = createRunPanel({ bookId, go, chapter });
   window.addEventListener("hashchange", () => runPanel.destroy(), { once: true });
 
   const rail = el("aside", { class: "chapter-rail", "aria-label": "章节" },

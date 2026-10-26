@@ -18,6 +18,7 @@ const STALE_MS = 60_000;
 
 const PHASE_LABEL = {
   running: "正在跑",
+  chapter_done: "本章写完",
   stopping: "正在停",
   blocked: "受阻停下",
   failed: "失败停下",
@@ -36,6 +37,10 @@ function phaseFromStatus(status) {
 
 function fromLast(last) {
   if (!last) return null;
+  // runs 表里混着命令行动作记录（action=resume 之类，status 为 null、没有 executed_at）。
+  // 那些不是一次 agent 运行，拿它们渲染会得到「上次 · 已结束 · 用时 —」这种假信息。
+  if (!last.status) return null;
+  if (last.action && last.action !== "agent_run") return null;
   const started = last.requested_at ? Date.parse(last.requested_at) : NaN;
   const ended = last.executed_at ? Date.parse(last.executed_at) : NaN;
   return {
@@ -76,7 +81,7 @@ function fmtAge(ms) {
   return `${Math.round(ms / 60_000)} 分钟前`;
 }
 
-export function createRunPanel({ bookId, go, onChange = null }) {
+export function createRunPanel({ bookId, go, chapter = null, onChange = null }) {
   const box = el("div", { class: "run-panel" });
   let timer = null;
   let busy = false;
@@ -177,9 +182,13 @@ export function createRunPanel({ bookId, go, onChange = null }) {
           el("span", { class: "muted small", text: "点了才开始，随时可以停" })),
         el("div", { class: "run-actions" },
           el("button", {
-            class: "button button-primary", type: "button", text: "让 AI 写",
+            class: "button button-primary", type: "button",
+            text: chapter ? `让 AI 写第 ${chapter} 章` : "让 AI 写",
+            title: chapter ? "只写这一章，写完就停，不动下一章" : "开始写",
             disabled: busy ? "disabled" : null,
-            onclick: () => act(() => startRun(bookId, { mode: "real" }), { done: "已开始，可以边看进度边写" }),
+            onclick: () => act(
+              () => startRun(bookId, { mode: "real", untilChapter: chapter ?? null }),
+              { done: chapter ? `已开始写第 ${chapter} 章` : "已开始，可以边看进度边写" }),
           }),
           el("button", {
             class: "button button-quiet", type: "button", text: "演练一次",
@@ -235,7 +244,9 @@ export function createRunPanel({ bookId, go, onChange = null }) {
       actions.append(el("button", {
         class: "button button-small", type: "button", text: "再跑一次",
         disabled: busy ? "disabled" : null,
-        onclick: () => act(() => startRun(bookId, { mode: "real" }), { done: "已开始" }),
+        onclick: () => act(
+          () => startRun(bookId, { mode: "real", untilChapter: chapter ?? null }),
+          { done: "已开始" }),
       }));
     }
     actions.append(el("button", {
@@ -253,6 +264,8 @@ export function createRunPanel({ bookId, go, onChange = null }) {
         el("span", { class: "muted small", text: meta.join(" · ") })),
       stale ? el("p", { class: "run-hint", text: "60 秒没有心跳，可能卡住了。可以停止后重跑；已写入的内容不会丢。" }) : null,
       snapshot.error ? el("p", { class: "run-hint run-hint-bad", text: snapshot.error }) : null,
+      !snapshot.error && snapshot.result?.note
+        ? el("p", { class: "run-hint", text: snapshot.result.note }) : null,
       actions,
     ].filter(Boolean));
   }

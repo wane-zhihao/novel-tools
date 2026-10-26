@@ -9,6 +9,13 @@ import { secretResolver } from "../secrets.mjs";
 
 const DEFAULT_MAX_TOOL_STEPS = 48;
 
+// 节点名里的章号：C3.N14 → 3。N03 / N20 这类全书或卷级节点没有章号，返回 null
+// （不能当成第 0 章——那会让 until_chapter 误判为「已经越界」）。
+export function chapterOf(node) {
+  const match = /^C(\d+)\./.exec(String(node ?? ""));
+  return match ? Number(match[1]) : null;
+}
+
 export class RuntimeError extends Error {
   constructor(message) {
     super(message);
@@ -150,6 +157,7 @@ export class AgentRuntime {
     onEvent = () => {},
     runId = null,
     maxSteps = Infinity,
+    untilChapter = null,
     dataDir = defaultDataDir(),
     paths = resolveRuntimePaths({ env, dataDir }),
     readRoots = paths.readRoots ?? [],
@@ -165,6 +173,8 @@ export class AgentRuntime {
     this.onEvent = onEvent;
     this.runId = runId;
     this.maxSteps = maxSteps;
+    // 只写到第 N 章就停；null = 不设上限
+    this.untilChapter = Number.isInteger(untilChapter) && untilChapter > 0 ? untilChapter : null;
     this.paths = paths;
     this.providerFactory = providerFactory;
     this.onFileWrite = onFileWrite;
@@ -517,6 +527,14 @@ export class AgentRuntime {
           return await this.finish("failed", `非预期节点类型：${payload.kind}`);
         }
 
+        // until_chapter：下一个要跑的节点已经属于更后面的章 → 在动它之前停下。
+        // 放在执行前而不是执行后，是为了绝不触碰超出范围的章节（哪怕一个节点）。
+        const nextChapter = chapterOf(payload.node);
+        if (this.untilChapter != null && nextChapter != null && nextChapter > this.untilChapter) {
+          return await this.finish("chapter_done", null,
+            `第 ${this.untilChapter} 章已写完，按你的要求停在这里（未动第 ${nextChapter} 章）`);
+        }
+
         const outcome = await this.executeNode(payload);
         if (outcome.status === "failed") return await this.finish("failed", outcome.error);
         if (outcome.status === "blocked") return await this.finish("blocked", outcome.error);
@@ -555,7 +573,7 @@ export class AgentRuntime {
     return null;
   }
 
-  async finish(status, error = null) {
+  async finish(status, error = null, note = null) {
     let relayError = null;
     try {
       relayError = await this.writeRelay(status);
@@ -576,6 +594,9 @@ export class AgentRuntime {
     const result = {
       status,
       error: error ? sanitize(error) : null,
+      // note 是「为什么停在这里」的说明，成功停下时也带（如 chapter_done），
+      // 与 error 分开：error 是失败原因，note 不是错误。
+      note: note ? sanitize(note) : null,
       relay_error: relayError,
       book,
       steps: this.results,

@@ -52,10 +52,12 @@ export function openStudio(bookId) {
 // v2 界面此前完全没有 run 能力：后端能跑流水线，但界面上既无法启动也无法观察，
 // 用户只能靠旧 studio 或命令行。这三个函数补上「启动 / 观察 / 停止」最小闭环。
 
-/** 启动一次流水线。mode=mock 是演练（不写真正文），real 才调真实模型。 */
-export function startRun(bookId, { mode = "real", maxSteps = null } = {}) {
+/** 启动一次流水线。mode=mock 是演练（不写真正文），real 才调真实模型。
+ *  untilChapter 给定时只写到该章就停，绝不触碰下一章。 */
+export function startRun(bookId, { mode = "real", maxSteps = null, untilChapter = null } = {}) {
   const body = { mode };
   if (Number.isInteger(maxSteps) && maxSteps > 0) body.max_steps = maxSteps;
+  if (Number.isInteger(untilChapter) && untilChapter > 0) body.until_chapter = untilChapter;
   return api(`/api/books/${bookId}/run`, { method: "POST", body });
 }
 

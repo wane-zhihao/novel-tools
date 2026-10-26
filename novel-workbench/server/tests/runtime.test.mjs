@@ -217,3 +217,52 @@ test("工具参数 JSON 非法（截断）时回喂明确提示，不拿空对�
     rmSync(bookDir, { recursive: true, force: true });
   }
 });
+
+// ── Phase 1.3 until_chapter：写完指定章就停，不越界 ────────────────────
+test("until_chapter 已到上限时一步都不执行就停（不动下一章）", async () => {
+  const bookDir = mkdtempSync(join(tmpdir(), "wb-until-"));
+  cpSync(resolve(FIXTURES, "chapter_e2e"), bookDir, { recursive: true });
+  try {
+    applyFakeEnv();
+    const loaded = loadAgentConfig({ bookDir, env: {} });
+    const config = structuredClone(loaded.config);
+    const before = JSON.parse(readFileSync(join(bookDir, "_pipeline", "state.json"), "utf8")).cursor;
+
+    // fixture 游标在 C3.N09；只允许写到第 2 章 → 第 3 章一步都不该动
+    const runtime = new AgentRuntime({
+      bookDir, config, env: {}, maxSteps: 5, untilChapter: 2,
+    });
+    const result = await runtime.run();
+
+    assert.equal(result.status, "chapter_done");
+    assert.equal(result.steps.length, 0, "越界时不该执行任何节点");
+    const after = JSON.parse(readFileSync(join(bookDir, "_pipeline", "state.json"), "utf8")).cursor;
+    assert.equal(after, before, "游标不该被推进");
+    assert.ok(result.note, "应说明为什么停下");
+    assert.match(result.note, /第 2 章/);
+  } finally {
+    rmSync(bookDir, { recursive: true, force: true });
+  }
+});
+
+test("until_chapter 未到上限时正常执行（不误停）", async () => {
+  const bookDir = mkdtempSync(join(tmpdir(), "wb-until-ok-"));
+  cpSync(resolve(FIXTURES, "chapter_e2e"), bookDir, { recursive: true });
+  try {
+    applyFakeEnv();
+    const loaded = loadAgentConfig({ bookDir, env: {} });
+    const config = structuredClone(loaded.config);
+
+    // 允许写到第 3 章：fixture 正处在 C3，应该真的推进一步
+    const runtime = new AgentRuntime({
+      bookDir, config, env: {}, maxSteps: 1, untilChapter: 3,
+    });
+    const result = await runtime.run();
+
+    assert.equal(result.status, "max_steps", "允许范围内不该以 chapter_done 结束");
+    assert.equal(result.steps.length, 1);
+    assert.equal(result.steps[0].node, "C3.N09");
+  } finally {
+    rmSync(bookDir, { recursive: true, force: true });
+  }
+});

@@ -406,6 +406,14 @@ export function createApi({
       }
       maxSteps = body.max_steps;
     }
+    // until_chapter：只写到第 N 章就停，绝不触碰第 N+1 章（「写这一章」的语义）
+    let untilChapter = null;
+    if (body.until_chapter !== undefined && body.until_chapter !== null) {
+      if (!Number.isInteger(body.until_chapter) || body.until_chapter < 1 || body.until_chapter > 1000) {
+        throw new HttpError(400, "invalid_until_chapter", "until_chapter 必须是 1–1000 的整数");
+      }
+      untilChapter = body.until_chapter;
+    }
     const loaded = loadAgentConfig({ bookDir: row.path, dataDir });
     if (loaded.errors.length) {
       throw new HttpError(400, "invalid_agent_config", "Agent 配置有误", { errors: loaded.errors });
@@ -448,6 +456,7 @@ export function createApi({
         config,
         mode,
         maxSteps,
+        untilChapter,
       });
     } catch (error) {
       if (error instanceof RunNeedsResumeError) {
