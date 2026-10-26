@@ -1066,6 +1066,50 @@ def test_render_prompt_injects_one_line(root: Path) -> None:
             os.environ["WORKBENCH_CONFIG"] = previous
 
 
+def test_tracking_fill_dry_run_then_apply(root: Path) -> None:
+    """tracking-fill：默认预演不写盘，--apply 才把账本值校正进 state。
+
+    背景：_heal_from_tracking 只在 next 时跑，而投稿预检读的是 state 里的
+    words_total。漂移后、下次运行前，预检会拿错数字判断字数。
+    """
+    config = make_config(root / "tracking-fill-config", "ready")
+    book = make_state_book(root, "tracking-fill", cursor="C1.N09",
+                           current_chapter=0, chapters_committed=0, words_total=0)
+    # 账本说 2 章已封板、共 4500 字；state 一无所知
+    write(book / "追踪" / "_tracking-state.json", json.dumps({
+        "last_committed_chapter": 2,
+        "wordcount_records": {"1": {"actual": 2200}, "2": {"actual": 2300}},
+    }, ensure_ascii=False))
+    script = SCRIPTS / "autopilot.py"
+    env = {**os.environ, "WORKBENCH_CONFIG": str(config)}
+
+    dry = subprocess.run([sys.executable, str(script), "tracking-fill", "--book", str(book)],
+                         capture_output=True, text=True, encoding="utf-8", env=env, check=False)
+    assert dry.returncode == 0, (dry.returncode, dry.stdout, dry.stderr)
+    out = json.loads(dry.stdout)
+    assert out["applied"] is False, out
+    assert out["changed"] is True, out
+    assert out["after"]["words_total"] == 4500, out
+    # 预演绝不能写盘
+    on_disk = json.loads((book / "_pipeline" / "state.json").read_text(encoding="utf-8"))
+    assert on_disk["words_total"] == 0, "dry-run 竟然改了 state"
+
+    applied = subprocess.run([sys.executable, str(script), "tracking-fill", "--book", str(book), "--apply"],
+                             capture_output=True, text=True, encoding="utf-8", env=env, check=False)
+    assert applied.returncode == 0, (applied.returncode, applied.stdout, applied.stderr)
+    st = json.loads((book / "_pipeline" / "state.json").read_text(encoding="utf-8"))
+    assert st["words_total"] == 4500, st["words_total"]
+    assert st["chapters_committed"] == 2, st["chapters_committed"]
+    # 游标从第 1 章推进到第 3 章起点（账本说第 2 章已封板）
+    assert st["cursor"].startswith("C3."), st["cursor"]
+
+    # 幂等：再跑一次不该再产生变更
+    again = subprocess.run([sys.executable, str(script), "tracking-fill", "--book", str(book)],
+                           capture_output=True, text=True, encoding="utf-8", env=env, check=False)
+    assert again.returncode == 0
+    assert json.loads(again.stdout)["changed"] is False, again.stdout
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="wb-py-contracts-") as tmp:
         root = Path(tmp)
@@ -1095,6 +1139,7 @@ def main() -> int:
         test_commit_suite(root)
         test_init_persists_platform_volume_and_one_line(root)
         test_render_prompt_injects_one_line(root)
+        test_tracking_fill_dry_run_then_apply(root)
     print("PY_CONTRACTS_OK")
     return 0
 

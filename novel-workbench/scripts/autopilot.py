@@ -419,7 +419,7 @@ def cmd_init(a) -> int:
     return 0
 
 
-def _heal_from_tracking(book: Path, st: dict) -> list[str]:
+def _heal_from_tracking(book: Path, st: dict, apply: bool = True) -> list[str]:
     """以 追踪/_tracking-state.json 为账本，修正 state.json 里的派生字段。
 
     **为什么要有**：words_total 和 chapters_committed 都是 tracking 账本的派生值，
@@ -476,13 +476,49 @@ def _heal_from_tracking(book: Path, st: dict) -> list[str]:
                 st["cursor"] = f"C{last + 1}.N09"
             notes.append(f"游标 {cur} 落后于已封板第 {last} 章 → {st['cursor']}")
 
-    if notes:
+    # apply=False 供 dry-run 用：只算出「会改什么」，不动盘上的 state
+    if notes and apply:
         save_state(book, st)
     return notes
 
 
 _NODE_ID_RE = re.compile(r"^(?:N\d+[a-z]?|V\d+\.N\d+[a-z]?|C\d+\.N\d+)$")
 _BOOK_SUBDIRS = ("正文", "大纲", "设定", "追踪", "投稿包", "_pipeline", ".story")
+
+
+def cmd_tracking_fill(a) -> int:
+    """以 tracking 账本校正 state 的派生字段，**不推进流水线**。
+
+    为什么需要独立命令：`_heal_from_tracking` 只在 `next` 时执行，而投稿预检
+    （preflight）和界面读的都是 state 里的 words_total / chapters_committed。
+    漂移发生后、下一次运行之前，预检会拿错数字判断字数是否达标。
+    实测：《顶职》正文 9 章 20,066 字，state 记 4 章 9,288 字——
+    明明过了 2 万字，预检会报「还差」。
+
+    默认 dry-run（只报会改什么），`--apply` 才落盘。
+    保守边界：chapters_committed 只向上修（账本 > state 时才改），不因账本缺失而回退，
+    避免把已封板进度改小。
+    """
+    book = Path(a.book).resolve()
+    st = load_state(book)
+    if not st:
+        print(json.dumps({"error": "not_initialized"}, ensure_ascii=False))
+        return 2
+    keys = ("words_total", "chapters_committed", "current_chapter", "cursor")
+    before = {k: st.get(k) for k in keys}
+    apply = bool(getattr(a, "apply", False))
+    notes = _heal_from_tracking(book, st, apply=apply)
+    after = {k: st.get(k) for k in keys}
+    print(json.dumps({
+        "ok": True,
+        "applied": apply,
+        "changed": bool(notes),
+        "notes": notes,
+        "before": before,
+        "after": after,
+        "hint": None if apply else ("这是预演，磁盘未改动；确认无误后加 --apply 落盘"),
+    }, ensure_ascii=False))
+    return 0
 
 
 def cmd_doctor(a) -> int:
@@ -1065,6 +1101,11 @@ def main():
     cm.add_argument("--no-verify", action="store_true",
                     help="跳过闸门复检（仅排障用）")
 
+    tf = sub.add_parser("tracking-fill",
+                        help="用 tracking 账本校正 state 派生字段（默认预演，不推进流水线）")
+    tf.add_argument("--book", required=True)
+    tf.add_argument("--apply", action="store_true", help="真正写盘（不加则只预演）")
+
     a = ap.parse_args()
     os.environ.update(utf8_env())
 
@@ -1074,6 +1115,8 @@ def main():
         return cmd_status(a)
     if a.cmd == "doctor":
         return cmd_doctor(a)
+    if a.cmd == "tracking-fill":
+        return cmd_tracking_fill(a)
     if a.cmd == "next":
         book = Path(a.book).resolve()
         lock = acquire_next_lock(book)

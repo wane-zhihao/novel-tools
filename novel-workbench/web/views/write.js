@@ -249,8 +249,20 @@ export async function renderWrite({ bookId, chapter, go, state }) {
   const runPanel = createRunPanel({ bookId, go, chapter });
   window.addEventListener("hashchange", () => runPanel.destroy(), { once: true });
 
+  // 账本一致性提示：state 的 words_total / chapters_committed 与真实章节表漂移时，
+  // 投稿预检会拿错数字判断字数（实测有书正文已过 2 万字，预检报「还差」）。
+  // 只提示、不自动改——判断哪个数对需要人看正文，工具擅自「修正」会掩盖问题。
+  const drift = manuscript.drift;
+  const driftNote = drift && drift.ok === false
+    ? el("p", {
+      class: "run-hint run-hint-bad",
+      text: `数据不一致：${drift.items.map((item) => item.detail).join("；")}。字数与进度可能不准，可用 tracking-fill 校正。`,
+    })
+    : null;
+
   const rail = el("aside", { class: "chapter-rail", "aria-label": "章节" },
     runPanel.node,
+    driftNote,
     el("h2", { text: "章节" }),
     el("div", { class: "chapter-list" },
       ...manuscript.chapters.map((item) => el("button", {
