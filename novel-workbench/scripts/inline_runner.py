@@ -28,7 +28,9 @@ from pipeline_spec import milestones, span, volumes  # 里程碑/卷边界的唯
 HERE = Path(__file__).resolve().parent
 SKILL_DIR = HERE.parent
 
-from pipeline_spec import STATION_MIN_WORDS  # noqa: E402  (只依赖常量，不反向导入 runner)
+from pipeline_spec import (  # noqa: E402  (只依赖常量，不反向导入 runner)
+    STATION_MIN_WORDS, CHAPTER_BODY_MIN_WORDS,
+)
 
 DRIFT_PARAGRAPH_DELTA = 5.0
 FORESHADOW_MIN_RATE = 0.70
@@ -413,13 +415,81 @@ def _assemble_context(book: Path, chapter: int, st: dict) -> tuple[int, str]:
 
 
 def _outline_gate(book: Path, chapter: int) -> tuple[int, str]:
-    """C{n}.N10：细纲九字段结构验收。"""
+    """C{n}.N10：细纲结构验收，并确保细纲字数合同可由正文门禁满足。"""
     cfg = _cfg()
     hits = sorted((book / "大纲").glob(f"细纲_第{chapter:03d}章*.md"))
     if not hits:
         return 2, f"找不到 大纲/细纲_第{chapter:03d}章*.md"
-    cmd = [cfg["NODE"], cfg["CHECK_OUTLINE"], str(hits[0])]
-    return run_script(cmd, book)
+    cmd = [cfg["NODE"], cfg["CHECK_OUTLINE"], "--json", str(hits[0])]
+    rc, output = run_script(cmd, book)
+    if rc != 0:
+        return rc, output
+    try:
+        report = json.loads(output)
+    except json.JSONDecodeError:
+        return 2, f"细纲检查器未返回合法 JSON：{output[-500:]}"
+    if not isinstance(report, dict):
+        return 2, f"细纲检查器返回的 JSON 不是对象：{output[-500:]}"
+    # 检查器的输出不保证带 wordcount / checks / failures 三个容器字段，而下面两个
+    # 分支都会对它们做下标写入。不在这里补齐，缺字段就会变成 KeyError，让整段
+    # node script 输出无法解析——本该「报阻断」的失败退化成「崩溃」。
+    if not isinstance(report.get("wordcount"), dict):
+        report["wordcount"] = {}
+    if not isinstance(report.get("checks"), list):
+        report["checks"] = []
+    if not isinstance(report.get("failures"), list):
+        report["failures"] = []
+
+    wordcount = report["wordcount"]
+    target = wordcount.get("target")
+    target_status = wordcount.get("target_status")
+    word_range = wordcount.get("range")
+    contract_issues = []
+    if target_status != "ok" or not isinstance(target, int) or target < CHAPTER_BODY_MIN_WORDS:
+        contract_issues.append({
+            "id": "outline.wordcount-contract",
+            "detail": f"字数目标须不低于 {CHAPTER_BODY_MIN_WORDS} 字（当前 {target!r}）",
+        })
+    if word_range is not None:
+        lower, upper = word_range.get("min"), word_range.get("max")
+        if not isinstance(lower, int) or not isinstance(upper, int) or lower < CHAPTER_BODY_MIN_WORDS:
+            contract_issues.append({
+                "id": "outline.wordcount-contract",
+                "detail": f"明确字数范围下限须不低于 {CHAPTER_BODY_MIN_WORDS} 字（当前 {lower!r}）",
+            })
+        if isinstance(target, int) and isinstance(lower, int) and isinstance(upper, int) \
+                and not lower <= target <= upper:
+            contract_issues.append({
+                "id": "outline.wordcount-contract",
+                "detail": f"字数目标 {target} 不在明确字数范围 {lower}-{upper} 内",
+            })
+    if contract_issues:
+        report["ok"] = False
+        report["wordcount"]["contract_status"] = "fail"
+        report["checks"].append({
+            "id": "outline.wordcount-contract",
+            "ok": False,
+            "severity": "blocking",
+            "file": hits[0].name,
+            "evidence": "; ".join(issue["detail"] for issue in contract_issues),
+            "expected": f"字数目标至少 {CHAPTER_BODY_MIN_WORDS} 字，明确范围下限至少 {CHAPTER_BODY_MIN_WORDS} 字，目标须落入明确范围",
+            "repair": "只调整细纲中的字数目标或范围，不改情节安排。",
+        })
+        report["failures"] = [*(report.get("failures") or []), *contract_issues]
+        return 1, json.dumps(report, ensure_ascii=False, indent=1)
+    report["ok"] = True
+    report["wordcount"]["contract_status"] = "ok"
+    report["failures"] = []
+    report["checks"].append({
+        "id": "outline.wordcount-contract",
+        "ok": True,
+        "severity": "blocking",
+        "file": hits[0].name,
+        "evidence": f"目标 {target}，范围 {word_range.get('min') if word_range else '默认'}-{word_range.get('max') if word_range else '默认'}",
+        "expected": f"字数目标至少 {CHAPTER_BODY_MIN_WORDS} 字，明确范围下限至少 {CHAPTER_BODY_MIN_WORDS} 字，目标须落入明确范围",
+        "repair": "无需修复。",
+    })
+    return 0, json.dumps(report, ensure_ascii=False, indent=1)
 
 
 def _story_findings(story: dict) -> list[dict]:
@@ -1060,8 +1130,11 @@ def _endgame_scan(book: Path, st: dict) -> tuple[int, str]:
 
 # ─── N21 投稿包 ───────────────────────────────────────────────────────────────
 
-def _mainline(book: Path) -> str:
-    volume = book / "大纲" / "卷纲_第一卷.md"
+def _mainline(book: Path, st: dict | None = None) -> str:
+    planned = bool((st or {}).get("plan"))
+    volume = book / "大纲" / ("卷纲_第1卷.md" if planned else "卷纲_第一卷.md")
+    if not volume.is_file() and planned:
+        volume = book / "大纲" / "卷纲_第一卷.md"
     if not volume.is_file():
         return "（卷纲缺失）"
     for line in volume.read_text(encoding="utf-8").splitlines():
@@ -1080,6 +1153,10 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
     if not full.is_file():
         return 2, f"缺少 {full}——N17 未成功"
     chapters = sorted((book / "正文").glob("*.md"))
+    if st.get("plan"):
+        chapters = [f for _, start, end in volumes(st)
+                    for f in _chapter_files_in(book, start, end)]
+        chapters = sorted(chapters, key=lambda f: _chapter_no(f.name) or 0)
     today = datetime.now()
     stamp = today.strftime("%Y-%m-%d")
 
@@ -1094,15 +1171,49 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
         "label") or st.get("genre") or "未指定"
     endgame = _read_json(book / "_pipeline" / "endgame_findings.json", default={}) or {}
     judgments = _read_json(book / "_pipeline" / "judgments_N20.json", default={}) or {}
-    n20_items = judgments.get("items") or []
+    n20_items = list(judgments.get("items") or [])
     n20_verdict = judgments.get("verdict", "unknown")
+    global_judgments = _read_json(book / "_pipeline" / "judgments_N20g.json", default={}) or {}
+    global_items = list(global_judgments.get("items") or [])
+    global_verdict = global_judgments.get("verdict", "unknown")
+    global_gate_required = bool(st.get("plan") or global_judgments)
+
+    volume_audits = []
+    volume_audits_complete = True
+    if st.get("plan"):
+        for volume, _, _ in volumes(st):
+            node = f"V{volume}.N20"
+            node_state = (st.get("nodes") or {}).get(node) or {}
+            judgment = _read_json(book / "_pipeline" / f"judgments_{node}.json", default={}) or {}
+            verdict = judgment.get("verdict", "unknown")
+            complete = node_state.get("status") == "done" and verdict in ("pass", "block")
+            volume_audits_complete = volume_audits_complete and complete
+            volume_audits.append({
+                "volume": volume, "node": node, "verdict": verdict,
+                "advisory": bool(node_state.get("advisory")),
+                "items": list(judgment.get("items") or []), "complete": complete,
+            })
+        n20_verdict = (f"卷级审查完成 {sum(1 for x in volume_audits if x['complete'])}/"
+                       f"{len(volume_audits)} 卷" if volume_audits_complete
+                       else f"卷级审查未完成 {sum(1 for x in volume_audits if x['complete'])}/"
+                            f"{len(volume_audits)} 卷")
+        # 分卷 N20 的 B 级遗留已经转入全书概要，由 N20g 统一裁决；不可再被旧式
+        # judgments_N20.json（不存在或过期）二次阻断。N20g 的 B 项仍直接影响投稿门槛。
+        b_fail = [x for x in global_items
+                  if x.get("verdict") == "fail" and x.get("level", "B") == "B"]
+    else:
+        volume_audits_complete = True
+        b_fail = [x for x in n20_items + global_items
+                  if x.get("verdict") == "fail" and x.get("level", "B") == "B"]
 
     machine = [x for x in endgame.get("items", []) if x.get("source") == "N18"]
     style_advisories = [x for x in endgame.get("items", []) if x.get("source") == "N19"]
     machine_blocking = [x for x in machine if x.get("blocking")]
-    b_fail = [x for x in n20_items if x.get("verdict") == "fail"]
     station_ok = words_total >= STATION_MIN_WORDS
-    can_submit = (not machine_blocking) and (not b_fail) and n20_verdict == "pass" and station_ok
+    legacy_n20_ok = bool(st.get("plan")) or n20_verdict == "pass"
+    can_submit = ((not machine_blocking) and (not b_fail) and legacy_n20_ok
+                  and volume_audits_complete
+                  and (not global_gate_required or global_verdict == "pass") and station_ok)
 
     # 逐章指标（取不到就写未取到，不阻断打包）
     rows = []
@@ -1139,7 +1250,25 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
         f"- 章节数：{len(chapters)}（已封板 {committed}）",
         f"- 正文字数：{words_total} 字（七猫/奇妙门槛 20000）",
         f"- 全文文件：投稿包/全文.md",
-        f"- 终审结论：{n20_verdict}",
+        f"- 终审结论：卷末 {n20_verdict} / 全书 "
+        f"{global_verdict if global_gate_required else '不适用（旧版单卷流程）'}",
+    ]
+    volume_shortfalls = []
+    if st.get("plan"):
+        for volume, start, end in volumes(st):
+            planned = end - start + 1
+            actual = len(_chapter_files_in(book, start, end))
+            if actual < planned:
+                volume_shortfalls.append({"volume": volume, "start": start, "end": end,
+                                          "planned": planned, "actual": actual})
+    if volume_shortfalls:
+        lines.append("- 卷预算降级/卷章数不足：" + "；".join(
+            f"第{x['volume']}卷 {x['actual']}/{x['planned']}章（范围 {x['start']}–{x['end']}）"
+            for x in volume_shortfalls))
+    elif st.get("degraded_volumes"):
+        lines.append("- 卷预算降级记录：" + "、".join(
+            f"第{v}卷" for v in st.get("degraded_volumes", [])))
+    lines += [
         "",
         "## 一、硬门槛",
         "",
@@ -1158,22 +1287,45 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
             lines.append(f"| {x.get('chapter') or '-'} | {x.get('file') or '-'} | "
                          f"{x.get('type') or '-'} | {x.get('severity') or '-'} | "
                          f"{(x.get('message') or '').replace('|', '/')[:80]} |")
-    lines += ["", "## 三、评分卡终审（N20 judge）", ""]
-    if n20_items:
-        lines += ["| # | 判定项 | 结果 | 依据 |", "|---|---|---|---|"]
-        for x in n20_items:
-            quote = (x.get("quote") or "").replace("|", "/")[:40]
-            metric = x.get("metric")
-            basis = quote or (json.dumps(metric, ensure_ascii=False) if metric else "")
-            lines.append(f"| {x.get('id') or '-'} | {x.get('criterion') or '-'} | "
-                         f"{x.get('verdict') or '-'} | {basis} |")
+    if st.get("plan"):
+        lines += ["", "## 三、逐卷终审（V.N20 judge）", ""]
     else:
-        lines.append("（未找到 judgments_N20.json）")
+        lines += ["", "## 三、卷末评分卡终审（N20 judge）", ""]
+        if n20_items:
+            lines += ["| # | 判定项 | 结果 | 依据 |", "|---|---|---|---|"]
+            for x in n20_items:
+                quote = (x.get("quote") or "").replace("|", "/")[:40]
+                metric = x.get("metric")
+                basis = quote or (json.dumps(metric, ensure_ascii=False) if metric else "")
+                lines.append(f"| {x.get('id') or '-'} | {x.get('criterion') or '-'} | "
+                             f"{x.get('verdict') or '-'} | {basis} |")
+        else:
+            lines.append("（未找到 judgments_N20.json）")
+    if st.get("plan"):
+        for audit in volume_audits:
+            label = "（已转全书汇总终审）" if audit["advisory"] else ""
+            lines.append(f"- 第{audit['volume']}卷：{audit['verdict']} {label}")
+            for item in audit["items"]:
+                if item.get("verdict") == "fail":
+                    lines.append(f"  - {item.get('criterion') or item.get('id')}: "
+                                 f"{(item.get('fix') or item.get('note') or '')[:200]}")
+        if not volume_audits_complete:
+            lines.append("- 卷级终审未全部完成，投稿门槛不通过。")
     if b_fail:
         lines += ["", "**B 项未通过：**"]
         lines += [f"- {x.get('id')} {x.get('criterion')}：{(x.get('fix') or '')[:200]}"
                   for x in b_fail]
-    lines += ["", "## 四、文风与节奏（逐章）", ""]
+    lines += ["", "## 四、全书汇总终审（N20g judge）", "",
+              f"- verdict：{global_verdict if global_gate_required else '不适用（旧版单卷流程）'}"]
+    if global_items:
+        lines += ["", "| # | 判定项 | 结果 | 依据 |", "|---|---|---|---|"]
+        for item in global_items:
+            quote = (item.get("quote") or "").replace("|", "/")[:40]
+            metric = item.get("metric")
+            basis = quote or (json.dumps(metric, ensure_ascii=False) if metric else "")
+            lines.append(f"| {item.get('id') or '-'} | {item.get('criterion') or '-'} | "
+                         f"{item.get('verdict') or '-'} | {basis} |")
+    lines += ["", "## 五、文风与节奏（逐章）", ""]
     if rows:
         lines += ["| 章节 | 闸门 | 段/千字 | 句长中位 | 对话占比 | 因果/千字 | 动作密度 |",
                   "|---|---|---|---|---|---|---|"]
@@ -1188,11 +1340,11 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
         lines += [f"- 第{x.get('chapter') or '-'}章：{x.get('message')}" for x in style_advisories]
     lines += [
         "",
-        "## 五、结论",
+        "## 六、结论",
         "",
         f"**{'可投' if can_submit else '不可投'}**",
         "",
-        ("机械 blocking 为 0、N20 无 B 项 fail、字数达标。" if can_submit
+        (        "机械 blocking 为 0、终审 B 项已通过、字数达标。" if can_submit
          else "存在未通过项，按上表修完再投。"),
         "",
         "> 本书只有一次签约评估机会。投前请再人工确认：开篇 200 字冲突、"
@@ -1203,7 +1355,15 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
     full_hash = hashlib.sha256(full.read_bytes()).hexdigest()[:12]
     title = st.get("book") or book.name
     genre = genre_label
-    mainline = _mainline(book)
+    mainline = _mainline(book, st)
+    if st.get("plan"):
+        volume_outlines = [f"大纲/卷纲_第{volume}卷.md" for volume, _, _ in volumes(st)]
+        directory_files = [f"大纲/目录_第{volume}卷.md" for volume, _, _ in volumes(st)]
+        if (book / "大纲" / "目录_前12章.md").is_file():
+            directory_files.append("大纲/目录_前12章.md")
+        outline_attachments = "、".join(f"`{item}`" for item in volume_outlines + directory_files)
+    else:
+        outline_attachments = "`大纲/卷纲_第一卷.md`、`大纲/目录_前12章.md`"
     email = f"""# 投稿邮件（草稿）
 
 **收件人：** （填对口编辑邮箱）
@@ -1219,7 +1379,7 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
 
 随信附上：
 1. 正文（整合为一个文件，不分章拆发）：`投稿包/全文.md`
-2. 大纲：`大纲/卷纲_第一卷.md`、`大纲/目录_前12章.md`
+2. 大纲：{outline_attachments}
 3. 设定：`设定/` 下五份文件
 4. 投稿申请表：（按七猫后台/编辑要求填写后附上）
 
@@ -1253,14 +1413,14 @@ def _package(book: Path, st: dict) -> tuple[int, str]:
 | 章节数 | {len(chapters)} |
 | 全文 SHA256（前12位） | `{full_hash}` |
 | 打包日期 | {stamp} |
-| 终审结论 | {n20_verdict} |
+| 终审结论 | 卷末 {n20_verdict} / 全书 {global_verdict if global_gate_required else '不适用（旧版单卷流程）'} |
 | 体检结论 | {'可投' if can_submit else '不可投'} |
 
 ## 二、投前检查（自动项）
 
 - {check(station_ok)} 字数 ≥{STATION_MIN_WORDS}（当前 {words_total}）
 - {check(not machine_blocking)} AI 味 / 退化 blocking = 0（当前 {len(machine_blocking)}）
-- {check(n20_verdict == 'pass' and not b_fail)} 评分卡 B 项全部通过
+- {check(legacy_n20_ok and volume_audits_complete and not b_fail and (not global_gate_required or global_verdict == 'pass'))} 卷级与全书评分卡 B 项全部通过
 - {check(full.is_file())} 正文整合为单文件
 
 ## 三、投前检查（人工项）
@@ -1402,7 +1562,11 @@ def _merge_global(book: Path, st: dict) -> tuple[int, str]:
 
     概要给 N20g 读——N20g **不许读正文**（25 万字 ≈ 20 万 token 必爆）。
     """
-    parts = sorted((book / "正文").glob("*.md"))
+    if st.get("plan"):
+        parts = [f for _, start, end in volumes(st) for f in _chapter_files_in(book, start, end)]
+        parts = sorted(parts, key=lambda f: _chapter_no(f.name) or 0)
+    else:
+        parts = sorted((book / "正文").glob("*.md"))
     if not parts:
         return 2, "正文/ 下没有章节文件"
     full = "\n\n".join(p.read_text(encoding="utf-8").strip() for p in parts) + "\n"
@@ -1412,10 +1576,27 @@ def _merge_global(book: Path, st: dict) -> tuple[int, str]:
 
     # 概要：每章取标题 + 首段（各 ≤120 字），加卷统计
     lines = [f"# {st.get('book') or book.name} · 全书概要", ""]
+    advisories = st.get("volume_advisories") or {}
+    if advisories:
+        lines += ["## 卷末终审遗留项", ""]
+        for node, data in sorted(advisories.items()):
+            lines.append(f"### {node}")
+            lines.append(str(data.get("summary") or "卷末终审有遗留项"))
+            for item in data.get("items") or []:
+                lines.append(f"- {item.get('id') or item.get('criterion')}: "
+                             f"{item.get('fix') or item.get('note') or item.get('name') or ''}")
+            lines.append("")
+    if st.get("degraded_volumes"):
+        lines += ["## 卷预算降级", ""]
+        degradation = st.get("volume_degradation") or {}
+        for volume in st.get("degraded_volumes") or []:
+            data = degradation.get(str(volume)) or {}
+            lines.append(f"- 第{volume}卷：预算 {data.get('used', '?')}/{data.get('cap', '?')}，已转入卷末审查。")
+        lines.append("")
     for v, s, e in volumes(st):
         chs = _chapter_files_in(book, s, e)
         wc = sum(len(re.findall(r"[\u4e00-\u9fff]", f.read_text(encoding="utf-8"))) for f in chs)
-        lines.append(f"## 第{v}卷（第 {s}–{e} 章，{len(chs)} 章，{wc} 字）")
+        lines.append(f"## 第{v}卷（第 {s}–{e} 章，计划 {e - s + 1} 章，实际 {len(chs)} 章，{wc} 字）")
         for f in chs:
             body = [x.strip() for x in f.read_text(encoding="utf-8").splitlines() if x.strip()]
             title = body[0].lstrip("# ").strip() if body else f.stem

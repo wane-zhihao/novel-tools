@@ -204,13 +204,21 @@ def load_state(book: Path) -> dict:
         sys.exit(f"ERROR: state.json 损坏：{e}")
 
 
-def save_state(book: Path, st: dict) -> None:
+def save_state(book: Path, st: dict, reason: str = "自动检查点") -> None:
     p = state_path(book)
     p.parent.mkdir(parents=True, exist_ok=True)
     # 旧版把令牌写在 state 里；现在令牌在 _pipeline/.step_token，落盘时清掉残留字段
     st.pop("step_token", None)
     st.pop("step_token_node", None)
     _atomic_write(p, json.dumps(st, ensure_ascii=False, indent=1) + "\n")
+    # state 与 relay 是同一检查点：runtime 随后耗尽预算或进程中断，
+    # 下次启动也能读到最新 cursor / last node。_write_relay 不回写 state，避免递归。
+    try:
+        _write_relay(book, st, reason)
+    except Exception as exc:
+        # relay 属于恢复提示，不允许它的 IO 错误破坏主状态提交。
+        st["relay_write_error"] = str(exc)[:300]
+        _atomic_write(p, json.dumps(st, ensure_ascii=False, indent=1) + "\n")
 
 
 def _atomic_write(p: Path, text: str) -> None:
@@ -223,12 +231,15 @@ def _atomic_write(p: Path, text: str) -> None:
 
 def write_workbench_manifest(book: Path) -> None:
     """给 Dashboard 留一份可执行路径清单：它不读 config.json，只认这本书的清单。"""
+    st = load_state(book)
+    platform = st.get("platform") or "qimao"
+    platform_cfg = (CFG.get("PLATFORMS") or {}).get(platform) or {}
     manifest = {
         "schema_version": 1,
         "python": CFG["PYTHON"],
         "autopilot": str(HERE / "autopilot.py"),
         "gate_runner": CFG.get("GATE_RUNNER", ""),
-        "platform": CFG.get("QIMAO_PLATFORM_DIR", ""),
+        "platform": platform_cfg.get("DIR") or CFG.get("QIMAO_PLATFORM_DIR", ""),
     }
     p = book / "_pipeline" / "workbench.json"
     if p.is_file():
@@ -333,6 +344,7 @@ def release_next_lock(path: Path) -> None:
 
 from pipeline_spec import (          # noqa: E402
     GLOBAL_NODES, chapter_nodes, volume_nodes, next_cursor, first_cursor, milestones, vol_of, span, vol_size,
+    judgment_policy,
 )
 
 # ─── 内联脚本执行（PART 2 填充） ──────────────────────────────────────────────
@@ -370,10 +382,17 @@ def cmd_init(a) -> int:
         "words_total": 0,
         "cursor": first_cursor(),
         "nodes": {},
+        "budget": {},
+        "fix_rounds": {},
+        "global_fix_rounds": {},
+        "n20_rounds": 0,
+        "degraded_volumes": [],
+        "volume_advisories": {},
         "decisions_taken": [],
         "pending_questions": [],
         "blocked_reason": None,
         "relay_count": 0,
+        "run_started_at": now(),
     }
     save_state(book, st)
     write_workbench_manifest(book)
@@ -431,7 +450,10 @@ def _heal_from_tracking(book: Path, st: dict) -> list[str]:
         if n <= last:
             st["current_chapter"] = last
             if last >= int(st.get("max_chapters") or 0):
-                st["cursor"] = "N17"
+                st["cursor"] = ("N17" if not st.get("plan") else
+                                 f"V{vol_of(st, last)}.N17")
+            elif st.get("plan") and last % vol_size(st) == 0:
+                st["cursor"] = f"V{vol_of(st, last)}.N17"
             else:
                 st["cursor"] = f"C{last + 1}.N09"
             notes.append(f"游标 {cur} 落后于已封板第 {last} 章 → {st['cursor']}")
@@ -471,12 +493,15 @@ def cmd_doctor(a) -> int:
     vs = vol_size(st) or 0
     total = int(st.get("max_chapters") or 0)
     nvol = max(1, (total + vs - 1) // vs) if vs else 1
-    for v in range(1, nvol + 1):
-        try:
-            specs.extend(volume_nodes(st, book, v).values())
-        except Exception as exc:                       # 节点表本身构造不出来也是问题
-            issues.append({"node": f"V{v}.*", "kind": "volume_nodes_failed",
-                           "detail": str(exc)[:200]})
+    # 老书没有 plan（也就没有 max_chapters），正常流程里根本不走卷结构，
+    # doctor 也照同样条件跳过，否则会把「老书没这个键」误报成节点表坏了。
+    if st.get("plan"):
+        for v in range(1, nvol + 1):
+            try:
+                specs.extend(volume_nodes(st, book, v).values())
+            except Exception as exc:                   # 节点表本身构造不出来也是问题
+                issues.append({"node": f"V{v}.*", "kind": "volume_nodes_failed",
+                               "detail": str(exc)[:200]})
     try:
         specs.extend(chapter_nodes(st, book, 1).values())
     except Exception as exc:
@@ -516,6 +541,11 @@ def cmd_doctor(a) -> int:
             skipped += 1
             continue
         declared = m.group(1)
+        # 只校验「像路径」的：含 / 或以 .md 结尾。像 N06/N20 那样写
+        # 「source 填具体文件名」的是给模型的说明，不是字面路径，跳过不误报。
+        if "/" not in declared and not declared.endswith(".md"):
+            skipped += 1
+            continue
         if not _source_allowed(declared, srcs):
             issues.append({"node": nid, "kind": "source_mismatch",
                            "detail": f"prompt 要求 source={declared!r}，"
@@ -561,6 +591,8 @@ def cmd_status(a) -> int:
         "global_fix_rounds": st.get("global_fix_rounds") or {},
         "n20_rounds": st.get("n20_rounds", 0),
         "llm_rounds": st.get("llm_rounds", 0),
+        "degraded_volumes": st.get("degraded_volumes") or [],
+        "volume_shortfall": st.get("volume_shortfall") or {},
         "words_total_drift": drift,
     }, ensure_ascii=False))
     return 0
@@ -621,11 +653,11 @@ def _auto_skip_reason(book: Path, st: dict, spec: dict) -> str | None:
 _BILLABLE = {"N07", "N08", "N09d", "N09", "N12", "N14", "N15", "N20", "N20f", "N20g"}
 
 
-def _vol_llm_used(st: dict) -> int:
-    """当前卷已消耗的 llm/verify 节点数（近似 chat 轮消耗）。"""
+def _vol_llm_used(st: dict, volume: int | None = None) -> int:
+    """指定卷已消耗的 llm/verify 节点数（近似 chat 轮消耗）。"""
     if not st.get("plan"):
         return 0
-    v = vol_of(st, st["current_chapter"] + 1)
+    v = volume if volume is not None else vol_of(st, st["current_chapter"] + 1)
     n = 0
     for nid, rec in (st.get("nodes") or {}).items():
         if not isinstance(rec, dict) or rec.get("status") != "done":
@@ -646,29 +678,91 @@ def vol_budget(st: dict) -> int:
     return int((st.get("plan") or {}).get("vol_llm_cap", 80))
 
 
-def _write_relay(book: Path, st: dict, reason: str = "定期接力") -> None:
-    _vol = ""
+def _node_volume(st: dict, node: str) -> int | None:
+    match = re.match(r"^V(\d+)\.N", node)
+    if match:
+        return int(match.group(1))
+    match = re.match(r"^C(\d+)\.N", node)
+    if match:
+        return vol_of(st, int(match.group(1)))
+    return None
+
+
+def _write_relay(book: Path, st: dict, reason: str = "定期接力",
+                 run_id: str | None = None) -> None:
+    """每个持久化检查点写机读 relay.json，并从它渲染 relay.md。"""
+    cursor = st.get("cursor") or "__done__"
+    done_nodes = [(nid, rec) for nid, rec in (st.get("nodes") or {}).items()
+                  if isinstance(rec, dict) and rec.get("status") in ("done", "skipped")]
+    last_node = None
+    if done_nodes:
+        nid, rec = max(done_nodes, key=lambda x: x[1].get("at", ""))
+        last_node = {"id": nid, "at": rec.get("at"),
+                     "evidence": rec.get("evidence") or [], "sha256": rec.get("sha256") or []}
+
+    vol_info = None
     if st.get("plan"):
-        _v = vol_of(st, st["chapters_committed"] + 1)
-        _s, _e = span(st, _v)
-        _vol = (f"- 当前卷：第 {_v} 卷（第 {_s}–{_e} 章），本卷已用 "
-                f"{_vol_llm_used(st)}/{vol_budget(st)} 预算\n")
+        done_volume = _node_volume(st, last_node["id"]) if last_node else None
+        ch = int(st.get("current_chapter") or 0) + 1
+        v = done_volume or (int(cursor.split(".", 1)[0][1:]) if cursor.startswith("V")
+                            else vol_of(st, min(ch, int(st.get("max_chapters") or ch))))
+        start, end = span(st, v)
+        vol_info = {"vol": v, "start": start, "end": end,
+                    "used": _vol_llm_used(st, v), "cap": vol_budget(st)}
+
+    open_findings = []
+    if cursor.startswith("C"):
+        m = re.match(r"C(\d+)\.", cursor)
+        if m:
+            fp = book / "_pipeline" / f"findings_C{int(m.group(1))}.json"
+            try:
+                fd = json.loads(fp.read_text(encoding="utf-8"))
+                open_findings = [x for x in (fd.get("items") or [])
+                                 if isinstance(x, dict) and x.get("blocking")][:5]
+            except (OSError, ValueError):
+                pass
+
+    relay = {
+        "schema": 1, "at": now(), "run_id": run_id or st.get("run_id"),
+        "book": st.get("book"), "cursor": cursor,
+        "next_node": None if cursor == "__done__" else cursor,
+        "current_chapter": st.get("current_chapter", 0),
+        "chapters_committed": st.get("chapters_committed", 0),
+        "words_total": st.get("words_total", 0),
+        "stop_reason": reason, "blocked_reason": st.get("blocked_reason"),
+        "volume_shortfall": st.get("volume_shortfall") or {},
+        "last_node": last_node, "vol_budget": vol_info,
+        "last_volume": vol_info["vol"] if vol_info else None,
+        "degraded_volumes": st.get("degraded_volumes") or [],
+        "budgets": st.get("budget") or {}, "open_findings": open_findings,
+        "next_hint": f"继续执行 {cursor}" if cursor != "__done__" else "流水线已完成",
+    }
+    _atomic_write(book / "_pipeline" / "relay.json",
+                  json.dumps(relay, ensure_ascii=False, indent=1) + "\n")
+
+    vol_text = ""
+    if vol_info:
+        vol_text = (f"- 当前卷：第 {vol_info['vol']} 卷（第 {vol_info['start']}–"
+                    f"{vol_info['end']} 章），本卷预算 {vol_info['used']}/{vol_info['cap']} 预算\n")
+    last_text = f"- 上一节点：`{last_node['id']}` ({last_node.get('at')})\n" if last_node else ""
+    block_text = f"- 阻断：{relay['blocked_reason']}\n" if relay["blocked_reason"] else ""
+    shortfall_text = ""
+    if relay["volume_shortfall"]:
+        shortfall_text = "- 卷章数缺口：" + "；".join(
+            f"第{v}卷 {data.get('actual', '?')}/{data.get('planned', '?')}章"
+            for v, data in sorted(relay["volume_shortfall"].items())) + "\n"
     content = (
         "# 接力口令\n\n"
-        f"- 书：{st['book']}\n"
-        f"- 已封板：{st['chapters_committed']} 章 / {st['words_total']} 字\n"
-        f"- 当前 cursor：`{st['cursor']}`\n"
+        f"- 书：{relay['book']}\n"
+        f"- 已封板：{relay['chapters_committed']} 章 / {relay['words_total']} 字\n"
+        f"- 当前 cursor：`{cursor}`\n"
         f"- 停止原因：{reason}\n"
-        f"{_vol}"
-        f"- 续跑命令：\n\n"
-        "```\n"
-        f'"{PYTHON}" "{HERE / "autopilot.py"}" next --book "{book}"\n'
-        "```\n\n"
-        "> 人工粘贴上一条命令即可接管；不要手动改 state.json。\n"
+        f"{last_text}{block_text}{vol_text}{shortfall_text}"
+        f"- 下一步：{relay['next_hint']}\n"
+        f"- 续跑命令：`\"{PYTHON}\" \"{HERE / 'autopilot.py'}\" next --book \"{book}\"`\n\n"
+        "> 机读状态见同目录 relay.json；不要手动改 state.json。\n"
     )
-    p = book / "_pipeline" / "relay.md"
-    _atomic_write(p, content)
-
+    _atomic_write(book / "_pipeline" / "relay.md", content)
 
 def _recoverable_commit_error(out: str) -> bool:
     """N16 封板失败是否可由 N14 修正文/事务解决。
@@ -685,10 +779,11 @@ def _recoverable_commit_error(out: str) -> bool:
 
 
 def cmd_relay(a) -> int:
-    """只写接力口令并打印，不推进游标。runtime 预算耗尽时调它。"""
+    """只写接力口令并打印，不推进游标。runtime 停机时调它。"""
     book = Path(a.book).resolve()
     st = load_state(book)
-    _write_relay(book, st, getattr(a, "reason", None) or "手动/预算耗尽")
+    _write_relay(book, st, getattr(a, "reason", None) or "手动/预算耗尽",
+                 getattr(a, "run_id", None) or None)
     print((book / "_pipeline" / "relay.md").read_text(encoding="utf-8"))
     return 0
 
@@ -783,26 +878,51 @@ def cmd_next(a) -> int:
                 save_state(book, st)
                 continue
             st["cursor"] = f"C{ch}.N15"
+        elif spec["id"].startswith("V") and spec["id"].endswith(".N17"):
+            volume_head = spec["id"].split(".", 1)[0]
+            st["cursor"] = f"{volume_head}.N18"
+        elif spec["id"].startswith("V") and spec["id"].endswith(".N18"):
+            volume_head = spec["id"].split(".", 1)[0]
+            st["cursor"] = f"{volume_head}.N19"
+        elif spec["id"].startswith("V") and spec["id"].endswith(".N19"):
+            volume_head = spec["id"].split(".", 1)[0]
+            st["cursor"] = f"{volume_head}.N20"
+        elif spec["id"].startswith("V") and spec["id"].endswith(".N20"):
+            volume = int(spec["id"][1:].split(".", 1)[0])
+            _, volume_end = span(st, volume)
+            st["cursor"] = "N17g" if volume_end >= st["max_chapters"] else f"V{volume + 1}.N07"
         else:
             st["cursor"] = next_cursor(st)
-        if spec["id"].endswith(".N16"):
+        if spec["id"].endswith(".N16") and st.get("plan"):
             _done = st["chapters_committed"]
-            if st.get("plan"):
-                # 卷边界才写接力口令（每 22 章一次，不是每 3 章）
-                if _done and _done % vol_size(st) == 0:
-                    _write_relay(book, st, f"第 {vol_of(st, _done)} 卷写完")
-            elif _done % 3 == 0:
-                _write_relay(book, st)
+            if _done and _done % vol_size(st) == 0:
+                _write_relay(book, st, f"第 {vol_of(st, _done)} 卷写完")
         save_state(book, st)
 
     # 卷预算闸门：超了就在卷内停下，写接力口令，不发令牌
     if st.get("plan") and spec and spec.get("kind") in ("llm", "verify"):
-        used, cap = _vol_llm_used(st), vol_budget(st)
-        if used >= cap:
-            _write_relay(book, st, f"第 {vol_of(st, st['current_chapter'] + 1)} 卷预算用尽（{used}/{cap}）")
-            save_state(book, st)
-            print(json.dumps({"status": "volume_budget", "node": spec["id"],
-                              "vol_used": used, "vol_cap": cap,
+        current_vol = _node_volume(st, spec["id"]) or vol_of(st, st["current_chapter"] + 1)
+        used, cap = _vol_llm_used(st, current_vol), vol_budget(st)
+        degraded = set(int(v) for v in (st.get("degraded_volumes") or []))
+        if used >= cap and current_vol not in degraded:
+            degraded.add(current_vol)
+            st["degraded_volumes"] = sorted(degraded)
+            volume_start, volume_end = span(st, current_vol)
+            planned_chapters = max(0, volume_end - volume_start + 1)
+            committed_in_volume = max(0, min(volume_end, st["chapters_committed"]) - volume_start + 1)
+            actual_chapters = min(committed_in_volume,
+                                   len([p for p in book.glob(f"正文/第[0-9][0-9][0-9]章_*.md")
+                                        if volume_start <= int(p.name[1:4]) <= volume_end]))
+            st["volume_degradation"] = {**(st.get("volume_degradation") or {}),
+                                         str(current_vol): {"at": now(), "used": used,
+                                                            "cap": cap, "skipped_to": f"V{current_vol}.N17"}}
+            st["volume_shortfall"] = {**(st.get("volume_shortfall") or {}),
+                                       str(current_vol): {"planned": planned_chapters,
+                                                          "actual": actual_chapters}}
+            st["cursor"] = f"V{current_vol}.N17"
+            save_state(book, st, f"第 {current_vol} 卷预算用尽，降级进入卷末审查（{used}/{cap}）")
+            print(json.dumps({"status": "volume_degraded", "from_node": spec["id"],
+                              "cursor": st["cursor"], "vol_used": used, "vol_cap": cap,
                               "relay": str(book / "_pipeline" / "relay.md")},
                              ensure_ascii=False))
             return 0
@@ -844,6 +964,7 @@ def cmd_next(a) -> int:
         "resolved_evidence": evidence,
         "_iron_rules": IRON_RULES,
         "done_cmd_for_orchestrator_only": done_cmd,
+        "max_attempts": spec.get("max_attempts"),
         "subagent_role": spec["role"],
         "subagent_model": spec.get("model", "default"),
         "subagent_prompt": render_prompt(spec["prompt"], book, st),
@@ -884,6 +1005,7 @@ def main():
     rl = sub.add_parser("relay", help="只写接力口令，不推进游标（预算耗尽时调）")
     rl.add_argument("--book", required=True)
     rl.add_argument("--reason", default="")
+    rl.add_argument("--run-id", default="")
 
     d = sub.add_parser("done")
     d.add_argument("--book", required=True)
@@ -907,6 +1029,10 @@ def main():
     r.add_argument("--token", required=False, default="")
     r.add_argument("--force", action="store_true",
                    help="确认恢复处于人工阻断态的书（blocked 且无在途令牌时必须）")
+    r.add_argument("--reset-budget", action="store_true",
+                   help="显式重置失败预算；可用 --scope 指定范围，操作会写入 control_log")
+    r.add_argument("--scope", default="",
+                   help="重置范围：C{n}、V{v}.N08、N04/N06/N08/N20/N20g；省略表示全局")
 
     cm = sub.add_parser("commit", help="单章定稿（append/revision 自动分流）")
     cm.add_argument("--book", required=True)
@@ -924,6 +1050,8 @@ def main():
         return cmd_init(a)
     if a.cmd == "status":
         return cmd_status(a)
+    if a.cmd == "doctor":
+        return cmd_doctor(a)
     if a.cmd == "next":
         book = Path(a.book).resolve()
         lock = acquire_next_lock(book)

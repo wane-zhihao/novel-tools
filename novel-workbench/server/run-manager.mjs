@@ -87,6 +87,7 @@ export class RunManager {
       const paths = resolveRuntimePaths({ dataDir: this.dataDir });
       const runtime = new AgentRuntime({
         bookDir: run.bookPath,
+        runId: run.id,
         config,
         signal: run.controller.signal,
         maxSteps,

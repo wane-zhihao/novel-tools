@@ -18,6 +18,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+CHAPTER_BODY_MIN_WORDS = 2000
+CHAPTER_TARGET_WORDS = 2200
+
 # ─── 全局节点 N01–N09d ────────────────────────────────────────────────────────
 
 # ─── 卷与里程碑（纯函数推导，不建第二真相源）────────────────────────────
@@ -289,6 +292,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
     base = {
         f"C{n}.N09": {
             "id": f"C{n}.N09", "kind": "llm", "model": "default", "role": "writer", "name": "单章场景卡",
+            "max_attempts": 3,
             "evidence": f"大纲/细纲_第{n:03d}章.md", "min_size": 500,
             "prompt": (
                 f"读取 {_outline_ref(st, n)}、{_volume_outline_ref(st, n)}、"
@@ -296,7 +300,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 f"{{STORY_LONG_WRITE}}/references/workflow-outline.md，"
                 f"产出 {b}/大纲/细纲_第{n:03d}章.md。\n"
                 "硬约束（check-outline-contract.js 逐项机械验收，缺一项即打回）：\n"
-                "1. 九个必填字段各占一行，格式「- 字段名：值」：核心事件 / 字数目标（如 2200字）/ "
+                f"1. 九个必填字段各占一行，格式「- 字段名：值」：核心事件 / 字数目标（固定 {CHAPTER_TARGET_WORDS}字）/ "
                 "字数口径（visible_chars_v1）/ 单元ID/位置 / 目标情绪 / 主角目标/关键选择 / "
                 "章首钩子 / 爽点 / 本章禁止提前释放；\n"
                 "2. 「目标情绪」「主角目标/关键选择」必须写实际内容，不接受 [待补充]；\n"
@@ -305,6 +309,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 "5. 情节细化用表格，表头为：# / 情节点 / 功能标签 / 执行边界（禁＋放）；\n"
                 "6. 反引号引用的项目内 .md 路径必须真实存在，不许杜撰。\n"
                 "内容硬规则：3–6 拍；第 1 拍的前 200 字内必须有冲突；全章只推进一条主线；"
+                f"目标正文至少 {CHAPTER_BODY_MIN_WORDS} 字；字数目标和明确范围下限均不得低于该门槛。\n"
                 "章末出口必须是钩子。回执 ≤100 字。"
             ),
         },
@@ -319,6 +324,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
         f"C{n}.N12": {
             "id": f"C{n}.N12", "kind": "llm", "model": "default", "role": "writer", "name": "写正文+填追踪事务",
             "evidence": f"正文/第{n:03d}章_*.md", "min_size": 1800,
+            "max_attempts": 4,
             "prompt": (
                 f"读取：\n"
                 f"  {b}/大纲/细纲_第{n:03d}章.md          （场景卡，按拍写）\n"
@@ -326,7 +332,8 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
                 f"  {b}/.story/work/第{n:03d}章/tracking.json   （预填事务，按 shapes 填）\n"
                 f"  {{QIMAO}}/harness/style-anchor.json    （文风锚，取 2 段正例切片）\n"
                 f"  {{SKILL}}/references/writing-contract.md    （**手法手册，先读**）\n\n"
-                f"写出 {b}/正文/第{n:03d}章_<标题>.md，单章 **≥2000 字**。\n\n"
+                f"写出 {b}/正文/第{n:03d}章_<标题>.md，单章 **≥{CHAPTER_BODY_MIN_WORDS} 字**；" 
+                f"细纲字数目标至少 {CHAPTER_BODY_MIN_WORDS} 字，验收目标 {CHAPTER_TARGET_WORDS} 字；明确范围的下限不得低于 {CHAPTER_BODY_MIN_WORDS} 字。\n\n"
                 "【写入方式（**必须分段写**）】单次 write_file 的 content 控制在 1000–1200 字以内。\n"
                 "  第一次 write_file（不带 append）写开头，之后每次 write_file 设 append=true 追加，\n"
                 "  分 2–3 次写完整章。一次性输出整章会触到模型长度上限、整段作废、白烧轮次。\n\n"
@@ -364,6 +371,7 @@ def chapter_nodes(st: dict, book: Path, n: int) -> dict[str, dict]:
         f"C{n}.N14": {
             "id": f"C{n}.N14", "kind": "llm", "model": "default", "role": "writer", "name": "定点改写",
             "evidence": f"正文/第{n:03d}章_*.md", "min_size": 1800,
+            "max_attempts": 4,
             "skippable": True,  # N13 通过（无 findings）时按方案跳过，直达 N15
             "prompt": (
                 f"读取 {b}/_pipeline/findings_C{n}.json（N13 脚本报错与 N15 审查意见已统一汇入）。\n"
@@ -483,7 +491,7 @@ def volume_nodes(st: dict, book: Path, v: int) -> dict[str, dict]:
                 f"对照 {b}/大纲/卷纲_第{v}卷.md 与 {{QIMAO}}/03_评分卡.md 做本卷终审。\n"
                 "先输出「本卷最可能让读者弃书的 3 个位置」再裁决。\n"
                 f"写入 {b}/_pipeline/judgments_V{v}.N20.json，格式同 N20，"
-                "source 填 投稿包/卷{v}_全文.md。\n"
+                f"source 填 投稿包/卷{v}_全文.md。\n"
                 "quote 必须是正文连续原文。回执 ≤100 字。"
             ),
         },
@@ -551,7 +559,15 @@ def judgment_policy(node_id: str) -> dict:
         v = node_id[1:].split(".", 1)[0]
         return {"sources": [f"大纲/卷纲_第{v}卷.md"], "mechanical_ids": set()}
     if node_id.startswith("V") and node_id.endswith(".N20"):
-        return {"sources": ["正文/"], "mechanical_ids": MECHANICAL_N20_IDS}
+        # 卷末终审读的是合成后的 投稿包/卷{v}_全文.md，不是 正文/。
+        # 2026-10-26 修：此前这里写的是 ["正文/"]，而 prompt 要求 source 填
+        # 投稿包/卷{v}_全文.md → 每卷末必然 source 不在允许范围，节点永远过不了。
+        v = node_id[1:].split(".", 1)[0]
+        return {"sources": [f"投稿包/卷{v}_全文.md"], "mechanical_ids": MECHANICAL_N20_IDS}
+    if node_id == "N20g":
+        # 全书终审只读 投稿包/全书概要.md（不读正文，25 万字会爆上下文）。
+        # 2026-10-26 修：此前落到默认分支 sources=[] → 任何文本项都过不了。
+        return {"sources": ["投稿包/全书概要.md"], "mechanical_ids": set()}
     if node_id.startswith("C") and node_id.endswith(".N15"):
         chapter = int(node_id.split(".")[0][1:])
         return {"sources": [f"正文/第{chapter:03d}章_"], "mechanical_ids": set()}
@@ -623,8 +639,10 @@ def next_cursor(st: dict) -> str:
         st["current_chapter"] = n
         st["chapters_committed"] = n
         if n >= st["max_chapters"]:
-            # 新书（有 plan）走全书汇总；老书维持 N17
-            return "N17" if not st.get("plan") else "N17g"
+            # 有卷计划时先完成末卷审查，再汇总全书；老书维持 N17。
+            if not st.get("plan"):
+                return "N17"
+            return f"V{vol_of(st, n)}.N17"
         if st.get("plan"):
             size = vol_size(st)
             if n % size == 0 or n == st["max_chapters"]:

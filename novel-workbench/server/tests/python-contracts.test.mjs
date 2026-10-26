@@ -16,7 +16,7 @@ test("Python 契约：N13 状态矩阵 / N16 幂等 / N21 不可投", (t) => {
   const output = execFileSync(python, [join(TEST_DIR, "python_contracts.py")], {
     encoding: "utf8",
     timeout: 60_000,
-    env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
+    env: { ...process.env, FAKE_NODE: process.execPath, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
   });
   assert.match(output, /PY_CONTRACTS_OK/);
 });

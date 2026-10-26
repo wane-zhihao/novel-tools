@@ -100,6 +100,77 @@ test("输出触到长度上限：不当空回复结束，改为要求分段写�
   }
 });
 
+test("章节节点采用覆盖的有限重试预算，记录完整拒绝原因并在耗尽时停止", async () => {
+  const bookDir = mkdtempSync(join(tmpdir(), "wb-preflight-retry-"));
+  try {
+    const feedbacks = [];
+    const events = [];
+    const runtime = new AgentRuntime({
+      bookDir,
+      config: {
+        roles: {
+          writer: { provider: "fake", model: "fake-model", timeout_s: 30, max_attempts: 2, max_tokens: 8192 },
+          judge: { provider: "fake", model: "fake-model", timeout_s: 30 },
+        },
+        providers: {},
+      },
+      env: {},
+      providerFactory: () => ({ chat: async () => ({
+        content: "回执：完成", toolCalls: [], finishReason: "stop",
+        usage: { prompt: 1, completion: 1 },
+      }) }),
+    });
+    runtime.onEvent = (event) => events.push(event);
+    runtime.runAgent = async (_instruction, _roleConfig, feedback) => {
+      feedbacks.push(feedback);
+      return { text: "回执：完成", usage: { prompt: 1, completion: 1 }, toolSteps: 0 };
+    };
+    const doneReplies = [
+      { code: 2, payload: { error: "tracking_preflight_failed", detail: "delta 字节超限" } },
+      { code: 2, payload: { error: "text_preflight_failed", detail: "not-is-comparison" } },
+      { code: 0, payload: { ok: true } },
+    ];
+    runtime.callDone = async () => doneReplies.shift();
+
+    const result = await runtime.executeNode({
+      node: "C1.N12",
+      subagent_role: "writer",
+      subagent_prompt: "写第 1 章正文并填写追踪事务",
+      evidence: [],
+      max_attempts: 4,
+    });
+
+    assert.equal(result.status, "done");
+    assert.equal(result.attempt, 3);
+    assert.match(feedbacks[1], /delta 字节超限/);
+    assert.match(feedbacks[2], /not-is-comparison/);
+    assert.deepEqual(events.filter((event) => event.type === "node_started").map((event) => event.attempt), [1, 2, 3]);
+    assert.match(events.find((event) => event.type === "node_retry")?.reason ?? "", /delta 字节超限/);
+    assert.equal(doneReplies.length, 0);
+    assert.equal(events.find((event) => event.type === "node_retry")?.error, "tracking_preflight_failed");
+    assert.match(events.find((event) => event.type === "node_retry")?.detail ?? "", /delta 字节超限/);
+
+    const exhaustedReplies = [
+      { code: 2, payload: { error: "tracking_preflight_failed", detail: "delta 字节超限" } },
+      { code: 2, payload: { error: "text_preflight_failed", detail: "not-is-comparison" } },
+      { code: 0, payload: { ok: true } },
+    ];
+    runtime.callDone = async () => exhaustedReplies.shift();
+    const exhausted = await runtime.executeNode({
+      node: "C1.N12",
+      subagent_role: "writer",
+      subagent_prompt: "写第 1 章正文并填写追踪事务",
+      evidence: [],
+      max_attempts: 2,
+    });
+    assert.equal(exhausted.status, "failed");
+    assert.equal(exhausted.attempt, 2);
+    assert.equal(exhaustedReplies.length, 1, "耗尽预算后不得再调用 done");
+  } finally {
+    rmSync(bookDir, { recursive: true, force: true });
+  }
+});
+
 test("工具参数 JSON 非法（截断）时回喂明确提示，不拿空对象硬执行", async () => {
   const bookDir = mkdtempSync(join(tmpdir(), "wb-badargs-"));
   try {

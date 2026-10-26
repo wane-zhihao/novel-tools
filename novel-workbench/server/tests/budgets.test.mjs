@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -33,12 +33,13 @@ test("completion token 超预算会立即停止", async () => {
     const loaded = loadAgentConfig({ bookDir, dataDir });
     const config = structuredClone(loaded.config);
     config.budgets.max_completion_tokens = 10;
-    config.budgets.llm_rounds = 5;
+      config.budgets.llm_rounds = 5;
     const runtime = new AgentRuntime({
       bookDir,
       config,
       dataDir,
       maxSteps: 1,
+      runId: "budget-test-run",
       providerFactory: () => ({
         chat: async () => ({
           content: "超预算",
@@ -50,6 +51,10 @@ test("completion token 超预算会立即停止", async () => {
     const result = await runtime.run();
     assert.equal(result.status, "budget_exhausted");
     assert.equal(result.llm_rounds, 1);
+    const relay = JSON.parse(readFileSync(join(bookDir, "_pipeline", "relay.json"), "utf8"));
+    assert.equal(relay.stop_reason, "budget_exhausted");
+    assert.equal(relay.run_id, "budget-test-run");
+    assert.equal(relay.cursor, result.book.cursor);
   });
 });
 

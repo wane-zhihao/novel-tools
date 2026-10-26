@@ -153,6 +153,7 @@ async function handleRun(options) {
     const runtime = new AgentRuntime({
       bookDir,
       config,
+      runId: `cli-${Date.now()}`,
       dataDir: defaultDataDir(),
       signal: controller.signal,
       maxSteps: options.maxSteps,

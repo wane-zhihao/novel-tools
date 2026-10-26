@@ -5,6 +5,8 @@
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -99,6 +101,137 @@ def make_book(root: Path, words: int = 2380) -> Path:
     return book
 
 
+def test_outline_wordcount_contract(root: Path) -> None:
+    config = make_config(root / "outline-contract-config", "ready")
+    cfg = json.loads(config.read_text(encoding="utf-8"))
+    cfg["NODE"] = os.environ.get("FAKE_NODE") or shutil.which("node")
+    cfg["CHECK_OUTLINE"] = str(Path.home() / ".qoder" / "skills" / "story-long-write" / "scripts" / "check-outline-contract.js")
+    write(config, json.dumps(cfg, ensure_ascii=False))
+    previous_config = os.environ.get("WORKBENCH_CONFIG")
+    os.environ["WORKBENCH_CONFIG"] = str(config)
+    try:
+        from inline_runner import _outline_gate
+
+        book = root / "outline-contract-book"
+        book.mkdir(parents=True, exist_ok=True)
+        for filename, target, word_range, expected_rc, expected_id, detail_fragment in [
+            ("目标低于正文硬下限.md", 1900, "2000-2300", 1, "outline.wordcount-contract", "目标须不低于 2000"),
+            # 实现给出的是更精确的两条独立文案（目标 / 范围下限各一条，均带当前值），
+            # 此处按实际文案断言——原先写的「范围须落在 2000-2400」是更早版本的措辞。
+            ("范围低于正文硬下限.md", 2200, "1800-2400", 1, "outline.wordcount-contract", "范围下限须不低于 2000"),
+            ("目标不在范围内.md", 2300, "2000-2200", 1, "outline.wordcount-contract", "目标 2300 不在明确字数范围"),
+            ("目标范围有效.md", 2200, "2000-2400", 0, None, None),
+            ("无明确范围目标有效.md", 2200, "", 0, None, None),
+        ]:
+            write(book / "大纲" / "细纲_第001章.md", f'''- 核心事件：测试事件
+- 字数目标：{target}字
+- 字数口径：visible_chars_v1
+- 单元ID/位置：U01/第1章
+- 目标情绪：紧张到释然
+- 主角目标/关键选择：找到线索并决定追查
+- 章首钩子：门外有人敲门
+- 爽点：主角当面拆穿谎言
+- 本章禁止提前释放：幕后身份
+### 内容概括
+- 起因：冲突开始
+- 发展：线索出现
+- 转折：证词矛盾
+- 高潮：主角拿出证据
+- 结尾：对方留下新线索
+### 情节安排
+### 人物关系和出场顺序
+### 情节细化
+| # | 情节点 | 功能标签 | 执行边界（禁＋放） |
+| 1 | 找到证据 | 推进 | 禁：公布身份；放：当面质问 |
+- 字数范围：{word_range}
+''')
+            rc, detail = _outline_gate(book, 1)
+            report = json.loads(detail)
+            assert rc == expected_rc, (filename, rc, detail)
+            failures = report.get("failures") or []
+            if expected_id:
+                assert any(item.get("id") == expected_id for item in failures), report
+                assert any(detail_fragment in item.get("detail", "") for item in failures), report
+            else:
+                assert report["ok"] is True, report
+    finally:
+        if previous_config is None:
+            os.environ.pop("WORKBENCH_CONFIG", None)
+        else:
+            os.environ["WORKBENCH_CONFIG"] = previous_config
+
+
+def test_next_exposes_node_attempt_budget(root: Path) -> None:
+    config = make_config(root / "attempt-budget-config", "ready")
+    book = make_state_book(root, "attempt-budget", cursor="C1.N12", current_chapter=0,
+                           chapters_committed=0, plan=None, platform="zongheng",
+                           run_started_at="2026-10-27T00:00:00+0800")
+    write(book / "追踪" / "_tracking-state.json", json.dumps({
+        "last_committed_chapter": 0,
+        "wordcount_records": {},
+    }, ensure_ascii=False))
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "autopilot.py"), "next", "--book", str(book)],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "WORKBENCH_CONFIG": str(config)}, check=False,
+    )
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    payload = json.loads(proc.stdout)
+    assert payload["node"] == "C1.N12", payload
+    assert payload["max_attempts"] == 4, payload
+
+
+def test_next_renders_selected_platform_paths(root: Path) -> None:
+    config = make_config(root / "platform-prompt-config", "ready")
+    cfg = json.loads(config.read_text(encoding="utf-8"))
+    cfg["PLATFORMS"]["zongheng"] = {
+        "DIR": "F:/novel/zongheng",
+        "GENRE_BASE": "F:/novel/zongheng/harness/genre-baselines.json",
+        "STYLE_ANCHOR": "F:/novel/zongheng/harness/style-anchor.json",
+        "GENRES": ["dushi"],
+    }
+    write(config, json.dumps(cfg, ensure_ascii=False))
+    book = make_state_book(root, "platform-prompt", cursor="C1.N12", current_chapter=0,
+                           chapters_committed=0, plan=None, platform="zongheng", genre="dushi")
+    write(book / "追踪" / "_tracking-state.json", json.dumps({
+        "last_committed_chapter": 0,
+        "wordcount_records": {},
+    }, ensure_ascii=False))
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPTS / "autopilot.py"), "next", "--book", str(book)],
+        capture_output=True, text=True, encoding="utf-8",
+        env={**os.environ, "WORKBENCH_CONFIG": str(config)}, check=False,
+    )
+    assert proc.returncode == 0, (proc.returncode, proc.stdout, proc.stderr)
+    payload = json.loads(proc.stdout)
+    assert "F:/novel/zongheng/harness/style-anchor.json" in payload["subagent_prompt"], payload
+    assert "fake/harness/style-anchor.json" not in payload["subagent_prompt"], payload
+
+
+def test_manifest_uses_book_platform(root: Path) -> None:
+    config = make_config(root / "manifest-config", "ready")
+    cfg = json.loads(config.read_text(encoding="utf-8"))
+    cfg["PLATFORMS"]["zongheng"] = {
+        "DIR": "F:/novel/zongheng",
+        "GENRE_BASE": "F:/novel/zongheng/harness/genre-baselines.json",
+        "STYLE_ANCHOR": "F:/novel/zongheng/harness/style-anchor.json",
+    }
+    write(config, json.dumps(cfg, ensure_ascii=False))
+    env = {**os.environ, "WORKBENCH_CONFIG": str(config)}
+    script = SCRIPTS / "autopilot.py"
+    book = root / "manifest-book"
+    book.mkdir(parents=True, exist_ok=True)
+    init = subprocess.run(
+        [sys.executable, str(script), "init", "--title", "纵横 manifest 测试",
+         "--genre", "dushi", "--target-words", "6000", "--max-chapters", "3",
+         "--platform", "zongheng", "--vol-size", "3", "--book", str(book)],
+        capture_output=True, text=True, encoding="utf-8", env=env, check=False,
+    )
+    assert init.returncode == 0, (init.returncode, init.stdout, init.stderr)
+    manifest = json.loads((book / "_pipeline" / "workbench.json").read_text(encoding="utf-8"))
+    assert manifest["platform"] == "F:/novel/zongheng", manifest
+
+
 def test_n13(root: Path) -> None:
     from inline_runner import _chapter_check
     for status, expected in [
@@ -123,6 +256,151 @@ def test_n16_idempotent(root: Path) -> None:
     rc, message = _commit_chapter(book, 1, state)
     assert rc == 0, message
     assert state["words_total"] == 2380, state
+
+
+def test_n21_volume_shortfall_report(root: Path) -> None:
+    from inline_runner import _package
+    book = make_book(root / "n21-short-volume", words=20000)
+    st = {"book": "短卷测试", "genre": "niandai", "chapters_committed": 1,
+          "max_chapters": 3, "plan": {"vol_size": 3, "vol_llm_cap": 2},
+          "degraded_volumes": [1], "current_chapter": 1}
+    st["nodes"] = {"V1.N20": {"status": "done"}}
+    write(book / "_pipeline" / "judgments_V1.N20.json", '{"verdict":"pass","items":[]}')
+    write(book / "_pipeline" / "judgments_N20g.json", '{"verdict":"pass","items":[]}')
+    rc, message = _package(book, st)
+    assert rc == 0, message
+    report = (book / "投稿包" / "体检报告.md").read_text(encoding="utf-8")
+    assert "第1卷 1/3章" in report, report
+    assert "全书汇总终审" in report, report
+    write(book / "_pipeline" / "judgments_N20g.json",
+          '{"verdict":"block","items":[{"id":"arc","criterion":"主线收束","verdict":"fail","level":"B"}]}')
+    rc, message = _package(book, st)
+    assert rc != 0 and "NOT_SUBMITTABLE" in message, message
+    report = (book / "投稿包" / "体检报告.md").read_text(encoding="utf-8")
+    assert "主线收束" in report, report
+    book = make_book(root / "n21-advisory", words=20000)
+    st["book"] = "卷末遗留测试"
+    st["degraded_volumes"] = []
+    st["nodes"] = {"V1.N20": {"status": "done", "advisory": True}}
+    st["volume_advisories"] = {"V1.N20": {"summary": "主线收束不足", "items": [
+        {"id": "arc", "criterion": "主线收束不足", "fix": "补足主角抉择后果"}]}}
+    write(book / "_pipeline" / "judgments_V1.N20.json", json.dumps({
+        "verdict": "block", "items": [{"id": "arc", "criterion": "主线收束不足",
+                                           "verdict": "fail", "level": "B"}]},
+        ensure_ascii=False))
+    write(book / "_pipeline" / "judgments_N20g.json", '{"verdict":"pass","items":[]}')
+    from inline_runner import _merge_global
+    assert _merge_global(book, st)[0] == 0
+    summary = (book / "投稿包" / "全书概要.md").read_text(encoding="utf-8")
+    assert "V1.N20" in summary and "补足主角抉择后果" in summary, summary
+    from autopilot import _write_relay
+    relay = book / "_pipeline" / "relay.json"
+    st.update({"current_chapter": 1, "chapters_committed": 1,
+               "volume_shortfall": {"1": {"planned": 3, "actual": 1}},
+               "nodes": {"V1.N07": {"status": "done", "at": "2026-10-26T12:00:00+0800"}}})
+    _write_relay(book, st, "测试卷预算缺口")
+    relay_doc = json.loads(relay.read_text(encoding="utf-8"))
+    assert relay_doc["volume_shortfall"]["1"] == {"planned": 3, "actual": 1}
+    assert relay_doc["last_node"]["id"] == "V1.N07", relay_doc
+    assert relay_doc["last_volume"] == 1, relay_doc
+
+
+def test_volume_n20_routes_through_global_gate_and_package(root: Path) -> None:
+    """计划书完整走 V.N20 → N17g → N20g → N21，卷末遗留由全书审查收口。"""
+    import contextlib
+    import io
+    from autopilot import load_state, write_token
+    from commands import cmd_done
+    from inline_runner import _merge_global, _mainline, _package
+    from pipeline_spec import next_cursor
+
+    config = make_config(root / "volume-route-config", "ready")
+    previous_config = os.environ.get("WORKBENCH_CONFIG")
+    os.environ["WORKBENCH_CONFIG"] = str(config)
+    try:
+        book = make_state_book(
+            root, "volume-n20-route", max_chapters=3, current_chapter=3,
+            chapters_committed=3, words_total=21000, cursor="V1.N20",
+            plan={"vol_size": 3, "vol_llm_cap": 80},
+            nodes={"V1.N17": {"status": "done"},
+                   "V1.N18": {"status": "done"},
+                   "V1.N19": {"status": "done"}},
+        )
+        for chapter in range(1, 4):
+            write(book / "正文" / f"第{chapter:03d}章_测试.md", f"第{chapter}章内容。" * 400)
+        write(book / "大纲" / "卷纲_第1卷.md", "- 主线：主角查清账目并追回损失\n")
+        volume_full = "# 第一卷\n" + "卷末主线遗留问题仍未解决，需要后续审查。\n" * 20
+        write(book / "投稿包" / "卷1_全文.md", volume_full)
+        write(book / "_pipeline" / "judgments_V1.N20.json", json.dumps({
+            "verdict": "block", "summary": "卷末主线收束仍有遗留。", "items": [{
+                "id": "arc", "criterion": "主线收束不足", "quote": "卷末主线遗留问题仍未解决需要后续审查",
+                "source": "投稿包/卷1_全文.md", "verdict": "fail", "level": "B",
+                "fix": "概要应记录此遗留供全书终审。",
+            }],
+        }, ensure_ascii=False))
+        write_token(book, "tok-v1n20-route", "V1.N20")
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert cmd_done(Args(book=str(book), node="V1.N20", token="tok-v1n20-route",
+                                 evidence=["_pipeline/judgments_V1.N20.json"])) == 0
+        st = load_state(book)
+        assert st["cursor"] == "N17g", st["cursor"]
+        assert st["nodes"]["V1.N20"]["status"] == "done", st["nodes"]
+        assert "V1.N20" in st["volume_advisories"], st["volume_advisories"]
+
+        assert _merge_global(book, st)[0] == 0
+        summary = (book / "投稿包" / "全书概要.md").read_text(encoding="utf-8")
+        assert "V1.N20" in summary and "概要应记录此遗留" in summary, summary
+        assert next_cursor(st) == "N20g"
+        st["cursor"] = "N20g"
+        write(book / "_pipeline" / "state.json", json.dumps(st, ensure_ascii=False))
+        global_quote = "概要应记录此遗留供全书终审"
+        write(book / "_pipeline" / "judgments_N20g.json", json.dumps({
+            "verdict": "pass", "summary": "全书检查通过，已处理卷末遗留。", "items": [{
+                "id": "arc-review", "criterion": "卷末遗留已纳入全书审查",
+                "quote": global_quote, "source": "投稿包/全书概要.md",
+                "verdict": "pass", "level": "A",
+            }],
+        }, ensure_ascii=False))
+        write_token(book, "tok-n20g-route", "N20g")
+        with contextlib.redirect_stdout(io.StringIO()):
+            assert cmd_done(Args(book=str(book), node="N20g", token="tok-n20g-route",
+                                 evidence=["_pipeline/judgments_N20g.json"])) == 0
+        st = load_state(book)
+        assert st["cursor"] == "N21", st["cursor"]
+
+        tracking = {"last_committed_chapter": 3,
+                    "wordcount_records": {str(n): {"actual": 7000} for n in range(1, 4)}}
+        write(book / "追踪" / "_tracking-state.json", json.dumps(tracking, ensure_ascii=False))
+        for chapter in range(1, 4):
+            write(book / "正文" / f"第{chapter:03d}章_测试.md", f"第{chapter}章内容。" * 1800)
+        rc, message = _package(book, st)
+        assert rc == 0, message
+        report = (book / "投稿包" / "体检报告.md").read_text(encoding="utf-8")
+        assert "第1卷：block （已转全书汇总终审）" in report and "全书 pass" in report, report
+        assert _mainline(book, st) == "主角查清账目并追回损失"
+        email = (book / "投稿包" / "投稿邮件.md").read_text(encoding="utf-8")
+        assert "卷纲_第1卷.md" in email and "目录_第1卷.md" in email, email
+        assert "主角查清账目并追回损失" in email, email
+    finally:
+        if previous_config is None:
+            os.environ.pop("WORKBENCH_CONFIG", None)
+        else:
+            os.environ["WORKBENCH_CONFIG"] = previous_config
+
+
+def test_status_exposes_volume_degradation(root: Path) -> None:
+    import contextlib
+    import io
+    from autopilot import cmd_status
+    book = make_state_book(root, "status-volume", plan={"vol_size": 3, "vol_llm_cap": 2},
+                           degraded_volumes=[1],
+                           volume_shortfall={"1": {"planned": 3, "actual": 1}})
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        assert cmd_status(Args(book=str(book))) == 0
+    status = json.loads(output.getvalue())
+    assert status["degraded_volumes"] == [1], status
+    assert status["volume_shortfall"]["1"] == {"planned": 3, "actual": 1}, status
 
 
 def test_n21_blocked(root: Path) -> None:
@@ -241,17 +519,148 @@ def test_block_and_resume_need_token(root: Path) -> None:
     assert st["blocked_reason"] is None
 
 
-def test_resume_resets_rounds(root: Path) -> None:
-    """审查 B2：终停后 resume 必须返还修复预算，否则第一次再 block 即再次终停。"""
+def test_resume_preserves_scoped_budget_reset(root: Path) -> None:
+    """普通 resume 保留失败预算；显式按 scope 重置只清目标预算。"""
     from commands import cmd_resume
     from autopilot import load_state
-    book = make_state_book(root, "b2", fix_rounds={"1": 2}, n20_rounds=2,
-                           blocked_reason="终停待人工")
+    book = make_state_book(
+        root, "b2", fix_rounds={"1": 2, "2": 1}, n20_rounds=2,
+        global_fix_rounds={"V1.N08": 1, "N20g": 1},
+        budget={"C1": {"rounds": 2}, "C2": {"rounds": 1},
+                "V1.N08": {"rounds": 1}, "N20g": {"rounds": 1}},
+        blocked_reason="终停待人工")
     rc = cmd_resume(Args(book=str(book), token="", force=True))
     assert rc == 0
     st = load_state(book)
+    assert st["fix_rounds"] == {"1": 2, "2": 1}, st["fix_rounds"]
+    assert st["n20_rounds"] == 2, st["n20_rounds"]
+    assert st["budget"]["C1"]["rounds"] == 2, st["budget"]
+    assert "run_started_at" in st
+
+    st["blocked_reason"] = "再次终停"
+    write(book / "_pipeline" / "state.json", json.dumps(st, ensure_ascii=False))
+    rc = cmd_resume(Args(book=str(book), token="", force=True,
+                         reset_budget=True, scope="C1"))
+    assert rc == 0
+    st = load_state(book)
+    assert st["fix_rounds"] == {"2": 1}, st["fix_rounds"]
+    assert "C1" not in st["budget"] and "C2" in st["budget"], st["budget"]
+    assert st["fix_rounds"] == {"2": 1}, st["fix_rounds"]
+    assert st["n20_rounds"] == 2, st["n20_rounds"]
+    assert st["global_fix_rounds"] == {"V1.N08": 1, "N20g": 1}, st["global_fix_rounds"]
+
+    st["blocked_reason"] = "无效范围不得改变预算"
+    write(book / "_pipeline" / "state.json", json.dumps(st, ensure_ascii=False))
+    rc = cmd_resume(Args(book=str(book), token="", force=True,
+                         reset_budget=True, scope="N17g"))
+    assert rc == 2, "未知预算范围必须拒绝"
+    assert load_state(book)["budget"] == st["budget"]
+
+    st["blocked_reason"] = "全局重置"
+    write(book / "_pipeline" / "state.json", json.dumps(st, ensure_ascii=False))
+    rc = cmd_resume(Args(book=str(book), token="", force=True,
+                         reset_budget=True, scope="GLOBAL"))
+    assert rc == 0
+    st = load_state(book)
     assert st["fix_rounds"] == {}, st["fix_rounds"]
+    assert st["budget"] == {}, st["budget"]
+    assert st["global_fix_rounds"] == {}, st["global_fix_rounds"]
     assert st["n20_rounds"] == 0, st["n20_rounds"]
+
+
+def test_resume_preserves_n14_recheck(root: Path) -> None:
+    """resume 中断恢复不能丢弃 N14 改写后的 N13 复检标记。"""
+    from commands import cmd_resume
+    from autopilot import load_state
+    book = make_state_book(root, "resume-recheck", cursor="C1.N13",
+                           recheck_chapter=1)
+    rc = cmd_resume(Args(book=str(book), token="", force=True))
+    assert rc == 0
+    st = load_state(book)
+    assert st["cursor"] == "C1.N13", st["cursor"]
+    assert st.get("recheck_chapter") == 1, st
+
+
+def test_tracking_heal_routes_volume_boundary_to_audit(root: Path) -> None:
+    """tracking 自愈发现卷末已封板时，必须先进入该卷 N17 审核。"""
+    from autopilot import _heal_from_tracking, load_state
+    book = make_state_book(root, "heal-volume-boundary", plan={"vol_size": 2},
+                           max_chapters=4, current_chapter=1,
+                           chapters_committed=1, words_total=0, cursor="C2.N16")
+    write(book / "追踪" / "_tracking-state.json", json.dumps({
+        "last_committed_chapter": 2,
+        "wordcount_records": {"1": {"actual": 2000}, "2": {"actual": 2100}},
+    }, ensure_ascii=False))
+    st = load_state(book)
+    _heal_from_tracking(book, st)
+    st = load_state(book)
+    assert st["cursor"] == "V1.N17", st["cursor"]
+
+    final_book = make_state_book(root, "heal-final-volume-boundary",
+                                 plan={"vol_size": 3}, max_chapters=3,
+                                 current_chapter=2, chapters_committed=2,
+                                 words_total=0, cursor="C3.N16")
+    write(final_book / "追踪" / "_tracking-state.json", json.dumps({
+        "last_committed_chapter": 3,
+        "wordcount_records": {str(n): {"actual": 2000} for n in range(1, 4)},
+    }, ensure_ascii=False))
+    st = load_state(final_book)
+    _heal_from_tracking(final_book, st)
+    st = load_state(final_book)
+    assert st["cursor"] == "V1.N17", st["cursor"]
+
+
+def test_next_cursor_runs_final_volume_audit_before_global(root: Path) -> None:
+    """计划书最后一章封板后仍须执行末卷 N17-N20，再进 N17g。"""
+    from pipeline_spec import next_cursor
+    st = {"cursor": "C4.N16", "current_chapter": 3,
+          "chapters_committed": 3, "max_chapters": 4,
+          "plan": {"vol_size": 2}, "words_total": 0, "target_words": 20000}
+    assert next_cursor(st) == "V2.N17"
+    st["cursor"] = "V2.N20"
+    assert next_cursor(st) == "N17g"
+
+
+def test_volume_budget_at_volume_terminal_uses_terminal_volume(root: Path) -> None:
+    """卷末终审发令前应按节点所属卷检查预算，不应误读下一章所在卷。"""
+    import contextlib
+    import io
+    from autopilot import cmd_next
+    book = make_state_book(
+        root, "budget-volume-terminal", cursor="V1.N20", current_chapter=2,
+        chapters_committed=2, max_chapters=4,
+        plan={"vol_size": 2, "vol_llm_cap": 2},
+        nodes={"V1.N07": {"status": "done"}, "V1.N08": {"status": "done"}})
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        rc = cmd_next(Args(book=str(book)))
+    assert rc == 0, output.getvalue()
+    result = json.loads(output.getvalue())
+    assert result["status"] == "volume_degraded", result
+    assert result["cursor"] == "V1.N17", result
+
+
+def test_block_budget_uses_chapter_scope() -> None:
+    from commands import _record_block_budget
+    st = {}
+    rounds, total, _ = _record_block_budget(
+        st, "C3.N15", [{"id": "continuity", "blocking": True}])
+    assert (rounds, total) == (1, 1)
+    assert st["budget"]["C3"]["rounds"] == 1, st["budget"]
+
+
+def test_terminal_block_writes_relay_reason(root: Path) -> None:
+    from commands import _terminal_block
+    from autopilot import load_state
+    book = make_state_book(root, "terminal-relay", cursor="N20")
+    judgment = book / "_pipeline" / "judgments_N20.json"
+    write(judgment, '{"verdict":"block","items":[]}')
+    st = load_state(book)
+    rc = _terminal_block(book, st, "N20", "预算停止测试", judgment)
+    assert rc == 1
+    relay = json.loads((book / "_pipeline" / "relay.json").read_text(encoding="utf-8"))
+    assert relay["stop_reason"] == "预算停止测试", relay
+    assert relay["blocked_reason"] == "预算停止测试", relay
 
 
 def test_n14_done_rechecks_n13(root: Path) -> None:
@@ -611,14 +1020,25 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="wb-py-contracts-") as tmp:
         root = Path(tmp)
         os.environ["WORKBENCH_CONFIG"] = str(make_config(root, "ready"))
+        test_outline_wordcount_contract(root)
+        test_next_exposes_node_attempt_budget(root)
+        test_next_renders_selected_platform_paths(root)
+        test_manifest_uses_book_platform(root)
         test_n13(root)
         test_n16_idempotent(root)
+        test_n21_volume_shortfall_report(root)
         test_n21_blocked(root)
         test_next_lock(root)
         test_evidence_pattern_mismatch(root)
         test_done_token_via_env(root)
         test_block_and_resume_need_token(root)
-        test_resume_resets_rounds(root)
+        test_resume_preserves_scoped_budget_reset(root)
+        test_resume_preserves_n14_recheck(root)
+        test_tracking_heal_routes_volume_boundary_to_audit(root)
+        test_next_cursor_runs_final_volume_audit_before_global(root)
+        test_volume_budget_at_volume_terminal_uses_terminal_volume(root)
+        test_volume_n20_routes_through_global_gate_and_package(root)
+        test_block_budget_uses_chapter_scope()
         test_n14_done_rechecks_n13(root)
         test_n13_recheck_routes(root)
         test_rollback_best_snapshot(root)

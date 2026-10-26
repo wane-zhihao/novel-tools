@@ -133,46 +133,134 @@ def _fail_items(j: dict) -> list[dict]:
 def _terminal_block(book: Path, st: dict, node: str, reason: str, jf: Path, extra: dict | None = None) -> int:
     st["blocked_reason"] = reason
     st["nodes"][node] = {"status": "failed", "at": now(), "judgments": str(jf)}
-    save_state(book, st)
+    save_state(book, st, reason)
     print(json.dumps({"error": "verify_blocked", "reason": reason, **(extra or {})},
                      ensure_ascii=False))
     return 1
+
+
+def _budget_scope(node: str) -> str:
+    """按问题所属范围持久化阻断预算，跨 run 保留。"""
+    match = re.match(r"^C(\d+)\.N15$", node)
+    return f"C{match.group(1)}" if match else node
+
+
+def _record_block_budget(st: dict, node: str, items: list) -> tuple[int, int, str]:
+    """以 finding id/criterion 作为稳定指纹，同时保留总次数兜底。"""
+    ids = sorted({str(x.get("id") or x.get("criterion") or "unknown")
+                  for x in items if isinstance(x, dict) and x.get("blocking", True)})
+    if not ids:
+        ids = sorted({str(x.get("criterion") or x.get("id") or "unknown")
+                      for x in items if isinstance(x, dict)})
+    if not ids:
+        ids = ["<empty-block>"]
+    fp = hashlib.sha1("\n".join(ids).encode("utf-8")).hexdigest()[:12]
+    scope = _budget_scope(node)
+    budgets = st.setdefault("budget", {})
+    old = budgets.get(scope) or {}
+    rounds = int(old.get("rounds", 0)) + 1 if old.get("fp") == fp else 1
+    total = int(old.get("total", 0)) + 1
+    budgets[scope] = {"rounds": rounds, "total": total, "fp": fp,
+                      "ids": ids, "updated_at": now()}
+    return rounds, total, fp
 
 
 def _handle_verify_block(book: Path, st: dict, node: str, j: dict, jf: Path) -> int:
     """block 不是终点：单章回 N14，终审回 N20f，超预算才停机。"""
     summary = j.get("summary", "")
     items = _fail_items(j)
+    fingerprint_rounds, total_rounds, fingerprint = _record_block_budget(st, node, items)
 
     if node.startswith("C") and node.endswith(".N15"):
         ch = int(node.split(".")[0][1:])
         append_chapter_findings(book, ch, items, "N15")
-        rounds = int(st.get("fix_rounds", {}).get(str(ch), 0))
-        if rounds >= 2:
+        rounds = max(int(st.get("fix_rounds", {}).get(str(ch), 0)), fingerprint_rounds - 1)
+        if rounds >= 2 or total_rounds >= 4:
             return _terminal_block(
                 book, st, node,
                 f"{node} 连续 {rounds + 1} 轮仍 block：{summary[:300]}", jf,
-                {"hint": "同一处失败 2 次，按铁律停机，需人工判断"})
+                {"hint": "同一问题失败 2 次或累计 block 4 次，需人工判断",
+                 "budget": {"same_fingerprint": fingerprint_rounds, "total": total_rounds,
+                            "fingerprint": fingerprint}})
         st["fix_rounds"] = {**(st.get("fix_rounds") or {}), str(ch): rounds + 1}
         st["cursor"] = f"C{ch}.N14"
         st["nodes"][node] = {"status": "failed", "at": now(), "judgments": str(jf)}
-        save_state(book, st)
+        save_state(book, st, f"{node} block，已回退到 {st['cursor']}")
         print(json.dumps({"ok": True, "blocked": True, "routed_to": st["cursor"],
+                          "round": rounds + 1, "reason": summary[:300]}, ensure_ascii=False))
+        return 1
+
+    if node.startswith("V") and node.endswith(".N08"):
+        target = node.rsplit(".", 1)[0] + ".N07"
+        rounds = int(st.get("global_fix_rounds", {}).get(node, 0))
+        if rounds >= 2 or total_rounds >= 4:
+            return _terminal_block(book, st, node,
+                f"{node} 连续审核仍 block：{summary[:300]}", jf,
+                {"hint": "本卷主线修改达到预算上限，需人工判断",
+                 "budget": {"same_fingerprint": fingerprint_rounds, "total": total_rounds,
+                            "fingerprint": fingerprint}})
+        st["global_fix_rounds"] = {**(st.get("global_fix_rounds") or {}), node: rounds + 1}
+        st["cursor"] = target
+        st["nodes"][node] = {"status": "failed", "at": now(), "judgments": str(jf)}
+        save_state(book, st, f"{node} block，已回退到 {target}")
+        print(json.dumps({"ok": True, "blocked": True, "routed_to": target,
+                          "round": rounds + 1, "reason": summary[:300]}, ensure_ascii=False))
+        return 1
+
+    if node.startswith("V") and node.endswith(".N20"):
+        append_endgame_findings(book, [{**item, "level": "A", "blocking": False,
+                                         "original_level": item.get("level", "B"),
+                                         "name": item.get("name") or item.get("criterion"),
+                                         "note": item.get("note") or item.get("fix") or "卷末审查遗留"}
+                                        for item in items], node)
+        # 卷内章节已封板，不能用全书 N20f 去改写；记录为 advisory 并进入后续全书汇总。
+        try:
+            from pipeline_spec import next_cursor
+            target = next_cursor(st)
+        except Exception:
+            target = "__done__"
+        st.setdefault("volume_advisories", {})[node] = {
+            "at": now(), "summary": summary[:500], "items": items,
+            "fingerprint": fingerprint, "rounds": fingerprint_rounds,
+        }
+        st["nodes"][node] = {"status": "done", "at": now(), "judgments": str(jf),
+                             "advisory": True}
+        st["cursor"] = target
+        save_state(book, st, f"{node} findings 已记为后续终审 advisory")
+        print(json.dumps({"ok": True, "blocked": True, "advisory": True,
+                          "routed_to": target, "reason": summary[:300]}, ensure_ascii=False))
+        return 0
+
+    if node == "N20g":
+        rounds = int(st.get("global_fix_rounds", {}).get(node, 0))
+        if rounds >= 1 or total_rounds >= 3:
+            return _terminal_block(book, st, node,
+                f"N20g 全书终审复核仍 block：{summary[:300]}", jf,
+                {"hint": "全书概要修订一次后仍未通过，需人工判断",
+                 "budget": {"same_fingerprint": fingerprint_rounds, "total": total_rounds,
+                            "fingerprint": fingerprint}})
+        st["global_fix_rounds"] = {**(st.get("global_fix_rounds") or {}), node: rounds + 1}
+        st["cursor"] = "N17g"
+        st["nodes"][node] = {"status": "failed", "at": now(), "judgments": str(jf)}
+        save_state(book, st, "N20g block，已回到 N17g 重合成概要")
+        print(json.dumps({"ok": True, "blocked": True, "routed_to": "N17g",
                           "round": rounds + 1, "reason": summary[:300]}, ensure_ascii=False))
         return 1
 
     if node == "N20":
         append_endgame_findings(book, items, "N20")
         rounds = int(st.get("n20_rounds", 0))
-        if rounds >= 2:
+        if rounds >= 2 or total_rounds >= 4:
             return _terminal_block(
                 book, st, node,
                 f"N20 终审连续 {rounds + 1} 轮仍 block：{summary[:300]}", jf,
-                {"hint": "N20f 已修 2 轮，剩余问题需人工决策"})
+                {"hint": "N20f 已修 2 轮或累计 block 4 次，剩余问题需人工决策",
+                 "budget": {"same_fingerprint": fingerprint_rounds, "total": total_rounds,
+                            "fingerprint": fingerprint}})
         st["n20_rounds"] = rounds + 1
         st["cursor"] = "N20f"
         st["nodes"][node] = {"status": "failed", "at": now(), "judgments": str(jf)}
-        save_state(book, st)
+        save_state(book, st, "N20 block，已进入 N20f 定点修复")
         print(json.dumps({"ok": True, "blocked": True, "routed_to": "N20f",
                           "round": rounds + 1, "reason": summary[:300]}, ensure_ascii=False))
         return 1
@@ -184,15 +272,17 @@ def _handle_verify_block(book: Path, st: dict, node: str, j: dict, jf: Path) -> 
     if node in global_retry:
         target = global_retry[node]
         rounds = int(st.get("global_fix_rounds", {}).get(node, 0))
-        if rounds >= 2:
+        if rounds >= 2 or total_rounds >= 4:
             return _terminal_block(
                 book, st, node,
                 f"{node} 连续 {rounds + 1} 轮仍 block：{summary[:300]}", jf,
-                {"hint": "闸门打回 2 轮仍未过，需人工判断"})
+                {"hint": "闸门打回 2 轮或累计 block 4 次仍未过，需人工判断",
+                 "budget": {"same_fingerprint": fingerprint_rounds, "total": total_rounds,
+                            "fingerprint": fingerprint}})
         st["global_fix_rounds"] = {**(st.get("global_fix_rounds") or {}), node: rounds + 1}
         st["cursor"] = target
         st["nodes"][node] = {"status": "failed", "at": now(), "judgments": str(jf)}
-        save_state(book, st)
+        save_state(book, st, f"{node} block，已回退到 {target}")
         print(json.dumps({"ok": True, "blocked": True, "routed_to": target,
                           "round": rounds + 1, "reason": summary[:300]}, ensure_ascii=False))
         return 1
@@ -455,11 +545,35 @@ def cmd_done(a) -> int:
         except ValueError:
             issued_ts = None
         if issued_ts is not None:
-            stale = [str(f) for f in files if f.stat().st_mtime + 2 < issued_ts]
+            prior = st.get("nodes", {}).get(a.node) or {}
+            if prior.get("status") != "done":
+                prior = {}
+            prior_evidence = prior.get("evidence") or []
+            prior_hashes = dict(zip(prior_evidence, prior.get("sha256") or []))
+            ledger = st.get("evidence_ledger") or {}
+            reused_evidence = []
+            stale = []
+            run_started_at = st.get("run_started_at")
+            try:
+                run_started_ts = datetime.strptime(run_started_at, "%Y-%m-%dT%H:%M:%S%z").timestamp()
+            except (TypeError, ValueError):
+                run_started_ts = None
+            for f in files:
+                rel = str(f.relative_to(book)) if str(f).startswith(str(book)) else str(f)
+                content_hash = sha256_of(f)
+                accepted_hashes = set(ledger.get(f"{a.node}::{rel}", []))
+                if rel in prior_hashes:
+                    accepted_hashes.add(prior_hashes[rel])
+                if content_hash in accepted_hashes:
+                    reused_evidence.append(rel)
+                    continue
+                fresh_for_run = run_started_ts is not None and f.stat().st_mtime + 2 >= run_started_ts
+                if f.stat().st_mtime + 2 < issued_ts and not fresh_for_run:
+                    stale.append(str(f))
             if stale:
                 print(json.dumps({
                     "error": "stale_evidence",
-                    "detail": f"以下证据早于本轮 token 签发时间，可能沿用了旧产物：{stale}",
+                    "detail": f"以下证据早于本轮 token 且不在本轮生成或已验收 hash 白名单中：{stale}",
                 }, ensure_ascii=False))
                 return 2
 
@@ -510,11 +624,22 @@ def cmd_done(a) -> int:
         }, ensure_ascii=False))
         return 2
 
+    reused_evidence = locals().get("reused_evidence", [])
     hashes = [sha256_of(f) for f in files]
+    evidence_paths = [str(f.relative_to(book)) if str(f).startswith(str(book)) else str(f) for f in files]
+    evidence_ledger = st.setdefault("evidence_ledger", {})
+    for rel, content_hash in zip(evidence_paths, hashes):
+        key = f"{a.node}::{rel}"
+        accepted = list(evidence_ledger.get(key) or [])
+        if content_hash in accepted:
+            accepted.remove(content_hash)
+        accepted.append(content_hash)
+        evidence_ledger[key] = accepted[-3:]
     st["nodes"][a.node] = {
         "status": "done", "at": now(),
-        "evidence": [str(f.relative_to(book)) if str(f).startswith(str(book)) else str(f) for f in files],
+        "evidence": evidence_paths,
         "sha256": hashes,
+        "reused_evidence": bool(reused_evidence),
         "attempts": st["nodes"].get(a.node, {}).get("attempts", 1),
     }
     st["llm_rounds"] = int(st.get("llm_rounds", 0)) + 1
@@ -529,7 +654,8 @@ def cmd_done(a) -> int:
         st["cursor"] = next_cursor(st)
     save_state(book, st)
     print(json.dumps({"ok": True, "node": a.node, "next": st["cursor"],
-                      "llm_rounds": st["llm_rounds"]}, ensure_ascii=False))
+                      "llm_rounds": st["llm_rounds"],
+                      "reused_evidence": bool(reused_evidence)}, ensure_ascii=False))
     return 0
 
 
@@ -573,7 +699,7 @@ def cmd_block(a) -> int:
 
 
 def cmd_resume(a) -> int:
-    """不信任内存：清阻断、返还修复预算、与 tracking 账本交叉校验后继续。"""
+    """不信任内存：清阻断、保留失败预算、与 tracking 账本交叉校验后继续。"""
     book = Path(a.book).resolve()
     st = load_state(book)
     if not st:
@@ -597,13 +723,42 @@ def cmd_resume(a) -> int:
                           "hint": "该书处于人工阻断态；确认要继续请加 --force"},
                          ensure_ascii=False))
         return 2
+    reset_budget = bool(getattr(a, "reset_budget", False))
+    scope = str(getattr(a, "scope", "") or "").strip()
+    if scope and not reset_budget:
+        print(json.dumps({"error": "scope_requires_reset_budget",
+                          "hint": "--scope 只能与 --reset-budget 一起使用"}, ensure_ascii=False))
+        return 2
+    valid_scope = re.fullmatch(r"C\d+|V\d+\.N08|N04|N06|N08|N20|N20g|GLOBAL", scope) if scope else None
+    if scope and not valid_scope:
+        print(json.dumps({"error": "invalid_budget_scope", "scope": scope,
+                          "hint": "scope 格式：C{n}、V{v}.N08、N04/N06/N08/N20/N20g/GLOBAL"},
+                         ensure_ascii=False))
+        return 2
+
     st["blocked_reason"] = None
-    # 审查 B2：终停后人工修复再 resume，必须返还修复预算，否则第一次再 block
-    # 就再次终停——恢复路径只给一次机会。
-    st["fix_rounds"] = {}
-    st["n20_rounds"] = 0
-    st["global_fix_rounds"] = {}
-    st.pop("recheck_chapter", None)
+    st["run_started_at"] = now()
+    # 预算属于书的持久状态，不属于某次 run。普通 resume/--force 只解除运行阻断。
+    # 仅显式 --reset-budget 才重置，并记录控制日志便于审计。
+    if reset_budget:
+        if not scope or scope == "GLOBAL":
+            st["fix_rounds"] = {}
+            st["n20_rounds"] = 0
+            st["global_fix_rounds"] = {}
+            st["budget"] = {}
+        elif scope.startswith("C"):
+            chapter = scope[1:]
+            st.get("fix_rounds", {}).pop(chapter, None)
+            st.get("budget", {}).pop(scope, None)
+        else:
+            st.get("budget", {}).pop(scope, None)
+            st.get("global_fix_rounds", {}).pop(scope, None)
+            if scope == "N20":
+                st["n20_rounds"] = 0
+    # N14 后的 N13 是待完成的质量复检；resume 必须保留其路由标记。
+    # 其他游标不依赖该标记时才清除遗留值。
+    if st.get("cursor") != f"C{st.get('recheck_chapter')}.N13":
+        st.pop("recheck_chapter", None)
     clear_token(book)
     try:
         (book / "_pipeline" / ".next.lock").unlink()
@@ -615,9 +770,10 @@ def cmd_resume(a) -> int:
             v["status"] = "pending"
             v["attempts"] = v.get("attempts", 0)
     _cross_check_tracking(book, st)
-    save_state(book, st)
+    save_state(book, st, "resume 后续跑")
     _control_log(book, {"cmd": "resume", "was_blocked": was_blocked,
-                        "forced": bool(getattr(a, "force", False))})
+                        "forced": forced, "reset_budget": reset_budget, "scope": scope or "GLOBAL"})
     print(json.dumps({"ok": True, "resumed_at": st["cursor"],
-                      "chapter": st["current_chapter"]}, ensure_ascii=False))
+                      "chapter": st["current_chapter"],
+                      "budget_reset": reset_budget}, ensure_ascii=False))
     return 0

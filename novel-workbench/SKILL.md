@@ -88,8 +88,9 @@ AUT="<repo>\novel-workbench\scripts\autopilot.py"
 - 有节点在途（存在 `.step_token`）时，`block` / `resume` 必须带该节点的 `--token`，否则被拒；
 - 书处于人工阻断态时，`resume` 必须显式 `--force`（确认恢复），否则被拒；
 - 两次调用都写 `_pipeline/control_log.jsonl` 留痕（pid + 时间 + 原因）。
-`resume` 会返还修复预算（fix_rounds / n20_rounds 清零）并与 `_tracking-state.json`
-交叉校验（不一致以账本为准，越界章节节点打回 pending）。
+普通 `resume` 只解除阻断并恢复中断节点，保留 `fix_rounds`、`global_fix_rounds`、`n20_rounds` 与问题指纹预算；只有显式
+`resume --reset-budget` 才清除全部失败预算，也可用 `--scope C{n|V{v}.N08|N04|N06|N08|N20|N20g|GLOBAL}` 限定重置范围。
+每次 resume 会与 `_tracking-state.json` 交叉校验（不一致以账本为准，越界章节节点打回 pending）；按书内 Agent 设置启用的模型执行还受独立 `llm_rounds`、token 与工具步数预算限制。
 
 `done` 的 evidence 支持通配符：章节文件名由 writer 定标题，所以传 `正文/第001章_*.md` 即可。
 

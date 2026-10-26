@@ -148,6 +148,7 @@ export class AgentRuntime {
     env = process.env,
     signal = null,
     onEvent = () => {},
+    runId = null,
     maxSteps = Infinity,
     dataDir = defaultDataDir(),
     paths = resolveRuntimePaths({ env, dataDir }),
@@ -162,6 +163,7 @@ export class AgentRuntime {
     this.env = env;
     this.signal = signal;
     this.onEvent = onEvent;
+    this.runId = runId;
     this.maxSteps = maxSteps;
     this.paths = paths;
     this.providerFactory = providerFactory;
@@ -387,7 +389,12 @@ export class AgentRuntime {
     const evidence = Array.isArray(instruction.resolved_evidence) && instruction.resolved_evidence.length
       ? instruction.resolved_evidence
       : (Array.isArray(instruction.evidence) ? instruction.evidence : []);
-    const maxAttempts = roleConfig.max_attempts ?? 2;
+    const configuredAttempts = instruction.max_attempts ?? roleConfig.max_attempts ?? 2;
+    if (configuredAttempts !== null && configuredAttempts !== undefined
+      && (!Number.isInteger(configuredAttempts) || configuredAttempts < 1 || configuredAttempts > 5)) {
+      return { status: "failed", error: `${instruction.node} 的 max_attempts 必须是 1–5 的整数` };
+    }
+    const maxAttempts = configuredAttempts;
     this.currentNode = instruction.node;
     // 审查 A6：工具面按角色收放——只有 judge 可写 judgments_*，writer/scout 不可。
     this.tools.setRole(role);
@@ -463,7 +470,13 @@ export class AgentRuntime {
           + `${detail || payload.message || payload.reason || ""}。`
           + "请修正后重新写入全部证据文件（不要沿用旧文件），再回执。";
         feedback = feedback.slice(0, 900);
-        this.emit({ type: "node_retry", node: instruction.node, reason: `${payload.error}: 回喂重写` });
+        this.emit({
+          type: "node_retry",
+          node: instruction.node,
+          reason: feedback.slice(0, 900),
+          error: payload.error ?? "unknown",
+          detail: String(detail || payload.message || payload.reason || "").slice(0, 400),
+        });
         continue;
       }
       return {
@@ -475,7 +488,7 @@ export class AgentRuntime {
         usage: agent.usage,
       };
     }
-    return { status: "failed", error: `${instruction.node} 连续 ${maxAttempts} 次未通过` };
+    return { status: "failed", error: `${instruction.node} 连续 ${maxAttempts} 次未通过`, attempt: maxAttempts };
   }
 
   async run() {
@@ -483,31 +496,31 @@ export class AgentRuntime {
     try {
       while (true) {
         this.assertRunning();
-        if (this.steps >= this.maxSteps) return this.finish("max_steps");
-        if (this.llmRounds >= this.budgets.llm_rounds) return this.finish("budget_exhausted");
+        if (this.steps >= this.maxSteps) return await this.finish("max_steps");
+        if (this.llmRounds >= this.budgets.llm_rounds) return await this.finish("budget_exhausted");
 
         const next = await this.callNext();
         this.assertRunning();
         const payload = next.payload;
         if (!payload) {
-          return this.finish("failed", `autopilot 输出无法解析：${sanitize(next.stderr || "无 stderr 输出").slice(-400)}`);
+          return await this.finish("failed", `autopilot 输出无法解析：${sanitize(next.stderr || "无 stderr 输出").slice(-400)}`);
         }
-        if (payload.done) return this.finish("done");
+        if (payload.done) return await this.finish("done");
         if (payload.error) {
-          if (payload.error === "blocked") return this.finish("blocked", payload.reason ?? "流水线受阻");
+          if (payload.error === "blocked") return await this.finish("blocked", payload.reason ?? "流水线受阻");
           if (payload.error === "node_running") {
-            return this.finish("needs_resume", payload.hint ?? "上次执行被中断，需先恢复");
+            return await this.finish("needs_resume", payload.hint ?? "上次执行被中断，需先恢复");
           }
-          return this.finish("failed", `${payload.error}: ${payload.hint ?? payload.output ?? ""}`.trim());
+          return await this.finish("failed", `${payload.error}: ${payload.hint ?? payload.output ?? ""}`.trim());
         }
         if (payload.kind !== "llm" && payload.kind !== "verify") {
-          return this.finish("failed", `非预期节点类型：${payload.kind}`);
+          return await this.finish("failed", `非预期节点类型：${payload.kind}`);
         }
 
         const outcome = await this.executeNode(payload);
-        if (outcome.status === "failed") return this.finish("failed", outcome.error);
-        if (outcome.status === "blocked") return this.finish("blocked", outcome.error);
-        if (outcome.status === "budget") return this.finish("budget_exhausted");
+        if (outcome.status === "failed") return await this.finish("failed", outcome.error);
+        if (outcome.status === "blocked") return await this.finish("blocked", outcome.error);
+        if (outcome.status === "budget") return await this.finish("budget_exhausted");
         this.steps += 1;
         this.results.push({
           node: payload.node,
@@ -519,13 +532,36 @@ export class AgentRuntime {
         if (outcome.status === "routed") continue;
       }
     } catch (error) {
-      if (error instanceof BudgetExceededError) return this.finish("budget_exhausted", error.message);
-      if (error instanceof RuntimeError && error.message === "已停止") return this.finish("stopped");
-      return this.finish("failed", error.message);
+      if (error instanceof BudgetExceededError) return await this.finish("budget_exhausted", error.message);
+      if (error instanceof RuntimeError && error.message === "已停止") return await this.finish("stopped");
+      return await this.finish("failed", error.message);
     }
   }
 
-  finish(status, error = null) {
+  async writeRelay(reason) {
+    const result = await runCommand(
+      this.paths.python,
+      [this.paths.autopilot, "relay", "--book", this.bookDir, "--reason", reason,
+       ...(this.runId ? ["--run-id", this.runId] : [])],
+      {
+        cwd: this.bookDir,
+        timeoutMs: 60_000,
+        env: { WORKBENCH_CONFIG: this.paths.configPath },
+      },
+    );
+    if (result.code !== 0) {
+      return sanitize(result.stderr || result.stdout || `relay 退出码 ${result.code}`).slice(-400);
+    }
+    return null;
+  }
+
+  async finish(status, error = null) {
+    let relayError = null;
+    try {
+      relayError = await this.writeRelay(status);
+    } catch (cause) {
+      relayError = sanitize(cause.message).slice(-400);
+    }
     let book = null;
     try {
       const state = JSON.parse(readFileSync(join(this.bookDir, "_pipeline", "state.json"), "utf8"));
@@ -540,6 +576,7 @@ export class AgentRuntime {
     const result = {
       status,
       error: error ? sanitize(error) : null,
+      relay_error: relayError,
       book,
       steps: this.results,
       llm_rounds: this.llmRounds,
