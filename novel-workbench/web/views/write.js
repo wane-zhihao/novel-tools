@@ -1,5 +1,6 @@
 import { api, commitChapter } from "../lib/api.js";
 import { el, clear, fmtNumber, toast, renderMarkdown } from "../lib/dom.js";
+import { errorState } from "../lib/errors.js";
 
 const AUTOSAVE_MS = 1200;
 const MAX_SAVE_WAIT = 10000;
@@ -88,42 +89,14 @@ export async function renderWrite({ bookId, chapter, go, state }) {
       // 结论留在页面上，由用户自己决定下一步（点「下一章」或回书房）。
     } catch (error) {
       setSaveState("error", "定稿失败");
-      const map = {
-        gate_blocked: {
-          text: `没过闸门：${(error.details?.gate?.blocking_count ?? 0)} 条阻断，先改再定稿。`,
-          actions: [{ label: "去审：看问题", onClick: () => go(`#/books/${bookId}/revise/${chapter}`) }],
-        },
-        length_out_of_band: {
-          text: "字数不在本章目标区间内。",
-          actions: [{ label: "按当前字数定稿",
-            onClick: () => runCommit(mode, { acceptLength: true }) }],
-        },
-        tracking_missing: {
-          text: "这一章还没有故事记录，不能直接定稿（会损坏后续章节的上下文）。",
-          actions: [{ label: "让 AI 写这一章", onClick: () => go(`#/books/${bookId}/write/${chapter}`) }],
-        },
-        tracking_invalid: {
-          text: "这一章的故事记录不合格，需要重建后再定稿。",
-          actions: [{ label: "去审：看详情", onClick: () => go(`#/books/${bookId}/revise/${chapter}`) }],
-        },
-        chapter_gap: {
-          text: error.message || "不能跳过前面未定稿的章节。",
-          actions: [{ label: "去定前一章",
-            onClick: () => go(`#/books/${bookId}/write/${Math.max(1, chapter - 1)}`) }],
-        },
-        chapter_busy: {
-          text: "流水线正卡在一个节点上，先恢复或停止再定稿。",
-          actions: [],
-        },
-        run_running: {
-          text: "这一章还在写，等运行结束再定稿。",
-          actions: [],
-        },
-      };
-      const hit = map[error.code] ?? { text: error.message || "定稿失败。", actions: [] };
+      // 0.6：文案与出口统一由 web/lib/errors.js 决定，视图不再自己维护错误码表。
+      const state = errorState(error, {
+        go, bookId, chapter,
+        retryWithLength: () => runCommit(mode, { acceptLength: true }),
+      });
       // 把错误码留在 DOM 上：用户看到人话，排障时能直接读到 code
-      banner.dataset.errorCode = error.code ?? "unknown";
-      showBanner(hit.text, "danger", hit.actions);
+      banner.dataset.errorCode = state.code ?? "unknown";
+      showBanner(state.text, state.tone, state.actions);
     } finally {
       committing = false;
     }
@@ -192,9 +165,9 @@ export async function renderWrite({ bookId, chapter, go, state }) {
     } catch (error) {
       if (error.code === "content_conflict") {
         setSaveState("error", "有冲突");
-        showBanner("磁盘上的正文比这里新。为了不覆盖，自动保存已暂停。", "danger", [
-          { label: "载入磁盘版本", onClick: () => window.location.reload() },
-        ]);
+        // 文案与「载入磁盘版本」出口都来自 errors.js（单一来源）
+        const conflict = errorState(error, { go, bookId, chapter });
+        showBanner(conflict.text, conflict.tone, conflict.actions);
         return;
       }
       setSaveState("error", "保存失败");
@@ -211,7 +184,9 @@ export async function renderWrite({ bookId, chapter, go, state }) {
 
   function showBanner(text, tone = "warn", actions = []) {
     clear(banner);
-    banner.append(el("div", { class: `banner ${tone === "danger" ? "banner-danger" : ""}` },
+    // tone → class 的映射集中在这里，errors.js 只负责给语义 tone
+    const toneClass = { danger: " banner-danger", ok: " banner-ok", warn: "" }[tone] ?? "";
+    banner.append(el("div", { class: `banner${toneClass}` },
       el("span", { text }),
       ...actions.map((action) => el("button", {
         class: "button button-small", type: "button", text: action.label, onclick: action.onClick,

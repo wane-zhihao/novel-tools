@@ -409,6 +409,7 @@ details.advanced summary { cursor: pointer; font-family: var(--serif); font-size
 .code-editor { min-height: 320px; font-family: var(--mono); font-size: 12px; }
 .banner { padding: 12px 14px; border-radius: 10px; background: var(--warn-wash); border: 1px solid var(--warn); color: var(--warn); font-size: 13px; }
 .banner-danger { background: var(--danger-wash); border-color: var(--danger); color: var(--danger); }
+.banner-ok { background: var(--ok-wash); border-color: var(--ok); color: var(--ok); }
 
 /* ── 首次开机向导（0.6） ── */
 .setup { max-width: 620px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; padding-top: 8px; }
