@@ -16,6 +16,11 @@ const state = {
   currentBookId: null,
   routeToken: 0,
   // 高级抽屉是覆盖层：开着时底页 DOM 必须保活（textarea 里可能有未保存草稿）
+  // 页面可注册的「离开守卫」：导航/重渲染前 await，返回 false 取消本次导航。
+  // 用于故事页未保存编辑（Phase 2 dirty 守卫）。
+  leaveGuard: null,
+  // 进入 render 时的 URL 原样：守卫否决 hashchange 导航时用它修回
+  lastHash: null,
   drawer: null,
   // 抽屉打开前的底页路由（含章号）。关抽屉按它恢复 hash：章号丢了会命中不了
   // 同路由守卫 → 重渲染 → 丢草稿
@@ -66,6 +71,8 @@ function bookOf(id) {
 }
 
 function go(hash) {
+  // 守卫不在这里问：改 hash 会触发 hashchange → render() 统一问一次。
+  // go 先问一遍、render 再问一遍会让用户点两次确认。
   if (location.hash === hash) render(true);
   else location.hash = hash;
 }
@@ -287,6 +294,22 @@ async function renderSetupRoute(token) {
 
 async function render(force = false) {
   const route = parseRoute();
+  // 同路由（抽屉开/关回到底页）不重建 DOM——既不该问「离开」守卫（没有离开），
+  // 也不该清它（关抽屉回到故事页，它的守卫还得继续管用）。先算出来。
+  const sameRoute = !force && route.view !== "advanced" && state.baseRoute
+      && state.baseRoute.view === route.view
+      && state.baseRoute.id === route.id
+      && state.baseRoute.chapter === route.chapter;
+  // 真正换页才问守卫；否决时 hash 可能已变（hashchange 路径），
+  // replaceState 修回进入本次 render 前保存的原样（含 ?doc= 等查询段），
+  // 既不丢用户输入，也不往历史里多压一条记录。go() 路径 hash 未动，无需修。
+  if (!sameRoute && state.leaveGuard && route.view !== "advanced"
+      && !(await state.leaveGuard())) {
+    if (location.hash !== state.lastHash) history.replaceState(null, "", state.lastHash);
+    return;
+  }
+  state.lastHash = location.hash;
+  if (!sameRoute) state.leaveGuard = null;
   // 高级抽屉是覆盖层，在 render 顶部处理、完全不进常规渲染路径：
   // 不 ++token（否则在途的底页渲染会被当作过期 token 丢弃后半段）、
   // 不剥 focus-mode/wide（那是底页自己的样式，与抽屉无关）。
@@ -304,10 +327,7 @@ async function render(force = false) {
   const token = ++state.routeToken;
   // 关抽屉把 hash 改回底页路由。同一路由不重渲染——稿纸是 textarea，
   // 重建就换 DOM，未自动保存的输入会丢（计划硬口径：抽屉开关不丢稿纸）。
-  if (!force && state.baseRoute
-      && state.baseRoute.view === route.view
-      && state.baseRoute.id === route.id
-      && state.baseRoute.chapter === route.chapter) {
+  if (sameRoute) {
     closeDrawer();
     return;
   }

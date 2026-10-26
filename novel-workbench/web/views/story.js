@@ -1,7 +1,7 @@
 import { api } from "../lib/api.js";
 import { el, clear, fmtDate, fmtNumber, toast } from "../lib/dom.js";
 
-export async function renderStory({ bookId }) {
+export async function renderStory({ bookId, state }) {
   const view = document.querySelector("#view");
   view.classList.remove("wide");
   clear(view).append(el("p", { class: "empty", text: "正在整理故事资料…" }));
@@ -18,6 +18,31 @@ export async function renderStory({ bookId }) {
   let activeDoc = null;
   let docData = null;
   let dirty = false;
+
+  // 守卫注册链路（配合 app.js 的 leaveGuard 协议）：
+  // - state.leaveGuard：应用内导航（侧栏/返回/抽屉关闭后的重渲染）统一在 render
+  //   入口询问，一次确认。story 重建 renderStory 时重新注册即覆盖旧的。
+  // - beforeunload：浏览器级离开（刷新/关标签页），confirm 帮不上，走原生拦截。
+  //   页面被导航离开时由 unloadWatcher 自毁——守卫否决的导航不算离开，
+  //   所以不能挂 once 的 hashchange 就卸载。
+  const isStoryPage = () => {
+    const parts = location.hash.replace(/^#\/?/, "").split("?")[0].split("/").filter(Boolean);
+    return parts[0] === "books" && parts[2] === "story";
+  };
+  const onUnload = (event) => {
+    if (!dirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+  };
+  const unloadWatcher = () => {
+    if (isStoryPage()) return;
+    window.removeEventListener("beforeunload", onUnload);
+    window.removeEventListener("hashchange", unloadWatcher);
+  };
+  window.addEventListener("beforeunload", onUnload);
+  window.addEventListener("hashchange", unloadWatcher);
+  if (state) state.leaveGuard = guardUnsaved;
+
   const tabs = el("div", { class: "tabs" });
   const list = el("div", { class: "card-list" });
   const editor = el("div", { class: "doc-editor" });
@@ -35,7 +60,11 @@ export async function renderStory({ bookId }) {
     clear(tabs).append(...Object.entries(TAB_LABELS).map(([id, text]) => el("button", {
       class: "tab", type: "button", "aria-selected": activeTab === id ? "true" : "false",
       text,
-      onclick: () => { activeTab = id; activeDoc = null; paint(); },
+      onclick: async () => {
+        if (id === activeTab) return;
+        if (!(await guardUnsaved())) return;
+        activeTab = id; activeDoc = null; paint();
+      },
     })));
   }
 
@@ -82,7 +111,50 @@ export async function renderStory({ bookId }) {
     if (activeDoc) openDoc(activeDoc, true);
   }
 
+  let currentTextarea = null;
+  let currentPath = null;
+  let currentSave = null;
+
+  async function saveDoc() {
+    if (!currentTextarea || !currentSave) return false;
+    try {
+      const saved = await api(`/api/books/${bookId}/story/doc`, {
+        method: "PUT",
+        body: { path: currentPath, content: currentTextarea.value, base_sha: docData.sha256 },
+      });
+      docData = saved;
+      dirty = false;
+      const btn = currentSave;
+      btn.textContent = "已保存";
+      toast("故事资料已保存");
+      story = await api(`/api/books/${bookId}/story`);
+      return true;
+    } catch (error) {
+      if (error.code === "story_conflict") {
+        toast("这份资料已被其他窗口修改，请刷新后再改", "error");
+      } else {
+        toast(error.message, "error");
+      }
+      return false;
+    }
+  }
+
+  // dirty 守卫（Phase 2）：编辑未保存时，任何「会丢掉当前编辑内容」的动作前，
+  // 先问一次。三处出口都守：页内切 tab/切文档、应用内导航（go）、浏览器级离开。
+  // 此前 story.js 有 dirty 标志但没有任何出口使用它——改了字不保存、点到别的
+  // 文档，内容就没了。
+  async function guardUnsaved() {
+    if (!dirty) return true;
+    const proceed = window.confirm("这份资料还没保存。离开会丢失未保存的修改。\n\n「确定」= 先保存再离开；「取消」= 留在这里。");
+    if (!proceed) return false;
+    return saveDoc();   // 保存失败（如冲突）就不放行——丢的仍是没落盘的内容
+  }
+
   async function openDoc(path, keep = false) {
+    if (!keep && path !== activeDoc && dirty) {
+      const saved = await guardUnsaved();
+      if (!saved) return;   // 留在原文档，什么都不改
+    }
     if (!keep) activeDoc = path;
     clear(editor).append(el("p", { class: "muted small", text: "正在读取…" }));
     try {
@@ -97,26 +169,11 @@ export async function renderStory({ bookId }) {
     textarea.addEventListener("input", () => { dirty = true; saveButton.textContent = "保存"; });
     const saveButton = el("button", {
       class: "button button-primary", type: "button", text: "保存",
-      onclick: async () => {
-        try {
-          const saved = await api(`/api/books/${bookId}/story/doc`, {
-            method: "PUT",
-            body: { path, content: textarea.value, base_sha: docData.sha256 },
-          });
-          docData = saved;
-          dirty = false;
-          saveButton.textContent = "已保存";
-          toast("故事资料已保存");
-          story = await api(`/api/books/${bookId}/story`);
-        } catch (error) {
-          if (error.code === "story_conflict") {
-            toast("这份资料已被其他窗口修改，请刷新后再改", "error");
-          } else {
-            toast(error.message, "error");
-          }
-        }
-      },
+      onclick: () => saveDoc(),
     });
+    currentTextarea = textarea;
+    currentPath = path;
+    currentSave = saveButton;
     const title = path.split("/").at(-1).replace(/\.md$/, "");
     clear(editor).append(
       el("div", { class: "panel-head" },
