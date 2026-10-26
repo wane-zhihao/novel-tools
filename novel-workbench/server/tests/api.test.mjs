@@ -301,6 +301,29 @@ test("故事库与投前检查端点", async () => {
   assert.equal(preflight.status, 200);
   assert.equal(preflight.body.ready, false);
   assert.ok(preflight.body.checks.some((check) => check.id === "words" && !check.ok));
+  // 0.9：每个检查项带 fix 修复指引（缺字数的那条必须有）
+  const wordsCheck = preflight.body.checks.find((check) => check.id === "words");
+  assert.ok(wordsCheck.fix, "未通过的检查项应带 fix");
+});
+
+test("投稿包端点：确认 gate 与 preflight 拦截（0.10/0.9）", async () => {
+  // 不带 confirmations → 400 confirmations_required（先于 preflight 检查）
+  const noConfirm = await post(`/api/books/${bookId}/submissions/package`, { channel: "七猫" });
+  assert.equal(noConfirm.status, 400);
+  assert.equal(noConfirm.body.error.code, "confirmations_required");
+
+  // 确认没勾全 → 400 confirmations_incomplete
+  const partial = await post(`/api/books/${bookId}/submissions/package`,
+    { channel: "七猫", confirmations: [true, true, false, true] });
+  assert.equal(partial.status, 400);
+  assert.equal(partial.body.error.code, "confirmations_incomplete");
+
+  // 全勾但 preflight 未过（fixture 字数不足且有阻断项）→ 400 preflight_failed
+  const blocked = await post(`/api/books/${bookId}/submissions/package`,
+    { channel: "七猫", confirmations: [true, true, true, true] });
+  assert.equal(blocked.status, 400);
+  assert.equal(blocked.body.error.code, "preflight_failed");
+  assert.ok(Array.isArray(blocked.body.error.details.checks));
 });
 
 test("投稿包 reveal 端点：路径校验与本机打开", async () => {

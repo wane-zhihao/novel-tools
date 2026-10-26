@@ -974,13 +974,19 @@ export function createApi({
     const fresh = db.prepare(`${bookSelect} WHERE b.id = ?`).get(row.id);
     const body = await readJsonBody(request);
     try {
-      const result = packageSubmission(db, fresh, { channel: body.channel || "七猫" });
+      const result = packageSubmission(db, fresh, {
+        channel: body.channel || "七猫",
+        confirmations: Array.isArray(body.confirmations) ? body.confirmations : null,
+      });
       recordEvent(row.id, "submission_packaged", { channel: body.channel || "七猫", path: result.path });
       sendJson(response, 200, result);
       return;
     } catch (error) {
       if (error.code === "preflight_failed") {
         throw new HttpError(400, "preflight_failed", error.message, { checks: error.checks });
+      }
+      if (error.code === "confirmations_required" || error.code === "confirmations_incomplete") {
+        throw new HttpError(400, error.code, error.message);
       }
       throw error;
     }

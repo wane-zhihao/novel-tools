@@ -27,6 +27,68 @@ export async function renderSubmit({ bookId, go, state }) {
     return;
   }
 
+  // ── 0.10 确认 gate ──────────────────────────────────────────────────
+  // 打包按钮只在「检查通过 + 4 条人工确认全勾」时才可用。拒绝原因写在按钮文案上，
+  // 不让用户面对一个灰按钮猜为什么点不动。确认状态存 localStorage（按书隔离），
+  // 但每次打包都重新读一遍，不依赖内存里的旧值。
+  const confirmBoxes = HUMAN_CONFIRM.map((text, index) => {
+    const key = `workbench:submit-confirm:${bookId}:${index}`;
+    const box = el("input", { type: "checkbox", "aria-label": text });
+    try {
+      box.checked = localStorage.getItem(key) === "1";
+    } catch {}
+    box.addEventListener("change", () => {
+      try {
+        localStorage.setItem(key, box.checked ? "1" : "0");
+      } catch {}
+      refreshPackageButton();
+    });
+    return box;
+  });
+
+  function confirmations() {
+    return confirmBoxes.map((box) => box.checked === true);
+  }
+
+  function allConfirmed() {
+    return confirmations().every(Boolean);
+  }
+
+  const channelInput = el("input", {
+    name: "package_channel", value: "七猫", placeholder: "投给哪个平台/编辑渠道",
+  });
+  const packageButton = el("button", {
+    class: "button button-primary", type: "button", text: "生成投稿包",
+    onclick: async () => {
+      packageButton.disabled = true;
+      try {
+        packaged = await api(`/api/books/${bookId}/submissions/package`, {
+          method: "POST",
+          body: {
+            channel: channelInput.value.trim() || "七猫",
+            confirmations: confirmations(),
+          },
+        });
+        toast(`投稿包已生成：${packaged.path}`);
+        renderPackage(packaged);
+      } catch (error) {
+        // 确认 gate / preflight 的具体原因由后端给，直接呈现
+        toast(error.message, "error");
+      } finally {
+        refreshPackageButton();
+      }
+    },
+  });
+
+  function refreshPackageButton() {
+    const confirmed = allConfirmed();
+    const unchecked = confirmations().filter((value) => !value).length;
+    packageButton.disabled = !preflight.ready || !confirmed ? "disabled" : null;
+    packageButton.textContent = !preflight.ready
+      ? "先解决上面的检查项"
+      : unchecked > 0 ? `还差 ${unchecked} 条人工确认` : "生成投稿包";
+  }
+
   let packaged = null;
   const page = el("div", { class: "submit" },
     el("header", {},
@@ -37,51 +99,33 @@ export async function renderSubmit({ bookId, go, state }) {
       el("h2", { text: "投前检查" }),
       el("span", { class: preflight.ready ? "chip chip-ok" : "chip chip-warn", text: preflight.ready ? "可以投" : "还差几步" })),
     el("div", { class: "checklist" },
+      // 0.9：未通过项直接展示 fix 修复指引，不再只报"哪里不行"
       ...preflight.checks.map((check) => el("div", { class: `check ${check.ok ? "ok" : "bad"}` },
         el("span", { class: "dot" }),
-        el("div", {}, el("strong", { text: check.label }), el("span", { text: check.detail }))))),
+        el("div", {},
+          el("strong", { text: check.label }),
+          el("span", { text: check.detail }),
+          !check.ok && check.fix ? el("p", { class: "muted small", text: `怎么修：${check.fix}` }) : null)))),
     el("div", { class: "inline-fields", style: "margin-top:14px" },
+      el("label", { class: "field", style: "flex:1;min-width:160px" },
+        el("span", { text: "渠道" }), channelInput),
+      packageButton,
       el("button", {
-        class: "button button-primary", type: "button", text: "生成投稿包",
-        disabled: preflight.ready ? null : "disabled",
-        onclick: async () => {
-          const channel = window.prompt("投给哪个平台/渠道？", "七猫") || "七猫";
-          try {
-            packaged = await api(`/api/books/${bookId}/submissions/package`, {
-              method: "POST", body: { channel },
-            });
-            toast(`投稿包已生成：${packaged.path}`);
-            renderPackage(packaged);
-          } catch (error) {
-            toast(error.message, "error");
-          }
-        },
-      }),
-      el("button", {
+        // 0.10：重新检查不再 location.reload()（整页刷新丢滚动位置、闪屏）
         class: "button button-quiet", type: "button", text: "重新检查",
-        onclick: () => location.reload(),
+        onclick: () => go(`#/books/${bookId}/submit`),
       })));
   page.append(checklist);
 
   const confirmPanel = el("section", { class: "panel" },
     el("div", { class: "panel-head" },
       el("h2", { text: "人工确认（投前逐条勾）" }),
-      el("span", { class: "chip", text: "来自 SKILL.md" })),
+      el("span", { class: "chip", text: "全勾才能打包" })),
     el("div", { class: "checklist" },
-      ...HUMAN_CONFIRM.map((text, index) => {
-        const key = `workbench:submit-confirm:${bookId}:${index}`;
-        const box = el("input", { type: "checkbox", "aria-label": text });
-        try {
-          box.checked = localStorage.getItem(key) === "1";
-        } catch {}
-        box.addEventListener("change", () => {
-          try {
-            localStorage.setItem(key, box.checked ? "1" : "0");
-          } catch {}
-        });
-        return el("label", { class: "check confirm-item" }, box, el("span", { text }));
-      })));
+      ...HUMAN_CONFIRM.map((text, index) =>
+        el("label", { class: "check confirm-item" }, confirmBoxes[index], el("span", { text })))));
   page.append(confirmPanel);
+  refreshPackageButton();
 
   const packageBox = el("section", { class: "panel", hidden: "hidden" });
   page.append(packageBox);
@@ -167,7 +211,17 @@ export async function renderSubmit({ bookId, go, state }) {
           },
         });
         toast("已记录投稿。等回复时不要同时投第二个编辑。");
-        location.reload();
+        // 0.10：不再 location.reload()——只重拉投稿记录并局部重绘，
+        // 保住了已生成的投稿包面板、渠道选择与勾选状态。
+        try {
+          const fresh = await api(`/api/books/${bookId}/submissions`);
+          submissions = fresh.submissions ?? [];
+          await paintHistory();
+          form.reset();
+        } catch (error) {
+          // 记录已写入成功；列表刷新失败不该谎报失败
+          toast(`投稿已记录，但列表没刷新：${error.message}`, "error");
+        }
       } catch (error) {
         toast(error.message, "error");
       }
