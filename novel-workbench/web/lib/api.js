@@ -43,14 +43,13 @@ export function commitChapter(bookId, chapter, options = {}) {
   });
 }
 
-export function openStudio(bookId) {
-  const suffix = bookId ? `#/books/${bookId}` : "";
-  window.location.href = `/studio.html${suffix}`;
-}
+// 计划 Phase 2：断掉 studio 入口。openStudio() 此前已无调用方，删除；
+// studio.html 文件保留（直链仍可用），但 v2 界面不再有任何通往它的链接。
+// 制作台的能力由「高级」抽屉（#/books/:id/advanced）承接。
 
 // ── 运行（Phase 1.2）──────────────────────────────────────────────────
-// v2 界面此前完全没有 run 能力：后端能跑流水线，但界面上既无法启动也无法观察，
-// 用户只能靠旧 studio 或命令行。这三个函数补上「启动 / 观察 / 停止」最小闭环。
+// v2 界面此前完全没有 run 能力：后端能跑流水线，但界面上既无法启动也无法观察。
+// 下面的函数补上「启动 / 观察 / 停止 / 解除中断」最小闭环。
 
 /** 启动一次流水线。mode=mock 是演练（不写真正文），real 才调真实模型。
  *  untilChapter 给定时只写到该章就停，绝不触碰下一章。 */

@@ -224,11 +224,21 @@ export async function renderWrite({ bookId, chapter, go, state }) {
     event.returnValue = "";
   };
   window.addEventListener("beforeunload", onBeforeUnload);
-  window.addEventListener(
-    "hashchange",
-    () => window.removeEventListener("beforeunload", onBeforeUnload),
-    { once: true },
-  );
+  // 「离开本页」的判定要排除高级抽屉：/advanced 只是覆盖在当前页上的浮层，
+  // hash 变了但这一页还活着——此时卸载 beforeunload 或销毁面板都是错的
+  const isOwnPage = () => {
+    const raw = location.hash.replace(/^#\/?/, "");
+    const parts = raw.split("?")[0].split("/").filter(Boolean);
+    return parts[0] === "books" && Number(parts[1]) === bookId && (parts[2] === "write" || parts[2] === "advanced" || !parts[2]);
+  };
+  const offLeave = () => {
+    if (isOwnPage()) return;
+    window.removeEventListener("beforeunload", onBeforeUnload);
+    window.removeEventListener("hashchange", onLeaveOnce);
+    window.removeEventListener("hashchange", onLeavePanel);
+  };
+  const onLeaveOnce = () => offLeave();
+  window.addEventListener("hashchange", onLeaveOnce);
 
   // 本地崩溃草稿：同 sha 时提示恢复
   try {
@@ -247,7 +257,12 @@ export async function renderWrite({ bookId, chapter, go, state }) {
   // 离开本页时销毁，否则轮询定时器会跟着路由泄漏。
   // chapter 传进去：「让 AI 写」就变成「只写这一章」，写完停在章末不动下一章
   const runPanel = createRunPanel({ bookId, go, chapter });
-  window.addEventListener("hashchange", () => runPanel.destroy(), { once: true });
+  const onLeavePanel = () => {
+    if (isOwnPage()) return;
+    runPanel.destroy();
+    offLeave();
+  };
+  window.addEventListener("hashchange", onLeavePanel);
 
   // 账本一致性提示：state 的 words_total / chapters_committed 与真实章节表漂移时，
   // 投稿预检会拿错数字判断字数（实测有书正文已过 2 万字，预检报「还差」）。

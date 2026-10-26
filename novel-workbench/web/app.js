@@ -7,6 +7,7 @@ import { renderRevise } from "./views/revise.js";
 import { renderStory } from "./views/story.js";
 import { renderSubmit } from "./views/submit.js";
 import { renderSettings } from "./views/settings.js";
+import { createAdvancedDrawer } from "./views/advanced.js";
 
 const state = {
   books: null, // null=加载失败/未加载；[]=真的空书房（B15 空态二分）
@@ -14,6 +15,11 @@ const state = {
   health: null,
   currentBookId: null,
   routeToken: 0,
+  // 高级抽屉是覆盖层：开着时底页 DOM 必须保活（textarea 里可能有未保存草稿）
+  drawer: null,
+  // 抽屉打开前的底页路由（含章号）。关抽屉按它恢复 hash：章号丢了会命中不了
+  // 同路由守卫 → 重渲染 → 丢草稿
+  baseRoute: null,
 };
 
 const view = document.querySelector("#view");
@@ -21,6 +27,7 @@ const railNav = document.querySelector("#railNav");
 const railBook = document.querySelector("#railBook");
 const bottomNav = document.querySelector("#bottomNav");
 const context = document.querySelector("#context");
+const advancedEntry = document.querySelector("#advancedEntry");
 const dialog = document.querySelector("#newBookDialog");
 const form = document.querySelector("#newBookForm");
 
@@ -46,6 +53,7 @@ function parseRoute() {
     if (parts[2] === "story") return { view: "story", id };
     if (parts[2] === "revise") return { view: "revise", id };
     if (parts[2] === "submit") return { view: "submit", id };
+    if (parts[2] === "advanced") return { view: "advanced", id, tab: parts[3] || "nodes" };
     return { view: "write", id, chapter: null };
   }
   if (parts[0] === "settings") return { view: "settings" };
@@ -58,7 +66,7 @@ function bookOf(id) {
 }
 
 function go(hash) {
-  if (location.hash === hash) render();
+  if (location.hash === hash) render(true);
   else location.hash = hash;
 }
 
@@ -88,6 +96,18 @@ function paintNav(active, book) {
   clear(railNav).append(...items.map((item) => make(item, false)));
   clear(bottomNav).append(...items.map((item) => make(item, true)));
   paintBookSwitcher(book);
+  if (advancedEntry) {
+    if (book) {
+      advancedEntry.href = `#/books/${book.id}/advanced`;
+      advancedEntry.title = "节点状态、运行日志、Agent 配置与投稿记录";
+      advancedEntry.removeAttribute("aria-disabled");
+    } else {
+      // 还没有当前书：入口保留但点了不跳（href 置空会重新加载页面）
+      advancedEntry.href = "#";
+      advancedEntry.setAttribute("aria-disabled", "true");
+      advancedEntry.title = "先打开一本书";
+    }
+  }
   context.textContent = book ? `${book.title ?? "未命名"}` : "先写下来，再改好";
 }
 
@@ -148,7 +168,43 @@ async function renderShelfRoute(token) {
   await renderShelf({ state, go, openNewBook, retry: render });
 }
 
+function baseHashFor(bookId) {
+  const base = state.baseRoute && state.baseRoute.id === Number(bookId)
+    ? state.baseRoute
+    : { view: "write", id: Number(bookId), chapter: null };
+  const suffix = base.view === "write" && base.chapter ? `/${base.chapter}` : "";
+  return `#/books/${base.id}/${base.view}${suffix}`;
+}
+
+function openDrawer(bookId, tab) {
+  // 同一本书已开着：切 tab 而不重建（重建会闪，且重新拉数据）
+  if (state.drawer && state.drawer.bookId === Number(bookId)) {
+    state.drawer.api.setTab(tab);
+    return;
+  }
+  closeDrawer();
+  const drawerApi = createAdvancedDrawer({
+    bookId, tab,
+    onClose: () => {
+      // 用户主动关闭：回到底页。直接改 hash 而不是 history.back()——
+      // 深链 /advanced 进来时没有可回退的历史，back() 会离开应用
+      location.hash = baseHashFor(bookId);
+    },
+  });
+  state.drawer = { bookId: Number(bookId), api: drawerApi };
+  document.body.append(drawerApi.node);
+}
+
+function closeDrawer() {
+  if (!state.drawer) return;
+  const { api: drawerApi } = state.drawer;
+  state.drawer = null;
+  // destroy 不触发 onClose：路由强拆时用户的目标是别的页，不该被改回底页
+  drawerApi.destroy();
+}
+
 async function renderBookRoute(route, token) {
+  closeDrawer();
   const book = bookOf(route.id);
   if (!book) {
     clear(view).append(el("div", { class: "empty" },
@@ -229,16 +285,55 @@ async function renderSetupRoute(token) {
   await renderSetup({ state, go, onReady: render });
 }
 
-async function render() {
+async function render(force = false) {
+  const route = parseRoute();
+  // 高级抽屉是覆盖层，在 render 顶部处理、完全不进常规渲染路径：
+  // 不 ++token（否则在途的底页渲染会被当作过期 token 丢弃后半段）、
+  // 不剥 focus-mode/wide（那是底页自己的样式，与抽屉无关）。
+  if (route.view === "advanced") {
+    if (!bookOf(route.id)) { location.hash = "#/"; return; }
+    openDrawer(route.id, route.tab ?? "nodes");
+    // 深链直接进 /advanced 还没有底页：垫一页写页，关抽屉才有可回之处
+    if (!view.childElementCount) {
+      const token = ++state.routeToken;
+      await renderBookRoute({ view: "write", id: route.id, chapter: null }, token);
+      state.baseRoute = { view: "write", id: Number(route.id), chapter: null };
+    }
+    return;
+  }
   const token = ++state.routeToken;
+  // 关抽屉把 hash 改回底页路由。同一路由不重渲染——稿纸是 textarea，
+  // 重建就换 DOM，未自动保存的输入会丢（计划硬口径：抽屉开关不丢稿纸）。
+  if (!force && state.baseRoute
+      && state.baseRoute.view === route.view
+      && state.baseRoute.id === route.id
+      && state.baseRoute.chapter === route.chapter) {
+    closeDrawer();
+    return;
+  }
   document.body.classList.remove("focus-mode");
   view.classList.remove("wide");
-  const route = parseRoute();
   try {
-    if (route.view === "shelf") return await renderShelfRoute(token);
-    if (route.view === "setup") return await renderSetupRoute(token);
-    if (route.view === "settings") return await renderSettingsRoute(token);
-    return await renderBookRoute(route, token);
+    if (route.view === "shelf") {
+      const result = await renderShelfRoute(token);
+      state.baseRoute = { view: "shelf", id: undefined, chapter: undefined };
+      return result;
+    }
+    if (route.view === "setup") {
+      const result = await renderSetupRoute(token);
+      state.baseRoute = { view: "setup", id: undefined, chapter: undefined };
+      return result;
+    }
+    if (route.view === "settings") {
+      const result = await renderSettingsRoute(token);
+      state.baseRoute = { view: "settings", id: undefined, chapter: undefined };
+      return result;
+    }
+    const result = await renderBookRoute(route, token);
+    // 只有真正渲染过底页才记 baseRoute；write 分支可能 replaceState 修正过章号，
+    // 以当前 URL 为准重新解析，保证关抽屉恢复的 hash 与守卫比对一致
+    state.baseRoute = parseRoute();
+    return result;
   } catch (error) {
     toast(error.message, "error");
     clear(view).append(el("div", { class: "empty" },
@@ -309,7 +404,7 @@ async function boot() {
   await render();
 }
 
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange", () => render());
 document.querySelector("#newBookClose").addEventListener("click", () => dialog.close());
 document.querySelector("#newBookCancel").addEventListener("click", () => dialog.close());
 form.addEventListener("submit", async (event) => {
