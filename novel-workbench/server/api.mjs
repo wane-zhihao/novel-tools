@@ -852,6 +852,28 @@ export function createApi({
     // blocked_reason 说明为什么停着不动。
     const dirtyCount = chapters.filter((chapter) => chapter.dirty).length;
     const committedNumbers = chapters.filter((chapter) => chapter.committed).map((chapter) => chapter.number);
+    // 账本一致性：state.json 里的 words_total / chapters_committed 是流水线自己写的，
+    // 会与真实章节表漂移（实测有书 state 说 4 章 9,288 字，正文其实是 9 章 20,066 字）。
+    // 漂移时最危险的是**投稿预检**：它读 words_total，于是明明够字数却报「还差」。
+    // 这里只报事实与两个数字，不擅自改谁——判断哪个对需要人看正文。
+    const sumWords = chapters.reduce((sum, chapter) => sum + (Number(chapter.words) || 0), 0);
+    const driftItems = [];
+    if (Number(row.words_total ?? 0) !== sumWords) {
+      driftItems.push({
+        id: "words_total",
+        state: Number(row.words_total ?? 0),
+        actual: sumWords,
+        detail: `state 记 ${Number(row.words_total ?? 0)} 字，章节表合计 ${sumWords} 字`,
+      });
+    }
+    if (Number(row.chapters_committed ?? 0) !== committedNumbers.length) {
+      driftItems.push({
+        id: "chapters_committed",
+        state: Number(row.chapters_committed ?? 0),
+        actual: committedNumbers.length,
+        detail: `state 记已定稿 ${Number(row.chapters_committed ?? 0)} 章，章节表有 ${committedNumbers.length} 章已定稿`,
+      });
+    }
     sendJson(response, 200, {
       chapters: chapters.map((chapter) => ({
         ...chapter,
@@ -862,6 +884,9 @@ export function createApi({
       dirty_count: dirtyCount,
       last_committed_chapter: committedNumbers.length ? Math.max(...committedNumbers) : null,
       blocked_reason: row.blocked_reason ?? null,
+      words_total_state: Number(row.words_total ?? 0),
+      chapters_committed_state: Number(row.chapters_committed ?? 0),
+      drift: { ok: driftItems.length === 0, items: driftItems },
     });
   }
 

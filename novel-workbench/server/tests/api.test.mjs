@@ -402,3 +402,52 @@ test("manuscript 暴露 dirty_count / last_committed_chapter / blocked_reason（
   const expectedLast = committed.length ? Math.max(...committed) : null;
   assert.equal(body.last_committed_chapter, expectedLast, "last_committed_chapter 应是最新已定稿章");
 });
+
+test("manuscript 暴露 drift：state 与章节表不一致时必须说出来（1.5）", async () => {
+  const { body } = await request(`/api/books/${bookId}/manuscript`);
+  assert.ok(body.drift, "缺 drift 字段");
+  assert.equal(typeof body.drift.ok, "boolean");
+  assert.ok(Array.isArray(body.drift.items));
+
+  const chapters = body.chapters ?? [];
+  const sumWords = chapters.reduce((sum, c) => sum + (Number(c.words) || 0), 0);
+  const committedCount = chapters.filter((c) => c.committed).length;
+
+  // fixture 的 state 与章节表本就一致 → 不该报假警
+  if (body.drift.ok) {
+    assert.equal(body.drift.items.length, 0);
+  } else {
+    // 报了就必须给两个数字，让人能判断哪个是对的
+    for (const item of body.drift.items) {
+      assert.ok(item.id && item.detail, JSON.stringify(item));
+      assert.ok("state" in item && "actual" in item, `drift 项应同时给 state 与 actual：${JSON.stringify(item)}`);
+    }
+  }
+  // 交叉校验：drift.ok 应当真的反映这两组数字是否相等
+  const consistent = Number(body.words_total_state ?? NaN) === sumWords
+    && Number(body.chapters_committed_state ?? NaN) === committedCount;
+  if (consistent) assert.equal(body.drift.ok, true, "数字一致却报 drift");
+});
+
+test("drift 真的能抓到 state 漂移（Prove-It）", async () => {
+  const before = await request(`/api/books/${bookId}/manuscript`);
+  const goodWords = before.body.words_total_state;
+  const goodChapters = before.body.chapters_committed_state;
+  try {
+    // 造出真实漂移：state 说 9288 字 4 章，章节表其实是别的数
+    workspace.db.prepare("UPDATE books SET words_total = 9288, chapters_committed = 4 WHERE id = ?").run(bookId);
+    const { body } = await request(`/api/books/${bookId}/manuscript`);
+    assert.equal(body.drift.ok, false, "漂移了却报一致");
+    const words = body.drift.items.find((i) => i.id === "words_total");
+    assert.ok(words, JSON.stringify(body.drift.items));
+    assert.equal(words.state, 9288);
+    assert.equal(typeof words.actual, "number");
+    assert.match(words.detail, /9288/);
+    const chapters = body.drift.items.find((i) => i.id === "chapters_committed");
+    assert.ok(chapters, JSON.stringify(body.drift.items));
+    assert.equal(chapters.state, 4);
+  } finally {
+    workspace.db.prepare("UPDATE books SET words_total = ?, chapters_committed = ? WHERE id = ?")
+      .run(goodWords, goodChapters, bookId);
+  }
+});
