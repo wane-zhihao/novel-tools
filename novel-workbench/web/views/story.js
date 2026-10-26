@@ -1,7 +1,7 @@
 import { api } from "../lib/api.js";
 import { el, clear, fmtDate, fmtNumber, toast } from "../lib/dom.js";
 
-export async function renderStory({ bookId, state }) {
+export async function renderStory({ bookId, state, docPath = null }) {
   const view = document.querySelector("#view");
   view.classList.remove("wide");
   clear(view).append(el("p", { class: "empty", text: "正在整理故事资料…" }));
@@ -185,6 +185,21 @@ export async function renderStory({ bookId, state }) {
     for (const doc of docsForTab()) {
       const node = [...list.children].find((child) => child.textContent?.includes(doc.title || ""));
       if (node) node.setAttribute("aria-current", doc.path === activeDoc ? "true" : "false");
+    }
+  }
+
+  // ?doc= 深链：把文档路径映射回所属 tab 再打开。找不到（路径过期/拼错）
+  // 不假装成功——toast 说明后落在默认 tab。
+  if (docPath) {
+    const group = story.groups.find((g) => (g.docs ?? []).some((d) => d.path === docPath));
+    if (group) {
+      activeTab = group.id; activeDoc = docPath;
+    } else if ((story.chapter_outlines ?? []).some((d) => d.path === docPath)) {
+      activeTab = "outline"; activeDoc = docPath;
+    } else if ((story.timeline ?? []).some((d) => (d.path ?? d) === docPath)) {
+      activeTab = "timeline"; activeDoc = docPath;
+    } else {
+      toast(`深链的资料不存在：${docPath}`, "error");
     }
   }
 

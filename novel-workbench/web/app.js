@@ -21,6 +21,8 @@ const state = {
   leaveGuard: null,
   // 进入 render 时的 URL 原样：守卫否决 hashchange 导航时用它修回
   lastHash: null,
+  // 最近一次完整渲染的底页 URL（含查询段）：抽屉关闭回它，不丢 ?doc=
+  baseHash: null,
   drawer: null,
   // 抽屉打开前的底页路由（含章号）。关抽屉按它恢复 hash：章号丢了会命中不了
   // 同路由守卫 → 重渲染 → 丢草稿
@@ -55,7 +57,12 @@ function parseRoute() {
   if (parts[0] === "books" && parts[1]) {
     const id = Number(parts[1]);
     if (parts[2] === "write") return { view: "write", id, chapter: parts[3] ? Number(parts[3]) : null };
-    if (parts[2] === "story") return { view: "story", id };
+    if (parts[2] === "story") {
+      // ?doc= 深链（计划第 5 节）：直达某份故事资料。URLSearchParams 负责解码。
+      const qs = raw.slice(path.length);
+      const doc = qs.startsWith("?") ? (new URLSearchParams(qs.slice(1)).get("doc") ?? null) : null;
+      return { view: "story", id, doc };
+    }
     if (parts[2] === "revise") return { view: "revise", id };
     if (parts[2] === "submit") return { view: "submit", id };
     if (parts[2] === "advanced") return { view: "advanced", id, tab: parts[3] || "nodes" };
@@ -176,6 +183,8 @@ async function renderShelfRoute(token) {
 }
 
 function baseHashFor(bookId) {
+  // 抽屉打开前 URL 的原样（含 ?doc= 等查询段）：优先回它，重建会丢查询参数
+  if (state.baseHash && state.baseHash.startsWith(`#/books/${bookId}`)) return state.baseHash;
   const base = state.baseRoute && state.baseRoute.id === Number(bookId)
     ? state.baseRoute
     : { view: "write", id: Number(bookId), chapter: null };
@@ -268,7 +277,7 @@ async function renderBookRoute(route, token) {
   if (route.view === "story") {
     if (token !== state.routeToken) return;
     paintNav("故事", book);
-    await renderStory({ bookId: book.id, go, state });
+    await renderStory({ bookId: book.id, go, state, docPath: route.doc ?? null });
     return;
   }
   if (route.view === "submit") {
@@ -299,7 +308,8 @@ async function render(force = false) {
   const sameRoute = !force && route.view !== "advanced" && state.baseRoute
       && state.baseRoute.view === route.view
       && state.baseRoute.id === route.id
-      && state.baseRoute.chapter === route.chapter;
+      && state.baseRoute.chapter === route.chapter
+      && state.baseRoute.doc === route.doc;
   // 真正换页才问守卫；否决时 hash 可能已变（hashchange 路径），
   // replaceState 修回进入本次 render 前保存的原样（含 ?doc= 等查询段），
   // 既不丢用户输入，也不往历史里多压一条记录。go() 路径 hash 未动，无需修。
@@ -324,6 +334,10 @@ async function render(force = false) {
     }
     return;
   }
+  // baseHash：最近一次「完整渲染的底页 URL」原样（含 ?doc= 查询段），
+  // 抽屉 onClose 优先回它。必须放在 advanced 早退之后——否则开抽屉那次
+  // 渲染会把 #/books/:id/advanced 自己记成 baseHash，关抽屉后 URL 卡在抽屉上。
+  if (!sameRoute) state.baseHash = location.hash;
   const token = ++state.routeToken;
   // 关抽屉把 hash 改回底页路由。同一路由不重渲染——稿纸是 textarea，
   // 重建就换 DOM，未自动保存的输入会丢（计划硬口径：抽屉开关不丢稿纸）。
