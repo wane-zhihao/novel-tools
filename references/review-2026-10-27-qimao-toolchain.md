@@ -20,10 +20,17 @@
 | 来源 | 内容 |
 |---|---|
 | `正文/` 实际文件 | 9 个章节文件，去空白汉字合计 **20,066** |
-| `追踪/_tracking-state.json` | `last_committed_chapter = 8`，`wordcount_records` 有 1–8 |
+| `追踪/_tracking-state.json` | `last_committed_chapter = 9`（审查期间由 8 变为 9，见下方说明） |
 | `_pipeline/state.json` | `chapters_committed = 4`、`words_total = 9288`、`cursor = C5.N14` |
 
 记忆里写的「5 章 / 11,798 字 / 对 2 万字线 59% / 差约 8,202 字」——**写下时就已过期**。
+
+> **审查期间的实时变化（重要）**：初查时账本是 8 章，20 分钟后复查已变成 9 章
+> （`_tracking-state.json` mtime `2026-10-27 00:43`），而 `state.json` 的 mtime
+> 仍是 `2026-10-25 21:26`——**两天没动**。
+> 说明：另一条工作线在用 `storyctl` / `tracking_commit` 手工推进章节，账本在长，
+> state 不动，**漂移在持续扩大**。这不是一次性脏数据，是持续产生脏数据的路径。
+> 因此本报告的所有数字都是时间点快照；判断前请以磁盘当时的值为准。
 
 **为什么这是硬问题**：`words_total` 是 `GET /api/books/:id/preflight` 的字数来源（`server/sync.mjs:129` 直接取 `state.words_total`）。所以：
 
@@ -97,10 +104,23 @@
 
 | 顺序 | 事项 | 理由 |
 |---|---|---|
-| 1 | 实现 `tracking:fill`（从账本+正文重建 state，先 dry-run） | 修《顶职》前的必要工具；直接手改 `state.json` 是拿真书赌博 |
-| 2 | 用 `tracking:fill` 修《顶职》，先备份 | 解除 cursor 与账本冲突，恢复正确的续写位置与字数 |
+| 1 | ~~实现 `tracking:fill`~~ → **已完成**（`autopilot tracking-fill`，默认预演，`--apply` 落盘） | 修《顶职》前的必要工具；直接手改 `state.json` 是拿真书赌博 |
+| 2 | 用 `tracking-fill --apply` 修《顶职》，**先确认另一条工作线已停手** | 解除 cursor 与账本冲突，恢复正确的续写位置与字数 |
 | 3 | 加一条测试守 adapter→repo 路径存在性 | 让「逐字同文」这条失效约定退场，换成可执行的检查 |
-| 4 | 开书字段统一（platform/vol_size/one_line 落盘） | 多平台已接好，但字段此前空转；已随本次一并完成 |
+| 4 | ~~开书字段统一（platform/vol_size/one_line 落盘）~~ → **已完成** | 多平台已接好，但字段此前空转 |
+
+### 已在真书副本上预演的结果（未写盘）
+
+在 `F:\小说\works\顶职` 的临时副本上跑 `tracking-fill`（不加 `--apply`）：
+
+```
+words_total        9288  → 20205
+chapters_committed    4  → 9
+游标            C5.N14  → C10.N09
+```
+
+即：这本书实际已封板 9 章、约 2 万字，而 state 以为只有 4 章 9,288 字。
+**真书未做任何改动**——另一条工作线正在写这本书，此时落盘会与它竞争。
 
 ---
 
