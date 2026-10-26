@@ -11,6 +11,48 @@ const MAX_EVENTS = 600;
 const EVENT_FLUSH_SIZE = 20;
 const EVENTS_JSON_FLUSH = 100;
 
+// Phase 1.2：phase 只回答「还在动吗、动到哪了」。运行结束的几种 status 对用户
+// 是同一件事（已定局），细节看 result.status；所以归并成 finished。
+function phaseOf(status) {
+  if (status === "running") return "running";
+  if (status === "stopping") return "stopping";
+  if (status === "blocked") return "blocked";
+  if (status === "failed") return "failed";
+  return "finished";
+}
+
+// 两个 ISO 时间串取较新者；任一缺失时返回另一个（心跳可能还没跳过）
+function newest(a, b) {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return Date.parse(a) >= Date.parse(b) ? a : b;
+}
+
+// 运行态可观测字段：全部可由真实事件解释。故意不估 ETA——没有可靠基准时
+// 给 null 比给一个假数字好（UI 会显示「已用时」而不是骗人的「剩余 3 分钟」）。
+function observability(run) {
+  const live = ACTIVE.has(run.status);
+  const startedMs = Date.parse(run.startedAt ?? "");
+  const endMs = run.finishedAt ? Date.parse(run.finishedAt) : Date.now();
+  const elapsed = Number.isFinite(startedMs) && Number.isFinite(endMs)
+    ? Math.max(0, endMs - startedMs)
+    : null;
+  const heartbeat = newest(run.lastEventAt, run.heartbeatAt) ?? run.startedAt ?? null;
+  const heartbeatMs = heartbeat ? Date.parse(heartbeat) : NaN;
+  // C3.N14 → 3；N03 这类无章号的节点给 null，不瞎猜
+  const chapterMatch = /^C(\d+)\./.exec(run.currentNode ?? "");
+  return {
+    phase: phaseOf(run.status),
+    current_node: live ? run.currentNode ?? null : null,
+    chapter: live && chapterMatch ? Number(chapterMatch[1]) : null,
+    node_started_at: live ? run.nodeStartedAt ?? null : null,
+    heartbeat_at: heartbeat,
+    heartbeat_age_ms: Number.isFinite(heartbeatMs) ? Math.max(0, Date.now() - heartbeatMs) : null,
+    elapsed_ms: elapsed,
+    resume_state: run.status === "needs_resume" ? "needs_resume" : null,
+  };
+}
+
 export class RunConflictError extends Error {
   constructor(message) {
     super(message);
@@ -38,12 +80,37 @@ export function markInterruptedRuns(db) {
 }
 
 export class RunManager {
-  constructor({ db, dataDir = defaultDataDir(), onFinished = null, onError = null } = {}) {
+  constructor({ db, dataDir = defaultDataDir(), onFinished = null, onError = null, heartbeatMs = 15000 } = {}) {
     this.db = db;
     this.dataDir = dataDir;
     this.onFinished = onFinished;
     this.onError = onError;
+    this.heartbeatMs = heartbeatMs;
     this.runs = new Map();
+  }
+
+  // Phase 1.2：定时心跳。只更新内存里的时间戳，不写 run_events——它证明的是
+  // 「进程还活着」，不是「发生了什么」，混进事件流会污染历史与审计。
+  startHeartbeat(run) {
+    if (!(this.heartbeatMs > 0)) return;
+    this.stopHeartbeat(run);
+    run.heartbeatTimer = setInterval(() => {
+      run.heartbeatAt = new Date().toISOString();
+    }, this.heartbeatMs);
+    // 心跳不该让进程无法退出（测试/CLI 结束时不必等它）
+    run.heartbeatTimer.unref?.();
+  }
+
+  stopHeartbeat(run) {
+    if (run.heartbeatTimer) {
+      clearInterval(run.heartbeatTimer);
+      run.heartbeatTimer = null;
+    }
+  }
+
+  /** 释放所有定时器（测试与优雅退出用） */
+  dispose() {
+    for (const run of this.runs.values()) this.stopHeartbeat(run);
   }
 
   active(bookId) {
@@ -68,9 +135,14 @@ export class RunManager {
       seq: 0,
       events: [],
       pendingEvents: [],
+      // Phase 1.2 可观测：运行中节点与心跳，由 push() 增量维护
+      currentNode: null,
+      nodeStartedAt: null,
+      lastEventAt: null,
       controller: new AbortController(),
     };
     this.runs.set(bookId, run);
+    this.startHeartbeat(run);
     this.db.prepare(`
       INSERT INTO runs (book_id, action, command, exit_code, node, kind, requested_at, executed_at, result_json, run_id, status, events_json)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -105,6 +177,7 @@ export class RunManager {
       run.error = error.message;
     } finally {
       run.finishedAt = new Date().toISOString();
+      this.stopHeartbeat(run);
       try {
         this.persist(run);
       } catch (error) {
@@ -164,6 +237,13 @@ export class RunManager {
     run.seq += 1;
     const record = { seq: run.seq, at: new Date().toISOString(), ...event };
     run.events.push(record);
+    // Phase 1.2：可观测字段在事件流入时增量维护，不依赖回扫 events——
+    // 长跑会裁剪内存事件（MAX_EVENTS），回扫会丢掉「当前在哪个节点」。
+    run.lastEventAt = record.at;
+    if (record.type === "node_started") {
+      run.currentNode = record.node ?? null;
+      run.nodeStartedAt = record.at;
+    }
     if (run.events.length > MAX_EVENTS) run.events.splice(0, run.events.length - MAX_EVENTS);
     run.pendingEvents.push(record);
     if (run.pendingEvents.length >= EVENT_FLUSH_SIZE) this.flushEvents(run);
@@ -239,6 +319,7 @@ export class RunManager {
       result: run.result,
       seq: run.seq,
       events,
+      ...observability(run),
     };
   }
 

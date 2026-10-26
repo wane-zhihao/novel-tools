@@ -119,3 +119,118 @@ test("未 flush 的尾部批次在 persist 时补落库", () => withManager((db,
   assert.equal(row.status, "failed");
   assert.equal(row.exit_code, 1);
 }));
+
+// ── Phase 1.2 运行态可观测：区分「在跑」与「卡死」 ────────────────────
+test("snapshot 暴露 current_node / chapter / node_started_at / heartbeat_at", () => withManager((db, manager) => {
+  const { run, bookId } = fakeRun(db, "run-observable");
+  manager.runs.set(bookId, run);
+
+  // 还没任何事件：心跳回落到 startedAt，节点为空
+  let snap = manager.snapshot(bookId);
+  assert.equal(snap.current_node, null);
+  assert.equal(snap.chapter, null);
+  assert.ok(snap.heartbeat_at, "无事件时心跳应回落到开始时间");
+  assert.ok(snap.elapsed_ms >= 0);
+  assert.equal(snap.phase, "running");
+
+  // 进入第 3 章某节点：节点名可解析出章号
+  manager.push(run, { type: "node_started", node: "C3.N14" });
+  snap = manager.snapshot(bookId);
+  assert.equal(snap.current_node, "C3.N14");
+  assert.equal(snap.chapter, 3);
+  assert.ok(snap.node_started_at, "node_started_at 应来自该事件的 at");
+  assert.equal(snap.heartbeat_at, snap.node_started_at);
+  assert.ok(snap.heartbeat_age_ms >= 0);
+
+  // 又过了若干事件：心跳前进到最新事件的时间，节点仍是 C3.N14（直到下一个 node_started）
+  manager.push(run, { type: "tool_call", node: "C3.N14", tool: "write_evidence", ok: true });
+  snap = manager.snapshot(bookId);
+  assert.equal(snap.current_node, "C3.N14");
+  // 精确比对而不是 notEqual：同一毫秒内两次 push 的时间戳可能相同
+  assert.equal(snap.heartbeat_at, run.events.at(-1).at, "心跳应等于最新事件的时间");
+
+  // 非章节节点（N03）没有章号，不该瞎猜
+  manager.push(run, { type: "node_started", node: "N03" });
+  snap = manager.snapshot(bookId);
+  assert.equal(snap.current_node, "N03");
+  assert.equal(snap.chapter, null);
+
+  // 运行结束：current_node 清空，phase 变为终态，elapsed 冻结
+  run.status = "done";
+  run.finishedAt = new Date().toISOString();
+  snap = manager.snapshot(bookId);
+  assert.equal(snap.current_node, null, "结束后不该再显示在跑节点");
+  assert.equal(snap.node_started_at, null);
+  assert.equal(snap.phase, "finished");
+  const frozen = snap.elapsed_ms;
+  assert.ok(frozen >= 0);
+}));
+
+test("snapshot 的 phase 区分 running / stopping / blocked / failed", () => withManager((db, manager) => {
+  const { run, bookId } = fakeRun(db, "run-phase");
+  manager.runs.set(bookId, run);
+  const phaseOf = (status) => {
+    run.status = status;
+    return manager.snapshot(bookId).phase;
+  };
+  assert.equal(phaseOf("running"), "running");
+  assert.equal(phaseOf("stopping"), "stopping");
+  assert.equal(phaseOf("blocked"), "blocked");
+  assert.equal(phaseOf("failed"), "failed");
+  assert.equal(phaseOf("done"), "finished");
+  assert.equal(phaseOf("max_steps"), "finished");
+}));
+
+test("定时心跳：无新事件也能证明进程还活着，且不污染事件流", () => withManager((db) => {
+  // 用短周期注入，避免测试等 15 秒
+  const dataDir = mkdtempSync(join(tmpdir(), "wb-hb-"));
+  const manager = new RunManager({ db, dataDir, heartbeatMs: 25 });
+  const { run, bookId } = fakeRun(db, "run-heartbeat");
+  manager.runs.set(bookId, run);
+  manager.startHeartbeat(run);
+  manager.push(run, { type: "node_started", node: "C3.N14" });
+  const nodeAt = manager.snapshot(bookId).node_started_at;
+  const eventsBefore = manager.snapshot(bookId).seq;
+
+  // 等到心跳至少推进一次
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const snap = manager.snapshot(bookId);
+      assert.equal(snap.node_started_at, nodeAt, "节点开始时间不该被心跳改写");
+      assert.ok(snap.heartbeat_at > nodeAt,
+        `心跳应自行前进（node=${nodeAt} heartbeat=${snap.heartbeat_at}）`);
+      assert.equal(snap.seq, eventsBefore, "心跳不得往事件流里塞东西");
+      assert.ok(snap.heartbeat_age_ms < 1000, "心跳新鲜度应接近 0");
+      manager.stopHeartbeat(run);
+      assert.equal(run.heartbeatTimer, null, "停止后不应留下定时器");
+      rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      resolve();
+    }, 120);
+  });
+}));
+
+test("start() 自动启动心跳，dispose 不残留定时器", () => withManager((db) => {
+  const dataDir = mkdtempSync(join(tmpdir(), "wb-hb2-"));
+  const manager = new RunManager({ db, dataDir, heartbeatMs: 25 });
+  const { bookId, run } = fakeRun(db, "run-hb-wiring");
+
+  // 直接验证接线：不管这次运行是否秒败，start() 都必须去启动心跳。
+  // （秒败时 execute 的 finally 会同步停掉定时器，所以不能靠 heartbeatTimer 反推。）
+  let started = 0;
+  const realStart = manager.startHeartbeat.bind(manager);
+  manager.startHeartbeat = (target) => { started += 1; realStart(target); };
+
+  const snapshot = manager.start({
+    bookId, bookPath: run.bookPath, mode: "mock", maxSteps: 1,
+    config: { roles: {}, providers: {}, budgets: {} },
+  });
+  assert.ok(snapshot, "start 应返回快照");
+  assert.equal(started, 1, "start() 必须启动心跳，否则 UI 无法区分卡死");
+
+  // dispose 必须清干净（含秒败后残留的情况）
+  manager.dispose();
+  for (const live of manager.runs.values()) {
+    assert.equal(live.heartbeatTimer ?? null, null, "dispose 后不该有定时器残留");
+  }
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+}));
