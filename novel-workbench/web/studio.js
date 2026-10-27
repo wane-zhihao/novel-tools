@@ -806,7 +806,7 @@ function renderSubmissionsView() {
     el("div", { class: "card-head" }, el("h2", { text: "新增投稿" })),
     el("div", { class: "field-row" },
       el("label", { class: "field" }, el("span", { text: "渠道" }),
-        el("input", { name: "channel", type: "text", maxlength: "60", placeholder: "七猫 / 番茄", required: "required" })),
+        el("input", { name: "channel", type: "text", maxlength: "60", placeholder: "七猫 / 纵横", required: "required" })),
       el("label", { class: "field" }, el("span", { text: "编辑" }),
         el("input", { name: "editor", type: "text", maxlength: "60", placeholder: "可选" })),
       el("label", { class: "field" }, el("span", { text: "日期" }),

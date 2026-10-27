@@ -150,7 +150,36 @@ function paintBookSwitcher(book) {
   railBook.append(select);
 }
 
-function openNewBook() {
+// 平台/题材下拉的唯一填充点：名单全部来自服务端 /api/health，
+// 前端不再记任何一份「有哪些平台」。配置里加一个平台，下拉就自己多一项；
+// 平台没接进流水线（缺 GENRE_BASE）就标出来并禁选，而不是让人选完撞 400。
+function paintPlatforms() {
+  const platforms = Array.isArray(state.health?.platforms) ? state.health.platforms : [];
+  const select = form.elements.platform;
+  select.replaceChildren(...platforms.map((item) => el("option", {
+    value: item.key,
+    text: item.ready === false ? `${item.label}（未接入）` : item.label,
+    disabled: item.ready === false,
+  })));
+  const usable = platforms.find((item) => item.ready !== false) ?? platforms[0];
+  if (usable) select.value = usable.key;
+  paintGenres();
+}
+
+// 题材必须跟着平台走：七猫是爽文/年代，纵横是都市/玄幻/历史。
+// 报一个不在该平台 GENRES 里的题材，prompt 会落到「未取到题材基准」——
+// 不报错，但整章的生死线数字全没了。宁可在下拉里就没得选。
+function paintGenres() {
+  const platforms = Array.isArray(state.health?.platforms) ? state.health.platforms : [];
+  const current = platforms.find((item) => item.key === form.elements.platform.value);
+  form.elements.genre.replaceChildren(...(current?.genres ?? []).map((item) => el("option", {
+    value: item.key,
+    text: item.label,
+  })));
+}
+form.elements.platform.addEventListener("change", paintGenres);
+
+async function openNewBook() {
   // B4：书库目录没就绪时，点「开新书」注定 500 books_root_missing。与其让用户
   // 填完整张表再撞墙，不如先把开机向导打开——这是「开书」的真正前置。
   if (state.health?.needs_setup) {
@@ -158,8 +187,22 @@ function openNewBook() {
     go("#/setup");
     return;
   }
+  // 平台名单拿不到就别开这张表：空名单会开出一本没有题材基准的书
+  if (!Array.isArray(state.health?.platforms) || !state.health.platforms.length) {
+    try {
+      state.health = await api("/api/health");
+    } catch (error) {
+      toast(`读不到平台名单：${error.message}`, "error");
+      return;
+    }
+  }
+  if (!state.health?.platforms?.length) {
+    toast("流水线没配置任何平台，先在设置里补上 PLATFORMS", "error");
+    return;
+  }
   form.reset();
   form.elements.target_words.value = "20000";
+  paintPlatforms();
   dialog.showModal();
 }
 
@@ -446,6 +489,12 @@ form.addEventListener("submit", async (event) => {
   const submit = document.querySelector("#newBookSubmit");
   submit.disabled = true;
   const values = Object.fromEntries(new FormData(form).entries());
+  // 平台没配 GENRES 时下拉是空的：此时提交只会撞 400 invalid_genre，先在这里说清楚
+  if (!values.genre) {
+    toast("这个平台还没配题材（GENRES），先在 config.json 里补上", "error");
+    submit.disabled = false;
+    return;
+  }
   try {
     const result = await api("/api/books", {
       method: "POST",

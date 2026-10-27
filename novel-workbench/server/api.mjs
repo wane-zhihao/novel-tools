@@ -13,7 +13,7 @@ import { resolveRuntimePaths } from "./agent/runtime.mjs";
 import { buildChapterReport } from "./gate-report.mjs";
 import { hasStepToken, RunNeedsResumeError } from "./run-manager.mjs";
 import { SCHEMA_VERSION } from "./schema.mjs";
-import { effectiveSettings, saveSettings, SettingsError } from "./settings.mjs";
+import { effectiveSettings, pipelineConfig, saveSettings, SettingsError } from "./settings.mjs";
 import { workbenchVersion } from "./version.mjs";
 import { SecretError, deleteSecret, secretInfo, setSecret } from "./secrets.mjs";
 import {
@@ -135,6 +135,29 @@ function bookSummary(row) {
 // 降级骨架：引擎不可用（没装 Python）时也能开书。
 // 字段必须与 autopilot init 写出的 state 同形——两条路径产出不一致的 state，
 // 会让后续节点在「有 plan / 没 plan」上走出不同分支。
+// 开书表单与校验都从这里取平台名单——不要再写死数组。
+// 曾经写死 [qimao, zongheng, fanqie]，而流水线只接了 qimao/zongheng：
+// 选了「番茄」会被放行、然后在 render_prompt 静默回落到七猫目录。
+const PLATFORM_LABELS = { qimao: "七猫", zongheng: "纵横" };
+// 题材显示名只影响下拉文案；可选范围一律以 PLATFORMS[key].GENRES 为准。
+// 各家题材不通用（七猫只有爽文/年代，纵横只有都市/玄幻/历史），
+// 前端必须按选中的平台重填——否则选了纵横却报个「年代」，等于给闸门喂空基准。
+const GENRE_LABELS = { shuangwen: "爽文", niandai: "年代", dushi: "都市", xuanhuan: "玄幻", lishi: "历史" };
+
+function platformOptions(settings) {
+  const platforms = pipelineConfig(settings).PLATFORMS ?? {};
+  return Object.keys(platforms).map((key) => ({
+    key,
+    label: PLATFORM_LABELS[key] ?? key,
+    // 接入判据（genre 基准）齐不齐——不齐的书开出来闸门没法跑
+    ready: Boolean(platforms[key]?.GENRE_BASE),
+    genres: (platforms[key]?.GENRES ?? []).map((genre) => ({
+      key: genre,
+      label: GENRE_LABELS[genre] ?? genre,
+    })),
+  }));
+}
+
 function createBookSkeleton(bookPath, { title, genre, targetWords, maxChapters, oneLine, platform = "qimao", volSize = 0 }) {
   for (const sub of ["正文", "大纲", "设定", "追踪", "投稿包", "_pipeline"]) {
     mkdirSync(join(bookPath, sub), { recursive: true });
@@ -293,8 +316,10 @@ export function createApi({
       // 平台与卷：此前 JS 层从不传，Python 侧支持了也等于没用（字段空转）。
       // 平台决定 prompt 读哪家的判据、投稿包 MANIFEST 走哪家目录。
       const platform = body.platform ?? "qimao";
-      if (!["qimao", "zongheng", "fanqie"].includes(platform)) {
-        throw new HttpError(400, "invalid_platform", "platform 只能是 qimao / zongheng / fanqie");
+      const allowed = platformOptions(effectiveSettings({ dataDir }));
+      if (!allowed.some((item) => item.key === platform)) {
+        throw new HttpError(400, "invalid_platform",
+          `platform 只能是已接入流水线的平台：${allowed.map((item) => item.key).join(" / ") || "（无）"}`);
       }
       const volSize = body.vol_size ?? 0;
       if (!Number.isInteger(volSize) || volSize < 0 || volSize > 200) {
@@ -1173,6 +1198,8 @@ export function createApi({
         version: workbenchVersion(),
         schema_version: SCHEMA_VERSION,
         needs_setup: settings.needs_setup,
+        // 开书表单的平台下拉从这里来——前端不写死名单，配置加一个平台就自动出现
+        platforms: platformOptions(settings),
         data_dir: dataDir,
         roots: rootsFor(),
         books: db.prepare("SELECT COUNT(*) AS n FROM books").get().n,

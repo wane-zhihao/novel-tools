@@ -479,3 +479,25 @@ test("开书字段落盘：platform / vol_size / one_line 必须进 state.json�
   assert.equal(badVol.status, 400);
   assert.equal(badVol.body.error.code, "invalid_vol_size");
 });
+
+test("开书平台名单以流水线配置为唯一事实源（A 修法）", async () => {
+  // 仓库 config.json 的 PLATFORMS 只有 qimao/zongheng——表单和校验都不该出现第三个
+  const hardCoded = await post("/api/books", { title: "番茄越界书", genre: "shuangwen", platform: "fanqie", folder: "番茄越界书" });
+  assert.equal(hardCoded.status, 400);
+  assert.equal(hardCoded.body.error.code, "invalid_platform");
+  // 错误消息该列出真实可用项，而不是写死一份可能漂移的名单
+  assert.match(hardCoded.body.error.message, /qimao|zongheng/);
+
+  const health = await request("/api/health");
+  const platforms = health.body.platforms;
+  assert.ok(Array.isArray(platforms) && platforms.length >= 1, "health 应暴露 platforms 列表");
+  assert.ok(platforms.some((p) => p.key === "qimao"), "qimao 必须在列");
+  assert.ok(!platforms.some((p) => p.key === "fanqie"), "fanqie 未接入流水线，不该出现在可选项");
+  // 题材也得跟着平台走：前端拿这份 genres 重填下拉，才不会给纵横报「年代」
+  const qimao = platforms.find((p) => p.key === "qimao");
+  assert.equal(qimao.ready, true, "qimao 有 GENRE_BASE，应标为可用");
+  assert.ok(qimao.genres.some((g) => g.key === "niandai"), "qimao 的题材名单应从 GENRES 派生");
+  const zongheng = platforms.find((p) => p.key === "zongheng");
+  assert.ok(zongheng.genres.some((g) => g.key === "dushi"), "纵横的题材名单应与七猫不同源");
+  assert.ok(!zongheng.genres.some((g) => g.key === "niandai"), "纵横不该出现七猫专属题材");
+});

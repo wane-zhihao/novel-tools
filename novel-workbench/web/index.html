@@ -53,18 +53,13 @@
       <div class="field-row">
         <label class="field">
           <span>题材</span>
-          <select name="genre">
-            <option value="niandai">年代</option>
-            <option value="shuangwen">爽文</option>
-          </select>
+          <!-- 选项由 app.js 按所选平台的 GENRES 动态填（各平台题材不通用） -->
+          <select name="genre"></select>
         </label>
         <label class="field">
           <span>目标平台</span>
-          <select name="platform">
-            <option value="qimao">七猫</option>
-            <option value="zongheng">纵横</option>
-            <option value="fanqie">番茄</option>
-          </select>
+          <!-- 选项来自 /api/health 的 platforms（源自 config.json PLATFORMS），不再写死 -->
+          <select name="platform"></select>
         </label>
       </div>
       <div class="field-row">
