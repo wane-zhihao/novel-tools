@@ -42,6 +42,30 @@ def _read(path: Path, default=None):
         return default
 
 
+def _fact_check(book: Path):
+    """跑全书事实闸门（platforms/_core/tools/fact_gate.py）。
+
+    为什么要在提交时跑：章级 quality check 只测文风与 AI 句式，
+    结构上测不出「昨天该是今天」「不合格是3个字」「两万四写成两万三」。
+    2026-10-28《顶职》栽过一次：9 个章级检查全过，事实错误照样进了账本。
+
+    返回 (rc, payload)。rc: 0 过 / 1 有阻断 / 2 工具不可用。
+    """
+    cfg = _cfg()
+    tool = Path(cfg.get("FACT_GATE") or r"F:\小说\platforms\_core\tools\fact_gate.py")
+    if not tool.is_file():
+        return 2, {"error": f"fact_gate 不存在：{tool}"}
+    args = [cfg["PYTHON"], str(tool), str(book / "正文"), "--json"]
+    conf = book / "追踪" / "_fact-assertions.json"
+    if conf.is_file():
+        args += ["--config", str(conf)]
+    rc, out = run_script(args, book, timeout=120)
+    try:
+        return rc, json.loads(out)
+    except ValueError:
+        return rc, {"raw": str(out)[-400:]}
+
+
 def _chapter_body(book: Path, chapter: int) -> Path:
     files = sorted((book / "正文").glob(f"第{chapter:03d}章_*.md"))
     if not files:
@@ -162,6 +186,23 @@ def commit_chapter(book: Path, chapter: int, *, mode: str = "auto", verify: bool
                 raise CommitError("gate_blocked", f"没过闸门：{blocking} 条阻断", 422,
                                   {"gate": gate,
                                    "findings": (findings.get("items") or [])[:10]})
+
+            # 事实层：章级检查测不出的东西，在这里拦（2026-10-28 增补）
+            frc, fpayload = _fact_check(book)
+            if frc == 2:
+                raise CommitError("fact_tool_unavailable",
+                                  f"事实闸门不可用：{str(fpayload)[-200:]}", 400)
+            fblock = fpayload.get("blocking") or []
+            # 状态直接取闸门回报：pass / unverified / advisory / blocked。
+            # 没有事实台账时是 unverified —— 绝不能记成 pass，否则又变成假绿灯。
+            gate["fact"] = {"status": fpayload.get("status", "unverified"),
+                            "blocking_count": len(fblock),
+                            "advisory_count": len(fpayload.get("advisory") or [])}
+            if fblock:
+                raise CommitError(
+                    "fact_blocked",
+                    f"事实层阻断 {len(fblock)} 条（日期/数值/字数断言）", 422,
+                    {"fact_gate": gate["fact"], "findings": fblock[:10]})
 
         cfg = _cfg()
         txn = book / ".story" / "work" / f"第{chapter:03d}章" / "tracking.json"
