@@ -380,6 +380,56 @@ def commit_chapter(...):
 **同时给对方的对齐点**（已在回复中提出）：我方 `正文/` 命名规则一旦放宽，
 对方 `chapter_check.py` 的正文定位须用同一规则，否则「你算的正文和我算的不是同一份」。
 
+### 4.2d 契约变更（2026-11-01 对方落地后已验收通过）
+
+对方 A 方案已落地并经我方实跑验收（命令见下），三平台**逐字一致**：
+
+```
+qimao    rc=0  verdict=ready   storyctl:exit=0 status=ready   gate:exit=0 status=pass
+fanqie   rc=0  verdict=ready   storyctl:exit=0 status=ready   gate:exit=0 status=advisory
+zongheng rc=0  verdict=ready   storyctl:exit=0 status=ready   gate:exit=0 status=metrics_only
+```
+且 `_detail_json` 三份顶层键集、verdict 集合、退出码语义全一致。
+
+**我方界面直接印对方的这句**（已实测出现在输出里）：
+> 本平台可阻断性：统计层=False 事实层=True 合计=True（calibrated=False）
+> ⚠ 文风闸门为**提示性**：跑过 ≠ 质量过关，只是没崩。
+
+**验收命令**（留档，供复现）：
+```bash
+cd "F:/小说/platforms"
+for p in qimao fanqie zongheng; do
+  PYTHONIOENCODING=utf-8 python -B "$p/tools/$p-chapter-check.py" \
+    --project "F:/小说/works/顶职" --chapter 1 --genre shuangwen
+  echo "rc=$?"
+done
+```
+我方 N16 应接**平台中性**的 `platforms/_core/tools/chapter_check.py`，不接平台 shim（shim 是给既有路径用的）。
+
+**已采纳的三条变更**
+1. `--describe` 独立子命令 → 我方读 `blocking_gates` / `stats_block` / `fact_block`；
+   界面把统计层标「提示性」、事实层标「硬闸」，**`calibrated=False` 一并显示不隐藏**
+2. 正文复核内部改传 `--json` → 我方只调 wrapper，无影响；请对方保持 gate_runner 文本输出双形态可解析
+3. fact_gate 退出码三分（0 非阻断 / 1 blocked / 2 配置或用法错误）→ 完全采纳，我方按此实现
+
+#### 4.2e ⚠️ 新发现：同一章有**两个长度带、结论相反**（待对方澄清）
+
+三份 `_detail_json` 的 storyctl 段落实测：
+```
+"target": 2100, "actual": 2366,
+"internal_band": {min:1848, max:2352, status:"fail"},   ← 判 fail
+"user_band":    {min:1785, max:2415, status:"pass"},   ← 判 pass
+"signed_error_pct": 0.1267, "status": "borderline"
+```
+《顶职》第 1 章即 border：按内部带不合格、按用户带合格。
+
+**我方现状**：`scripts/inline_runner.py:514` 只引用 `user_band`（note 文本就是 `user_band=...`），
+**从不知道存在一个判 fail 的 `internal_band`** → 我方流水线对"这章字数合不合格"的认知
+可能与对方内部标准不一致。若 `internal_band` 才是平台真实下限，则我方现状是**放宽了不该放宽的**。
+
+**处置**：已去信追问三个问题（两带各自语义 / borderline 判定规则 / 我方该按哪条带判）。
+未澄清前我方**不改** `inline_runner` 的字数判定，并把该条记入 TDD 待澄清项。
+
 ### 4.2c 契约消费规则（2026-11-01 实测确立，实现必须遵守）
 
 对方承诺字段全部实测吻合（stub_900 / 不存在文件 / gbk 控制样本 / 混合批次四条命令，逐字段 MATCH，无失信）。
