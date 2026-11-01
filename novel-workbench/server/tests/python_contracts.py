@@ -1140,6 +1140,11 @@ def main() -> int:
         test_init_persists_platform_volume_and_one_line(root)
         test_render_prompt_injects_one_line(root)
         test_tracking_fill_dry_run_then_apply(root)
+        # 下面两条 2026-10-28 定义后一直未注册进 main()，等于从未执行过。
+        # 覆盖的是「卷预算降级要在 status 里说出来」与「终停要写 relay 原因」——
+        # 后者正是 relay 那条被列为「从未实测」的路径。
+        test_status_exposes_volume_degradation(root)
+        test_terminal_block_writes_relay_reason(root)
     print("PY_CONTRACTS_OK")
     return 0
 

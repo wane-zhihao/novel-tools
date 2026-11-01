@@ -187,24 +187,45 @@ exit 2 = 配置或用法错误  ← 闸门输入坏了，改台账
 
 ---
 
-### T-3d · 字数双区间（`internal_band` / `user_band`）口径待澄清，暂不动判定
+### T-3d · 字数双区间：判定口径已确认，但 borderline 被静默
 
-**现象**：对方 `_detail_json` 的 storyctl 段落给出**两个长度带、结论相反**：
-`internal_band`（1848–2352）判 `fail`、`user_band`（1785–2415）判 `pass`，该章 `status=borderline`。
-我方 `scripts/inline_runner.py:514` 只引用 `user_band`，**从未见过 `internal_band`**。
+**口径已确认（2026-11-01 对方给口径，我方逐行复核 `wordcount_core.py` 属实）**
 
-**为何不立即改**：若 `internal_band` 才是平台真实下限，我方现状就是放宽了不该放宽的；
-但若 `user_band` 才是对外口径、internal 只是内部更严的自查线，改成 internal 会误伤大量正常章。
-**两种猜法都会改坏东西**，所以先等对方给一句明确口径（已去信追问）。
+```python
+# wordcount_core.py:167-168
+"internal": {"min": (target*88+99)//100, "max": target*112//100},   # 目标 ±12%
+"user":     {"min": (target*85+99)//100, "max": target*115//100},   # 目标 ±15%
+# :216-220  status = "internal_pass" if internal_pass else ("borderline" if user_pass else under/over)
+# :163-165  作者给定区间时两带取同一区间，band_source="author"，不再有 borderline
+```
+- **两条带都是本地派生带，不是平台下限**（`band_source="default"` 即默认公式，非平台条款）
+- `borderline` = 落在 ±12% 与 ±15% 之间那一圈
+- 实测吻合：target=2100 / actual=2366 → +12.67% → internal fail、user pass、borderline ✓
+- **我方该按 `user_band` 判** —— 与 `storyctl.py:255` 一致：
+  `return "ready" if length["status"] in {"internal_pass","borderline"} else "needs_decision"`
+  即 storyctl 自己在 borderline 时判 ready，**已把 internal fail 当作可提交**
+- 我方 `inline_runner.py:507` 只在 `status in ("under","over","invalid")` 时产出 item → **borderline 不阻断，与 storyctl 对齐，正确**
+  → **我方原行为不是遗漏，判定逻辑不改**
 
-**准备好的（口径一到即可落地）**
-1. 我方字数判定读 `internal_band` 或 `user_band`，二选一，写进 `inline_runner` 的单一取值点
-2. 加断言：`borderline` 状态必须在体检报告里**显式呈现**，并说明依据哪条带
-3. 加断言：两带结论冲突时，报告不得只显示其中一个而让读者以为"只有一条标准"
+**但缺口真实存在**：对方要求「borderline 必须显式显示『内部带 fail、用户带 pass、偏离 +X%』，
+不能只报一个 pass」——而我方对 borderline **完全静默**（连 note 都没有，作者看不到任何提示）。
+这是"提示性信息被删掉"，与统计层 advisory 被吞是同一类问题。
 
-**验收**：口径落地后，同一章在报告里的判定与所选带一致，且 conflict 情形两带都显示。
-**工作量**：S（前提是口径明确）
-**依赖**：对方答复（**当前唯一的外部阻塞项**）
+**Red**
+1. 造一章 `target=2100, actual=2366`（borderline）→ 断言体检报告**出现**该章的 borderline 提示，
+   且同时显示：内部带区间+fail、用户带区间+pass、偏离 +12.7%
+2. 断言该提示**不阻断**（不产生 B 级 item，不影响封板）
+3. 造一章 `status="internal_pass"` → 断言**不**出现 borderline 提示（别制造噪音）
+4. 造一章 `status="over"` → 断言仍产生 B 级阻断 item（现有行为不回退）
+
+**Green**
+- `inline_runner` 收集 length 结果时，若 `status == "borderline"`，产出一条 **level=A（非阻断）** 提示 item，
+  note 含三要素：内部带 fail / 用户带 pass / signed_error_pct
+- 体检报告章节表增加「偏离」列
+
+**验收**：borderline 可见、不阻断、internal_pass 不噪音、over 仍阻断。
+**工作量**：S
+**依赖**：无（口径已明确，不再是外部阻塞）
 
 ---
 
@@ -309,6 +330,47 @@ exit 2 = 配置或用法错误  ← 闸门输入坏了，改台账
 
 ---
 
+### T-4b · 跨工具字数口径换算（P0，本轮新发现）
+
+**现象**：同一个"字数"两种口径，且**阈值按其中一种校准**：
+
+| 来源 | 字段 | 口径 | 《顶职》第001章 |
+|---|---|---|---|
+| storyctl | `length.actual` | 去空白可见字符 | 2366 |
+| 我方 `books.words_total` | — | 去空白可见字符 | 2366 ✓ 一致 |
+| gate_runner | `metrics.visible_chars` | **纯汉字数** | **1992** |
+
+而 gate_runner 的 `gates.json` G6-a（单章下限 1500）与 `min_chars_for_density_metrics`（1000）
+**都是按纯汉字校准的**。于是：
+
+```
+一章 1992 汉字 / 2366 可见字符
+  → gate_runner：1992 < 2000 → 密度类指标 insufficient_sample
+  → 我方账本：  2366 → 「字数达标」
+  → 同一章，两套口径结论相反
+```
+
+这与 §T-5 那个"17% 差异"是**同一个坑的第二个入口**：上次的差在"对外承诺的字数"，
+这次差在"内部判定的阈值"。
+
+**Red**
+1. 造一章使 `visible_chars_v1` 与 `cjk_chars` 差 >10%（如含大量标点/数字的章）
+2. 断言我方任何"与 gate_runner 阈值比较"处用的是**同口径**的数：
+   跨工具比较取 `metrics.visible_chars_v1`，对阈值取 `metrics.cjk_chars`
+3. 断言我方**不得**直接把 `books.words_total` 与 gate_runner 的 1500/1000 比较
+4. 断言体检报告凡同时引用两个来源的字数，**必须标注各自口径**
+
+**Green**
+1. 我方统计口径**不改**（`visible_chars_v1` 与 storyctl 对齐，是对的）
+2. 新增单一取值点：凡取 gate_runner 指标处按用途选键，禁止散落取值
+3. 体检报告章节表增加「口径」列
+
+**验收**：跨口径比较全部换算过；报告能看出每个数是哪个口径。
+**工作量**：S–M
+**依赖**：与 T-5 同一批改（都动字数展示）
+
+---
+
 ### T-4 · N21 投稿包路径无 error 检查（high）
 
 **现象**：`scripts/inline_runner.py:1221` 处 `if rc not in (0,1): out = ""` 把工具崩溃吞成"指标未取到"；`:1232` 解析行不检查 `has_error` → 工具失败后**照常打包投稿**。
@@ -346,16 +408,29 @@ exit 2 = 配置或用法错误  ← 闸门输入坏了，改台账
 
 ---
 
-### T-6 · 测试闸门失真（high，流程类）
+### T-6 · 测试闸门失真（high，流程类）—— ✅ 已完成 2026-11-01
 
 **现象**：`package.json` 手工列测试文件 → `npm test` 100 例、全量 114 例，漏跑 `commit` / `errors` / `run-guard`（其中 `commit.test.mjs` 覆盖单章定稿这条最危险写路径）。`ci.sh`/`ci.cmd` 调 `npm test`，因此 CI 同样漏。仓库无 `.github`，不会被自动发现。
 
-**Red → Green**
-- 改 `package.json` 的 `test` 为 `node --test server/tests/*.test.mjs`（自动发现）
-- 加一条守护用例：比对 `ls server/tests/*.test.mjs` 与 `npm test` 实际执行文件数，不等则失败
-- `python_contracts.py`：把 `test_status_exposes_volume_degradation`、`test_terminal_block_writes_relay_reason` 注册进 `main()`（34 → 36）
+**已完成**
+1. `package.json` 的 `test` 改为 `node --test server/tests/*.test.mjs`（自动发现），另加 `test:red` 与 `test:gate`
+2. 新增 `server/tests/test-gate.test.mjs` 三条守护：
+   - 断言 `npm test` 必须是 glob、**不得手工列举多个文件**（100/114 漏跑的根因）
+   - 断言每个 `*.test.mjs` 都能被加载（加载崩溃 = 零保护且用例静默变 0）；
+     **注意：不能用 per-file ✔/✖ 判定**——没有任何用例匹配时 Node 会把文件标 ✖，那是假阳性；
+     可靠信号是加载期异常特征串
+   - 断言静态可数用例数不低于下限（防止统计口径或文件状态异常）
+3. `python_contracts.py`：把 `test_status_exposes_volume_degradation`、`test_terminal_block_writes_relay_reason`
+   注册进 `main()`（34 → 36）—— 实测 `PY_CONTRACTS_OK`，两条**真的通过**（此前从未执行过）
+4. 四个 TDD 红灯用例改名 `*.red.mjs`（不被 `*.test.mjs` glob 吞进闸门），由 `npm run test:red` 单独跑
 
-**验收**：`npm test` == 全量；两个孤儿契约执行。
+**实测结果**
+```
+npm test        → 121 tests / 121 pass / 0 fail   （改前 104；多跑的 17 = 漏掉的 14 + 新守卫 3）
+npm run test:red → 17 tests / 0 pass / 17 fail   （全是 ERR_ASSERTION 的有效红灯，非加载崩溃）
+```
+
+**验收**：`npm test` == 全量 ✅；两个孤儿契约执行 ✅；红灯不进闸门但可单独跑 ✅
 **工作量**：S（最高性价比，建议最先做，因为它保护后续所有修复）
 
 ---

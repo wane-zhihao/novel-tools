@@ -11,6 +11,8 @@
     "start": "node server/index.mjs --open",
     "serve": "node server/index.mjs",
     "sync": "node server/cli.mjs sync",
-    "test": "node --test server/tests/sync.test.mjs server/tests/agent-config.test.mjs server/tests/tools.test.mjs server/tests/providers.test.mjs server/tests/runtime.test.mjs server/tests/api.test.mjs server/tests/settings.test.mjs server/tests/setup-api.test.mjs server/tests/first-chapter.test.mjs server/tests/judgment.test.mjs server/tests/read-roots.test.mjs server/tests/resume.test.mjs server/tests/stale-evidence.test.mjs server/tests/budgets.test.mjs server/tests/secrets.test.mjs server/tests/security-attacks.test.mjs server/tests/python-contracts.test.mjs server/tests/version.test.mjs server/tests/runs-persistence.test.mjs server/tests/v2-content.test.mjs server/tests/v2-story-submit.test.mjs server/tests/run-events.test.mjs server/tests/fact-gate.test.mjs"
+    "test": "node --test server/tests/*.test.mjs",
+    "test:red": "node --test server/tests/*.red.mjs",
+    "test:gate": "node --test server/tests/fact-gate.test.mjs"
   }
 }

@@ -191,16 +191,26 @@ def commit_chapter(...):
 
 ### 3.3 外部工具链接口契约（P1）
 
-**已与 Novel tools 双方确认：**
+**已与 Novel tools 双方确认（2026-11-01 按对方接口审查清单修订）：**
 
 | 维度 | gate_runner | fact_gate |
 |---|---|---|
-| **rc 取值** | 0（非阻断）/ 1（blocked） | 同上，不加 rc=3 |
-| **status 枚举** | pass / advisory / blocked / metrics_only | pass / advisory / blocked / unverified |
-| **error 标记** | `"has_error": true` + `"error": "..."` | 同上 |
-| **undetermined 标记** | `"undetermined": true` + `"coverage": {...}` | 暂不需要 |
-| **判定逻辑** | 只看 status，不看 rc | 只看 status，不看 rc |
+| **rc 取值** | **0**（非阻断）/ **1**（blocked）/ **2**（配置或用法错误） | 同上，**不加 rc=3** |
+| **rc=2 时** | stdout **无 JSON**，错误只走 stderr → 调用方不得解析 stdout | 同上 |
+| **status 枚举** | pass / advisory / blocked / metrics_only / **null**（仅 has_error=true 时） | pass / advisory / blocked / unverified |
+| **error 标记** | `"has_error": true` + `"error": "..."` | **无**（故障通道是 rc=2 + stderr） |
+| **undetermined 标记** | `"undetermined": true` + `"coverage": {...}` | 无（用 status=unverified 表达） |
+| **判定逻辑** | 短路顺序 `has_error → undetermined → status`；**不看 rc 做内容结论** | 同上（status=unverified 不得折叠成 pass） |
 | **编码输出** | stdout 必须 UTF-8（调用方注入 PYTHONIOENCODING） | 同上 |
+
+> **rc=1 的现状注记**：当前三平台统计层 B 级数 = 0，**rc=1 只可能来自崩溃**（探针异常 / 未捕获异常）。
+> 即"rc=1 = 内容阻断"这条语义在现行配置下不可达，必须靠 mock 或夹具验证，不能声称端到端已测。
+>
+> **per-gate level 值域**：qimao/fanqie 用 `"A"`/`"B"`，**zongheng 用 `"advisory"`**（5 道全是）→ 统计必须留 `other_level` 兜底，
+> 否则纵横会被读成"一道闸门都没配"（少报式失真，比多报更难发现）。
+>
+> **两个探针的 rc 语义与 gate_runner/fact_gate 不同**：探针 rc=1 =「没有有效章节目录」、rc=2 =「未给目录」；
+> gate_runner/fact_gate 的 rc=1 = blocked。**同名不同义，接入时不得混用。**
 
 **关键约束（写进 PRD 的"不可变契约"）：**
 1. **rc=0 不代表 pass** → 调用方必须检查 status 字段
@@ -256,28 +266,28 @@ def commit_chapter(...):
 
 | 模块 | 维护方 | 变更流程 |
 |---|---|---|
-| novel-workbench/scripts/*.py | Novel Platform | 改前先通知 Novel tools（仅 A-J 十种接口） |
+| novel-workbench/scripts/*.py | Novel Platform | 改前先通知 Novel tools（仅 A–L 十二种接口） |
 | novel-workbench/server/** | Novel Platform | 同上 |
 | novel-workbench/web/** | Novel Platform | 同上 |
 | platforms/_core/tools/* | Novel tools | 改前先通知 Novel Platform |
 | platforms/<p>/harness/* | Novel tools | 同上 |
 | platforms/<p>/corpus/* | Novel tools | 所有权归原著平台，Platform owner 许可后方可重新分发 |
 
-### 4.2 调用接口清单（A–K）
+### 4.2 调用接口清单（A–L）
 
 | 编号 | 接口名 | 调用形态 | 我方处理 |
 |---|---|---|---|
-| A | storyctl.py | storyctl chapter check/draft/commit | parse JSON, validate status |
-| B | tracking_commit.py | tracking_commit draft/init | parse JSON, normalize tracking |
-| C | gate_runner.py | gate_runner --platform/--genre--json | **read status**, ignore rc except for error detection |
+| A | storyctl.py | `chapter check` / `chapter commit` / `chapter accept-current-length`；`wordcount measure/check/checkpoint`（**无 draft**，draft 属 tracking_commit） | parse JSON, validate status |
+| B | tracking_commit.py | `draft` / `commit` / `check` / `init`（**commit 才是主用法**） | parse JSON, normalize tracking |
+| C | gate_runner.py | `gate_runner --platform --genre --json <files...>` | **read status**, ignore rc except for error detection |
 | D | check-outline-contract.js | node check-outline --json | parse JSON, block on failure |
 | E | check-ai-patterns.js | AI patterns check | parse JSON, aggregate findings |
 | F | check-degeneration.js | degeneration check | parse JSON, aggregate findings |
-| G | style_probe.py | importlib dynamic import | **函数名不变**, handle errors via has_error |
-| H | clarity_org_probe.py | registered but unused | 暂无调用 |
-| I | build_writer_prompt.py | registered but unused | 暂无调用 |
-| J | fact_gate.py | fact_gate <body_dir>--config|--json | **read status**, treat unverified explicitly |
-| **K** | qimao-chapter-check.py | `--project <书> --chapter N [--genre] [--file]` | 三段式包装器；**rc=2 混合了"事实层未验证"与"工具崩了"两种语义，必须读 `_detail_json.fact.status` 区分** |
+| **G** | **gate_runner 探针集** | style_probe.py / clarity_probe.py / clarity_org_probe.py —— **三者都被 gate_runner 内部动态 import**（`gate_runner.py:46-47` 实测加载） | **函数名/键名即对外契约**：style_probe 提供 `probe()` 与 `visible_chars*`；clarity_probe 提供 `c_short_chain_max`（→ 七猫 G3-c、番茄 G3-c）；clarity_org_probe 提供 `causal_per_1000` / `narration_action_density` / `question_per_1000` / `action_chain_max`（→ **七猫 9 道闸门里有 4 道判它的输出**）。**改任一函数名/键名即断多道闸门** |
+| H | build_writer_prompt.py | registered but unused | 暂无调用 |
+| I | fact_gate.py | `fact_gate <body_dir> [--config <json>] [--json] [--selftest]` | **read status**；rc=2 → 配置错误；unverified 显式呈现 |
+| **K** | chapter_check.py（平台中性） | `--platform <平台目录绝对路径> --project <书> --chapter N [--genre] [--file] [--extra]`；另有 `--describe` / `--selftest` | **N16 的唯一入口**（不接平台 shim）；三段键名 `storyctl`/`gate`/`fact`；`fact.status` 四态 + `fact.executed` 六门 + `fact.not_executed_reason` + `fact.assertion_stats` |
+| L | 平台配置字段名 | `gates.json` / `genre-baselines.json` / `thresholds.json` / `style-anchor.json` 的键名 | 对方承诺不重命名；我方读 `blocking_gates_remaining` / `level=='B'` 计数 / `execution_mode` / `fact_layer`；`--describe` 为首选（带自洽断言），读不到时回退这些字段 —— **不把 `--describe` 作为硬依赖** |
 
 **K 条契约要点**（2026-11-01 对方以《顶职》ch1 实跑验证，exit 0）
 
@@ -290,6 +300,40 @@ def commit_chapter(...):
 | 依赖 | `STORYCTL_PATH` 环境变量优先；未设置则候选路径探测，**找不到 → verdict=partial（不是通过）** |
 
 > 采用 K 后，我方 N16 封板可复用这个包装器作为单一入口 → TDD 方案 T-3b 的「方案 A 收口」成本显著下降。
+
+### 3.5d 跨工具字数口径不一致（2026-11-01 对方接口审查发现，我方已独立复核）
+
+**同一个"字数"，三个工具两种口径**：
+
+| 来源 | 字段 | 口径 | 《顶职》第001章实测 |
+|---|---|---|---|
+| storyctl | `length.actual` | **去空白可见字符**（`visible_chars_v1`） | **2366** |
+| 我方工作台 | `books.words_total` / `chapters.words` | **去空白可见字符**（`book-files.mjs:48` 同口径） | 2366 ✓ 与 storyctl 一致 |
+| gate_runner | `metrics.visible_chars` | **纯汉字数**（`style_probe.py:85`，注释明写"历史口径，勿改"） | **1992** |
+
+对方已在 `style_probe.py:85-90` 显式拆出三个键（**旧键语义不变**）：
+`visible_chars`（纯汉字，历史）/ `cjk_chars`（纯汉字别名）/ `visible_chars_v1`（去空白可见，与 storyctl 同口径）。
+
+**为什么这是缺陷而不只是"口径不同"**：
+gate_runner 的两个阈值是**按纯汉字口径校准**的 —— `gates.json` 的 G6-a（单章字数下限 1500）
+与 `min_chars_for_density_metrics`（1000）。而我方记录的是去空白可见字符，两者差 15.8%：
+
+```
+一章 1992 汉字 / 2366 可见字符
+  → gate_runner：1992 < 2000 → 密度类指标 insufficient_sample（判不可靠）
+  → 我方账本：  2366 → 「字数达标」
+  → 同一章，两套口径给出相反结论
+```
+这与 §3.5b 那个"17% 差异"是**同一个坑的第二个入口**：上次的差在"对外承诺的字数"，
+这次差在"内部判定的阈值"。
+
+**处置**
+1. **我方不改现有统计口径**（`visible_chars_v1` 与 storyctl 对齐，是对的）
+2. 凡引用 gate_runner 的阈值/密度判断，**必须先换算到同一口径**：
+   跨工具比较用 `metrics.visible_chars_v1`，对阈值用 `metrics.cjk_chars`，
+   **不得**拿我方 `words_total` 直接比 gate_runner 的 1500/1000
+3. 体检报告凡同时引用两边的字数，**必须标注各自口径**
+4. 记入 TDD T-4b
 
 ### 3.5 平台门禁能力现状（2026-11-01 磁盘实测，P0 事实）
 
@@ -440,6 +484,7 @@ done
 | 1 | `status="advisory"` **有两种成因** | stub_900 的 advisory 来自 `gate_runner.py:220-221`（`undet and status=='pass' → advisory`，"未完全判定不得全绿"），此时 `advisory_count=0`、`findings=[]`；另一种才是真有 A 级问题 | **禁止**把 advisory 读成"有 N 个问题要改"。必须 `advisory_count` + `undetermined` 合起来判：`(count>0)→有提示` / `(count==0 且 undetermined)→没测准` |
 | 2 | 故障行的**字段形状不同**：缺文件时 `undetermined` 与 `coverage` 整个不出现 | 混合批次实测：good 行 `advisory`+`undetermined`，missing 行 `has_error=true` 且**无 coverage 键** | `row["coverage"]` 在故障行会 `KeyError`。一律 `.get()`，且按 `has_error → undetermined → status` 顺序**短路**：见 has_error 就早退，不碰后续字段 |
 | 3 | `blocked` / `rc=1` 分支**至今无法用真工具验证** | qimao 9 道闸门全为 level A，经 gate_runner 产不出 B 级阻断（三平台同构，此前已确认） | 该分支只能用**构造样本或 mock** 测试；不能声称"阻断路径已实测"。列为可测试性缺口（见 §7 风险） |
+| 4 | **`undetermined=false` ≠ "判过"** | 对方实测：zongheng `metrics_only` + 短稿 → `undetermined=false` 但 `coverage={judged:0, observed:5}` | 我方判定必须同时看 `coverage.judged`；只看 `undetermined` 会把"一闸未判"读成"全部判过且没问题" |
 
 > 陷阱 1 尤其关键：我方 `submissions.mjs`/`inline_runner.py` 若把 advisory 一律当作"有待修问题"计入报告，
 > 会给作者制造**不存在的问题清单**；反过来若一律忽略，又会漏掉真提示。两者都必须靠 `advisory_count` 分流。
