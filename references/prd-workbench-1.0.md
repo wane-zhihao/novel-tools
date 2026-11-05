@@ -45,18 +45,14 @@
 | 前置指标 | 定义 | 当前基线 | 目标（v1.0） |
 |---|---|---|---|
 | **正文完整性** | 投稿包 `全文.md` 实际字数 == 预检报告字数（三方一致：DB 行 / 磁盘文件 / state 计数） | ❌ DL-01：正文删除后预检仍报达标，可打包出缺正文的包 | ✅ 不一致即拒绝打包 |
-| **事实准确性** | 封板前事实层 F1–F6 真的跑过且非 unverified | ❌ **仅人工定稿路径接入**（`commit_chapter.py:191`）；无人值守 N16 封板（`inline_runner.py:872`）只调 storyctl，**不跑 fact_gate** | ✅ 两条路径同一门禁 |
+| **事实准确性** | 有事实断言时执行 F1–F6；缺工具或无可执行断言时明确标记未验证并纳入缺席台账 | ❌ 我方人工定稿与无人值守 N16 路径均待按 T-3/T-3b 完成验证；三平台配置已声明 F1–F4 阻断层 | ✅ 两条路径共用门禁；允许能力缺席，但不允许把缺席显示为通过 |
 | **字数口径透明** | 报告同时给「可见字符」与「纯汉字」两个数并注明门槛来源 | ❌ DL-03：单一 visible 口径，与汉字数天然差约 17%，且门槛 20000 未标 provisional | ✅ 双口径并列 + 口径可选 + provisional 标注 |
 
 > **关于第三行的目标值**：差异不可能"降到 <1%"——中文正文里标点/数字本就被计入 visible_chars_v1，17% 是口径定义的结果，不是缺陷。
 > 真正要达成的是**透明**：让作者和编辑看见同一件事的两种算法，并让门槛按所选口径判定。
 > 把"差异<1%"当指标会导向错误修复（改计数函数），而正确的修复是改展示与判定。
 
-> **关于第二行的路径不对称（本轮新发现，v1.0 关键缺口）**：
-> 产品主张"AI 无人值守连跑一卷"，但事实闸门目前只挂在**人工点击定稿**那条路上；
-> 流水线自动封板 N16 走 `storyctl chapter commit`，绕开 fact_gate。
-> 也就是说：**越自动化，越少一道防线** —— 这与产品定位正好相反。
-> 对应 TDD T-3b（见 `references/tdd-workbench-1.0.md`）。
+> **关于第二行的路径缺口**：截至本轮核对，N16 自动封板仍未接入事实检查；PRD 旧版曾将人工定稿路径的事实检查接入描述为已确认，但当前实现仍需按 T-3 的三态规则修复并验证。T-3b 将 N16 接入平台中性 wrapper，确保无人值守路径具备同一事实检查并保留未验证状态。
 
 ---
 
@@ -74,30 +70,10 @@
 | 每章文件 sha256 == DB 中 body_sha256 | server/sync.mjs | 遍历正文书目逐章比对，不一致列清单 | silent-pass 已证实存在 |
 | MANIFEST.json 必含 全文.md | server/submissions.mjs:127-162 | files 循环后立即校验 manifest.length，缺失抛错 | 静默 continue 已证实 |
 
-**修复实施（fix_effort: 中）**
-```python
-# 新增于 submissions.mjs:preflight_check
-def check_body_integrity(book):
-    # 1) chapters 表行数 vs 正文目录 .md 文件数
-    db_count = db.execute("SELECT COUNT(*) FROM chapters WHERE book_id=?", (book.id,)).fetchone()[0]
-    disk_files = list((book.path / "正文").glob("第*章_*.md"))
-    if db_count != len(disk_files):
-        return False, f"章节数量不匹配：DB={db_count}, 磁盘={len(disk_files)}"
-    
-    # 2) 每章 sha256 比对
-    mismatch = []
-    for row in db.query_chapters_by_book(book.id):
-        disk_file = (book.path / "正文") / f"{row.chapter}_{row.source}.md"
-        if not disk_file.exists():
-            mismatch.append(f"第{row.chapter:03d}章文件不存在")
-        elif sha256_file(disk_file) != row.body_sha256:
-            mismatch.append(f"第{row.chapter:03d}章 sha256 不一致")
-    
-    if mismatch:
-        return False, "以下章节异常：" + str(mismatch)
-    
-    return True, "OK"
-```
+**验收规则（实现以当前 JavaScript 服务层为准）**
+1. 以已同步章节清单为基准逐章确认磁盘文件存在、正文哈希与 DB 镜像一致。
+2. 对比磁盘现役正文、DB 章节行数和可验证的流水线已定稿章节数；若当前状态源不支持可靠取数，须先补齐该状态源再验收三方一致，不能把不可读的状态缓存描述为已核验。差异列出章号并阻止预检通过。
+3. 投稿包生成再次验证必须产出的 `全文.md` 与 MANIFEST 条目；任何缺章或文件写入失败都返回明确错误，不可静默跳过。
 
 #### M2: _原稿_ 备份文件排除
 
@@ -105,19 +81,10 @@ def check_body_integrity(book):
 |---|---|---|---|
 | glob("*.md") 必须排除 _原稿_ 后缀 | scripts/inline_runner.py + server/book-files.mjs + server/sync.mjs | 统一在一个共享函数中判定 | 同一 chapter number 抢行、旧稿混入全文 |
 
-**修复实施（fix_effort: 中）**
-```python
-# 新增于 scripts/pipeline_spec.py:1-5
-def is_valid_chapter_file(filename: str) -> bool:
-    """真正的章节文件判定：排除 _原稿_/.bak/备份 等后缀"""
-    basename = filename.split(".")[-1].split("_")[0] if "_" in filename else filename
-    excluded_markers = ["_原稿_", ".bak", "_backup", "原稿"]
-    return all(marker not in filename for marker in excluded_markers) and basename.isdigit()
-```
-然后在三处改：
-- `scripts/inline_runner.py:941,965,1120,1155,1528,1538,1569` → `if is_valid_chapter_file(path.name)`
-- `server/book-files.mjs:67-75` → same check
-- `server/sync.mjs:283-305` → same check + UNIQUE(book_id, file_path) 防冲突
+**验收规则（实现以当前 JavaScript / Python 服务层为准）**
+1. 章节发现、同步、全文合成与统计使用一致的现役正文判定规则；排除 `_原稿_`、`.bak`、`_backup` 等备份稿。
+2. 同章现役稿与备份稿并存时，只将现役稿写入章节记录、全文和字数统计；不得由文件遍历顺序决定正文版本。
+3. 共享判定需覆盖 Node 与 Python 调用路径，并由 T-2 回归用例验证；章号解析与文件名兼容规则按 T-2b 验收。
 
 #### M3: words_total 双口径展示
 
@@ -126,17 +93,10 @@ def is_valid_chapter_file(filename: str) -> bool:
 | 体检报告/投稿包同时给 visible_chars_v1 + 汉字数 | inline_runner.py:1163-1166 + submissions.mjs:39-45 | "可见字符 21,112 字（含标点）；纯汉字 17,533 字" |
 | thresholds.json 中标注 provisional | F:/小说/platforms/qimao/config/thresholds.json | "2 万字为本地历史观察，非官方条款" |
 
-**修复实施（fix_effort: 中）**
-```markdown
-# 体检报告新增字段
-- 字数统计：
-  - 可见字符数（visible_chars_v1）: 21,112 字
-  - 纯汉字数（CJK only）: 17,533 字
-  - 标点/拉丁/数字占比：17.0%
-- 投稿门槛说明：
-  - 七猫历史观察值：≥20,000 字（current_min_words=null, status=provisional）
-  - 建议以编辑反馈为准，此值为参考区间
-```
+**验收规则（实现以当前服务层及平台配置为准）**
+1. 体检报告和投稿包同时显示 `visible_chars_v1` 与 CJK 汉字数，并标明各自口径。
+2. 平台投稿门槛展示配置来源、计数字段和 `provisional` 状态；未确认的本地观察值不得写成平台硬门槛。
+3. 同一字段不得跨口径比较；T-4b / T-5 负责字段选择、提示级别与门槛来源验收。
 
 ### 3.2 事实层闸门门禁（P0）
 
@@ -146,48 +106,24 @@ def is_valid_chapter_file(filename: str) -> bool:
 
 | 检查项 | 当前状态 | 要求 |
 |---|---|---|
-| commit_chapter 中是否有 _fact_check 调用 | ✅ **仅人工定稿路径**（`scripts/commit_chapter.py:191`） | 保持现状，加超时/缺工具/stderr 污染三类用例 |
-| **无人值守 N16 封板是否跑 fact_gate** | ❌ **不跑** —— `inline_runner.py:872 _commit_chapter` 只调 `storyctl chapter commit` | **v1.0 必须补**：两条路径共用同一道事实门禁（见 TDD T-3b） |
-| fact-gate.test.mjs 是否被 npm test 包含 | ⚠️ 已写入 `package.json` 但文件未跟踪 → 状态不一致 | `git add` 入库（见 TDD 方案 §1.1，开工前先做） |
-| unverified 是否能区分 pass | ✅ gate_runner/fact_gate 契约已定 | `commit_chapter.py:191` 需保证 `fpayload.get("status", "unverified")` 不为 pass |
+| 人工定稿 `commit_chapter.py` | 有 `_fact_check` 调用，但缺少稳定的 `FACT_GATE` 设置项，解析与错误分支仍需按 T-3 重做 | 区分 absent / tool_error / ran；按用户裁决，缺席可放行但需登记，已配置后故障必须 fail-closed |
+| **无人值守 N16 封板** | ❌ 尚未接入事实检查；目前仅调用 `storyctl chapter commit` | T-3b：改用平台中性 `chapter_check.py`，并让两条路径对阻断、工具故障和 unverified 采取一致处理 |
+| fact-gate.test.mjs | 已被 npm 自动发现，包含于 `npm test` | 保持跨环境可运行，外部工具缺席时按契约 skip |
+| `unverified` 是否能区分 pass | fact_gate rc=0 可同时是 pass/advisory/unverified | 必须读取 `status`，不得因 rc=0 标记已验证；组合 wrapper 的结果为 partial，能力缺席按 T-3 记账后可继续 |
 
-**修复实施（fix_effort: 低，已有人写了）**
-确认 fact-gate.test.mjs 已加入 npm test：
-```json
-// package.json:14
-"test": "node --test server/tests/sync.test.mjs ... server/tests/run-events.test.mjs server/tests/fact-gate.test.mjs"
-```
+#### M5: fact_gate 返回值处理（三态与不静默）
 
-#### M5: fact_gate 返回值处理（fail-closed）
+现行 `_fact_check` 仍解析合并输出并把无法解析的内容降成 `{"raw": ...}`；上层随后只检查 `blocking`，存在阻断被吞的 fail-open 路径。T-3 负责替换该路径，现行代码片段不作为期望实现。
 
-| 检查项 | 风险点 | 修复 |
-|---|---|---|
-| `_fact_check` 返回 rc=2 时 | 工具不存在/Python 不可用 → 抛出 fact_tool_unavailable | commit_chapter.py:195-197 |
-| `blocking` 数组非空时 | 任何 F1-F6 阻断 → 抛出 fact_blocked + findings[:10] | commit_chapter.py:205-207 |
-| stderr 混入 stdout 时 | JSON.parse 失败 → 吞掉阻断 | 改用 inline_runner.extract_json(out) |
+| 检查项 | 正确处置 |
+|---|---|
+| 未配置工具且默认路径不存在 | 识别为 `absent`；按用户裁决允许继续，但写缺席台账、在结果中标明未验证 |
+| 已配置工具不存在、运行失败、rc=2 或 JSON 无效 | 识别为 `tool_error`；fail-closed，不得套用“缺席放行” |
+| rc=1 且 JSON `status=blocked` / `blocking` 非空 | `fact_blocked` + findings |
+| rc=0 且 `status=unverified` | 可以继续，但记为未验证，不得记为 pass |
+| rc=2 | 按工具/配置错误处理；fact_gate 此时 stdout 无 JSON，错误从 stderr 取得 |
 
-**修复实施（fix_effort: 低）**
-```python
-# commit_chapter.py:191-200
-def commit_chapter(...):
-    ...
-    frc, fpayload = _fact_check(book)
-    if frc == 2:
-        raise CommitError("fact_tool_unavailable",
-                          f"事实闸门不可用：{str(fpayload)[-200:]}", 400)
-    fblock = fpayload.get("blocking") or []
-    gate["fact"] = {
-        "status": fpayload.get("status", "unverified"),
-        "blocking_count": len(fblock),
-        "advisory_count": len(fpayload.get("advisory") or [])
-    }
-    if fblock:
-        raise CommitError(
-            "fact_blocked",
-            f"事实层阻断 {len(fblock)} 条（日期/数值/字数断言）", 422,
-            {"fact_gate": gate["fact"], "findings": fblock[:10]}
-        )
-```
+实现与验收以 `references/tdd-workbench-1.0.md` T-3 / T-3c 为准，不能继续使用旧版只按 `frc == 2` 的二态示例。
 
 ### 3.3 外部工具链接口契约（P1）
 
@@ -200,11 +136,10 @@ def commit_chapter(...):
 | **status 枚举** | pass / advisory / blocked / metrics_only / **null**（仅 has_error=true 时） | pass / advisory / blocked / unverified |
 | **error 标记** | `"has_error": true` + `"error": "..."` | **无**（故障通道是 rc=2 + stderr） |
 | **undetermined 标记** | `"undetermined": true` + `"coverage": {...}` | 无（用 status=unverified 表达） |
-| **判定逻辑** | 短路顺序 `has_error → undetermined → status`；**不看 rc 做内容结论** | 同上（status=unverified 不得折叠成 pass） |
+| **判定逻辑** | 先处理 `has_error`，再看 `undetermined`，最后解释 `status`；rc=2 时 stdout 无 JSON，按工具/配置错误处理 | rc=2 时按配置/用法错误处理；rc=0/1 有 JSON 时必须读 `status`，`unverified` 不得折叠成 pass |
 | **编码输出** | stdout 必须 UTF-8（调用方注入 PYTHONIOENCODING） | 同上 |
 
-> **rc=1 的现状注记**：当前三平台统计层 B 级数 = 0，**rc=1 只可能来自崩溃**（探针异常 / 未捕获异常）。
-> 即"rc=1 = 内容阻断"这条语义在现行配置下不可达，必须靠 mock 或夹具验证，不能声称端到端已测。
+> **rc=1 的测试边界**：三平台统计层目前都没有 B 级 gate，因此正常内容不会触发统计层 B 级阻断；`gate_runner` 的退出码由 B 级阻断项数量决定。文件读取错误在 JSON 行中标为 `has_error=true`，不等同于内容阻断。`fact_gate` 的 rc=1 可由 F1–F4 事实断言触发。测试报告必须标清验证工具和隔离夹具，不得把统计配置能力与 wrapper 的组合阻断能力混为一谈。
 >
 > **per-gate level 值域**：qimao/fanqie 用 `"A"`/`"B"`，**zongheng 用 `"advisory"`**（5 道全是）→ 统计必须留 `other_level` 兜底，
 > 否则纵横会被读成"一道闸门都没配"（少报式失真，比多报更难发现）。
@@ -215,7 +150,7 @@ def commit_chapter(...):
 **关键约束（写进 PRD 的"不可变契约"）：**
 1. **rc=0 不代表 pass** → 调用方必须检查 status 字段
 2. **rc=1 不等于 content-blocked** → 可能是崩溃，要先看 stdout 是否为 JSON
-3. **has_error=true 优先阻断** → undetermined=true 次之，最后是 status
+3. **先处理工具/输入错误，再处理未判定，最后解释内容状态**：gate_runner 行先看 `has_error`，再看 `undetermined` 与 coverage，最后读 `status`；fact_gate 不提供 `has_error` / `undetermined`，rc=2 + stderr 是配置或用法错误，必须单独处理。组合 wrapper 的 verdict 优先级见 §4.2d。
 4. **encoding != utf-8 → undetermined=true** → 指标来源不可信但不阻断
 
 ### 3.4 N20g/N21 终审门禁（P1）
@@ -283,19 +218,20 @@ def commit_chapter(...):
 | D | check-outline-contract.js | node check-outline --json | parse JSON, block on failure |
 | E | check-ai-patterns.js | AI patterns check | parse JSON, aggregate findings |
 | F | check-degeneration.js | degeneration check | parse JSON, aggregate findings |
-| **G** | **gate_runner 探针集** | style_probe.py / clarity_probe.py / clarity_org_probe.py —— **三者都被 gate_runner 内部动态 import**（`gate_runner.py:46-47` 实测加载） | **函数名/键名即对外契约**：style_probe 提供 `probe()` 与 `visible_chars*`；clarity_probe 提供 `c_short_chain_max`（→ 七猫 G3-c、番茄 G3-c）；clarity_org_probe 提供 `causal_per_1000` / `narration_action_density` / `question_per_1000` / `action_chain_max`（→ **七猫 9 道闸门里有 4 道判它的输出**）。**改任一函数名/键名即断多道闸门** |
-| H | build_writer_prompt.py | registered but unused | 暂无调用 |
-| I | fact_gate.py | `fact_gate <body_dir> [--config <json>] [--json] [--selftest]` | **read status**；rc=2 → 配置错误；unverified 显式呈现 |
-| **K** | chapter_check.py（平台中性） | `--platform <平台目录绝对路径> --project <书> --chapter N [--genre] [--file] [--extra]`；另有 `--describe` / `--selftest` | **N16 的唯一入口**（不接平台 shim）；三段键名 `storyctl`/`gate`/`fact`；`fact.status` 四态 + `fact.executed` 六门 + `fact.not_executed_reason` + `fact.assertion_stats` |
-| L | 平台配置字段名 | `gates.json` / `genre-baselines.json` / `thresholds.json` / `style-anchor.json` 的键名 | 对方承诺不重命名；我方读 `blocking_gates_remaining` / `level=='B'` 计数 / `execution_mode` / `fact_layer`；`--describe` 为首选（带自洽断言），读不到时回退这些字段 —— **不把 `--describe` 作为硬依赖** |
+| G | style_probe.py | `probe(path)`，提供 `visible_chars`（历史 CJK 口径）、`cjk_chars`、`visible_chars_v1` | gate_runner 动态导入；兼容时保留旧键语义 |
+| H | clarity_probe.py / clarity_org_probe.py | gate_runner 动态导入；提供 `c_short_chain_max` 及 `causal_per_1000` / `narration_action_density` / `question_per_1000` / `action_chain_max` | 不是闲置依赖：七猫多道 gate 使用其输出；改函数或键名须核对所有引用 |
+| I | build_writer_prompt.py | 注册于 settings | 当前调用状态以代码检索为准；不是 gate_runner 的动态探针 |
+| J | fact_gate.py | `fact_gate <body_dir> [--config <json>] [--json] [--selftest]` | 读 `status`；rc=2 是配置/用法错误；`unverified` 必须显式呈现，不得当 pass |
+| **K** | chapter_check.py（平台中性；qimao shim 转发） | `--platform <平台目录绝对路径> --project <书> --chapter N [--genre] [--file] [--extra]`；另有 `--describe` / `--selftest` | **N16 计划使用的唯一入口**（实施前须满足 T-3 三态策略）；三段键名 `storyctl`/`gate`/`fact`；`fact.status`、`fact.executed`、`fact.not_executed_reason`、`fact.assertion_stats` |
+| L | 平台配置字段名 | `gates.json` / `genre-baselines.json` / `thresholds.json` / `style-anchor.json` 的键名 | 我方优先读取 `--describe`；不可用时回退 `gates.json` 现有字段。检查 `blocking_gates_remaining`、各 level 计数、`execution_mode` 和 `fact_layer`；不把 `--describe` 设为硬依赖 |
 
 **K 条契约要点**（2026-11-01 对方以《顶职》ch1 实跑验证，exit 0）
 
 | 项 | 取值 |
 |---|---|
 | verdict | `ready \| needs_decision \| blocked \| partial \| error` |
-| 优先级 | `error/partial > blocked > needs_decision > ready`（needs_decision 不再吞掉工具失败） |
-| 退出码 | `0` = ready / needs_decision / advisory；`1` = blocked（storyctl 质量阻断、gate B 级、fact F1–F4 任一）；`2` = error / partial |
+| 优先级 | 当前可达 verdict 顺序为 `error / partial > blocked > needs_decision > ready`；gate 的 `advisory` 保留在分段结果，不升级综合 verdict。共享源码 rank 字典仍有 `advisory: 2`，但没有 `degrade('advisory')` 调用，属于未清理的潜在排序项。`--selftest` 已覆盖 `error` 与 `blocked` 并存应为 error、`blocked` 与 `undetermined` 并存应为 partial；N16 接入前仍需核对跨平台运行场景 |
+| 退出码 | `0` = ready / needs_decision（gate advisory 仍是提示）；`1` = blocked（storyctl 质量阻断、gate B 级、fact F1–F4 任一）；`2` = error / partial。因 fact `unverified` 会产生 partial，wrapper 返回 2；调用方须区分能力缺席与工具故障 |
 | 末行 | `_detail_json: {storyctl.status, gate.exit, fact.status, fact.executed, fact.assertion_stats}` |
 | 依赖 | `STORYCTL_PATH` 环境变量优先；未设置则候选路径探测，**找不到 → verdict=partial（不是通过）** |
 
@@ -314,18 +250,13 @@ def commit_chapter(...):
 对方已在 `style_probe.py:85-90` 显式拆出三个键（**旧键语义不变**）：
 `visible_chars`（纯汉字，历史）/ `cjk_chars`（纯汉字别名）/ `visible_chars_v1`（去空白可见，与 storyctl 同口径）。
 
-**为什么这是缺陷而不只是"口径不同"**：
-gate_runner 的两个阈值是**按纯汉字口径校准**的 —— `gates.json` 的 G6-a（单章字数下限 1500）
-与 `min_chars_for_density_metrics`（1000）。而我方记录的是去空白可见字符，两者差 15.8%：
+**口径不同需要明确标注，但当前证据不支持“同章结论相反”**：
 
-```
-一章 1992 汉字 / 2366 可见字符
-  → gate_runner：1992 < 2000 → 密度类指标 insufficient_sample（判不可靠）
-  → 我方账本：  2366 → 「字数达标」
-  → 同一章，两套口径给出相反结论
-```
-这与 §3.5b 那个"17% 差异"是**同一个坑的第二个入口**：上次的差在"对外承诺的字数"，
-这次差在"内部判定的阈值"。
+- 七猫 G6-a 的 `min=1500` 是 level-A 的残章提示，不是统计层阻断；1992 个 CJK 字也高于该值。
+- 七猫 `min_chars_for_density_metrics=1000` 是密度指标的样本下限；同章 1992 个 CJK 字高于下限，不会仅因该条件被标为 `insufficient_sample`。
+- 番茄 G6-a 的 `min=2000` 是 level-A 提示值，1992 个 CJK 字低于它时可能出现文案提示，但这不等于密度指标不可靠，也不构成阻断。
+
+因此，已证实的问题是**两个工具报告不同计数口径**（1992 CJK vs 2366 visible chars），而不是这组样本触发了相反的门禁结论。跨工具展示仍需标注口径；阈值判断应使用对应配置和对应指标字段，不能把某个平台的提示阈值泛化成密度样本线。
 
 **处置**
 1. **我方不改现有统计口径**（`visible_chars_v1` 与 storyctl 对齐，是对的）
@@ -335,30 +266,21 @@ gate_runner 的两个阈值是**按纯汉字口径校准**的 —— `gates.json
 3. 体检报告凡同时引用两边的字数，**必须标注各自口径**
 4. 记入 TDD T-4b
 
-### 3.5 平台门禁能力现状（2026-11-01 磁盘实测，P0 事实）
+### 3.5 平台门禁能力现状（2026-11-01 磁盘复核，P0 事实）
 
-**三个平台今天的「可阻断闸门」都是 0。** 这不是 wrapper 缺失的下游症状，是平台配置本身不对称：
+**三平台统计层都没有 B 级 gate；三平台配置现在都声明了 F1–F4 事实阻断层。** `blocking_gates_remaining=0` 仅描述统计层，不代表合并的事实层也不能阻断。
 
-| 平台 | 统计层 gates | level=B | execution_mode | fact_layer 声明 | blocking_gates_remaining |
-|---|---|---|---|---|---|
-| qimao | 9 | **0** | （无） | ✅ **有**（F1–F4 = B） | **0** |
-| fanqie | 6 | **0** | （无） | ❌ 无 | **0** |
-| zongheng | 5 | **0**（level 值域是 `"advisory"` 而非 A/B） | `metrics_only` | ❌ 无 | **0** |
+| 平台 | 统计层 gates | 统计层 B | execution_mode | fact_layer | fact B gates |
+|---|---:|---:|---|---|---|
+| qimao | 9 | 0 | advisory | 已声明 | F1–F4 |
+| fanqie | 6 | 0 | advisory | 已声明 | F1–F4 |
+| zongheng | 5 | 0（level=`advisory`） | metrics_only | 已声明 | F1–F4 |
 
-证据：`grep "fact_layer|execution_mode|blocking_gates_remaining" platforms/*/harness/gates.json`
-- `qimao/harness/gates.json:105 fact_layer` / `:166 blocking_gates_remaining: 0`
-- `fanqie/harness/gates.json:75 blocking_gates_remaining: 0`（无 fact_layer）
-- `zongheng/harness/gates.json:7 execution_mode: metrics_only` / `:9 blocking_gates_remaining: 0`（无 fact_layer）
+证据：三平台 `harness/gates.json` 中均有 `fact_layer` 和 F1–F4（2026-11-01 本地复核）；`chapter_check.py --describe` 对三平台均返回 `stats_blocking_possible=false`、`fact_blocking_possible=true`、`blocking_possible=true`。因此必须区分“统计层是否能阻断”与“组合门禁是否能阻断”。对方最新报告称 qimao/fanqie/zongheng 的 ready、事实阻断、正文歧义矩阵 9/9 通过；我方已复核源码和 `--selftest`，但未独立重跑这 9 个跨平台场景。当前 rank 字典残留未调用的 advisory 项，详见 §4.2d。
 
-**三派生结论（全部影响对外承诺）**：
-
-1. **统计层在任何平台都产不出 `rc=1`** —— `gate_runner.py:162` 只统计 `level=='B'`，而三平台 B 级数均为 0。
-   因此「闸门通过」在文风维度上**不是质量信号，只是没崩**。UI 若显示绿色勾即为误导。
-2. **唯一真实的阻断来源是 storyctl 质量检查 + fact_gate**，而 fact_layer 只在 qimao 声明、
-   且 fact_gate **未接入 N16 自动封板**（见 §4.2c 与 TDD T-3b）。
-   → 当前无人值守流水线的**实际阻断路径 = 仅 storyctl 质量层**。
-3. **番茄/纵横连 fact_layer 都没有声明** → 即使接入 wrapper，这两平台仍是 0 阻断。
-   依赖：对方补 `fanqie/gates.json`、`zongheng/gates.json` 的 `fact_layer` 声明（已承诺，走其接口变更流程）。
+1. **统计层不构成质量通过信号**：三平台都没有统计层 B 级 gate；纵横使用 `metrics_only`，只输出指标。UI 不应把“闸门跑完”显示成签约质量绿灯。
+2. **事实层具备阻断能力，但不能仅凭配置声明证明端到端接线有效**：当前 N16 是否调用平台中性 wrapper 由 T-3b 验收；在 T-3b 完成前，无人值守主路径不能宣传事实层已执行。
+3. **calibrated=false 必须保留**：事实层阻断的是显式断言冲突，不代表文风指标已校准，更不代表预测签约结果。
 
 **我方必须做的两件如实呈现（不依赖对方）**：
 - 界面与体检报告按 `--describe` 的 `stats_blocking_possible` / `fact_blocking_possible` 分流显示，
@@ -376,7 +298,7 @@ gate_runner 的两个阈值是**按纯汉字口径校准**的 —— `gates.json
 | 后果 | 说明 |
 |---|---|
 | 基线只代表**开篇** | 42 章全部落在前 3 章（约 6–7 千字），**不能代表中盘节奏**。写作方案 `02_写作方案.md:53` 自己也写明「对照/拒稿文本来自被纵横驳回的作品，并非七猫拒稿」 |
-| 番茄无校准数据 | `fanqie/corpus/` 271 篇**全是写作技巧，0 篇小说正文** → 番茄任何基线都无正文依据 |
+| 番茄无校准数据 | `fanqie/corpus/` 教学材料不构成小说正文校准集 → 番茄任何签约判别或正文质量阈值都无正文样本依据 |
 | 无拒稿样本 → 无判别力 | `gates.json critical_finding`：「has Qimao signed-work text and a small cross-platform comparison, but **no Qimao rejected-work sample**. It cannot test Qimao signing discrimination.」 |
 
 → 与 §4.2b 的探针阈值冻结是**同一条纪律**：没有拒稿对照，任何"达标/能过签"的阈值主张都不可证伪也不可信。
@@ -424,55 +346,23 @@ gate_runner 的两个阈值是**按纯汉字口径校准**的 —— `gates.json
 **同时给对方的对齐点**（已在回复中提出）：我方 `正文/` 命名规则一旦放宽，
 对方 `chapter_check.py` 的正文定位须用同一规则，否则「你算的正文和我算的不是同一份」。
 
-### 4.2d 契约变更（2026-11-01 对方落地后已验收通过）
+### 4.2d 契约变更（2026-11-01 复核；证据按来源区分）
 
-对方 A 方案已落地并经我方实跑验收（命令见下），三平台**逐字一致**：
+平台中性入口 `platforms/_core/tools/chapter_check.py` 已在对方仓库实现；qimao shim 转发到该实现。三平台 `--describe` 实跑均返回 `stats_blocking_possible=false`、`fact_blocking_possible=true`、`blocking_possible=true`，并保留 `calibrated=false`。本轮本地复核 `--selftest` 通过。此前三平台 ready 样例输出也已验收。这些证据验证 wrapper 和配置描述，不等于 N16 已接线，也不等于所有阻断路径均完成端到端验收。
 
-```
-qimao    rc=0  verdict=ready   storyctl:exit=0 status=ready   gate:exit=0 status=pass
-fanqie   rc=0  verdict=ready   storyctl:exit=0 status=ready   gate:exit=0 status=advisory
-zongheng rc=0  verdict=ready   storyctl:exit=0 status=ready   gate:exit=0 status=metrics_only
-```
-且 `_detail_json` 三份顶层键集、verdict 集合、退出码语义全一致。
+**已采纳的接口约定**
+1. `--describe` 优先读取；若版本不支持，则回退 `gates.json` 现有字段，不能把新子命令当硬依赖。
+2. 正文复核可用 `--json`；文本输出需继续保留兼容调用方可解析的形式。
+3. `fact_gate` 退出码为 0 非阻断（含 `unverified`）、1 内容阻断、2 配置或用法错误；调用方必须结合 JSON `status`。rc=2 时不要解析 stdout。
+4. 当前可达 verdict 顺序为 `error / partial > blocked > needs_decision > ready`；gate `advisory` 只留在分段结果，不改变综合 verdict。源码 rank 字典仍保留 `advisory: 2`，但无 `degrade('advisory')` 调用；`--selftest` 覆盖 error 优先和 blocked + undetermined → partial。对方报告三平台 ready / 事实阻断 / 正文歧义矩阵 9/9 通过；我方已运行 `--selftest`，跨平台 9 个场景仍标作对方报告证据，N16 接入前需在我方实际调用链复核。
 
-**我方界面直接印对方的这句**（已实测出现在输出里）：
-> 本平台可阻断性：统计层=False 事实层=True 合计=True（calibrated=False）
-> ⚠ 文风闸门为**提示性**：跑过 ≠ 质量过关，只是没崩。
+我方 N16 计划接平台中性 `chapter_check.py`，但须在 T-3 缺席/故障三态策略完成后实施；qimao 平台 shim 不作为 N16 路径。
 
-**验收命令**（留档，供复现）：
-```bash
-cd "F:/小说/platforms"
-for p in qimao fanqie zongheng; do
-  PYTHONIOENCODING=utf-8 python -B "$p/tools/$p-chapter-check.py" \
-    --project "F:/小说/works/顶职" --chapter 1 --genre shuangwen
-  echo "rc=$?"
-done
-```
-我方 N16 应接**平台中性**的 `platforms/_core/tools/chapter_check.py`，不接平台 shim（shim 是给既有路径用的）。
+#### 4.2e 字数双区间语义（2026-11-01 已确认）
 
-**已采纳的三条变更**
-1. `--describe` 独立子命令 → 我方读 `blocking_gates` / `stats_block` / `fact_block`；
-   界面把统计层标「提示性」、事实层标「硬闸」，**`calibrated=False` 一并显示不隐藏**
-2. 正文复核内部改传 `--json` → 我方只调 wrapper，无影响；请对方保持 gate_runner 文本输出双形态可解析
-3. fact_gate 退出码三分（0 非阻断 / 1 blocked / 2 配置或用法错误）→ 完全采纳，我方按此实现
+storyctl 的 internal band 为目标 ±12%，user band 为目标 ±15%；两者是本地派生区间，不是平台签约下限。`borderline` 表示 internal band 未通过但 user band 通过；storyctl 将其判为 `ready`。我方沿用 user band 的非阻断语义是正确的，但原报告没有展示 borderline 信号。
 
-#### 4.2e ⚠️ 新发现：同一章有**两个长度带、结论相反**（待对方澄清）
-
-三份 `_detail_json` 的 storyctl 段落实测：
-```
-"target": 2100, "actual": 2366,
-"internal_band": {min:1848, max:2352, status:"fail"},   ← 判 fail
-"user_band":    {min:1785, max:2415, status:"pass"},   ← 判 pass
-"signed_error_pct": 0.1267, "status": "borderline"
-```
-《顶职》第 1 章即 border：按内部带不合格、按用户带合格。
-
-**我方现状**：`scripts/inline_runner.py:514` 只引用 `user_band`（note 文本就是 `user_band=...`），
-**从不知道存在一个判 fail 的 `internal_band`** → 我方流水线对"这章字数合不合格"的认知
-可能与对方内部标准不一致。若 `internal_band` 才是平台真实下限，则我方现状是**放宽了不该放宽的**。
-
-**处置**：已去信追问三个问题（两带各自语义 / borderline 判定规则 / 我方该按哪条带判）。
-未澄清前我方**不改** `inline_runner` 的字数判定，并把该条记入 TDD 待澄清项。
+**处置**：不改变阻断行为；TDD T-3d 要在报告中显示 internal fail、user pass 和偏差百分比，作为非阻断提示。
 
 ### 4.2c 契约消费规则（2026-11-01 实测确立，实现必须遵守）
 
@@ -483,39 +373,33 @@ done
 |---|---|---|---|
 | 1 | `status="advisory"` **有两种成因** | stub_900 的 advisory 来自 `gate_runner.py:220-221`（`undet and status=='pass' → advisory`，"未完全判定不得全绿"），此时 `advisory_count=0`、`findings=[]`；另一种才是真有 A 级问题 | **禁止**把 advisory 读成"有 N 个问题要改"。必须 `advisory_count` + `undetermined` 合起来判：`(count>0)→有提示` / `(count==0 且 undetermined)→没测准` |
 | 2 | 故障行的**字段形状不同**：缺文件时 `undetermined` 与 `coverage` 整个不出现 | 混合批次实测：good 行 `advisory`+`undetermined`，missing 行 `has_error=true` 且**无 coverage 键** | `row["coverage"]` 在故障行会 `KeyError`。一律 `.get()`，且按 `has_error → undetermined → status` 顺序**短路**：见 has_error 就早退，不碰后续字段 |
-| 3 | `blocked` / `rc=1` 分支**至今无法用真工具验证** | qimao 9 道闸门全为 level A，经 gate_runner 产不出 B 级阻断（三平台同构，此前已确认） | 该分支只能用**构造样本或 mock** 测试；不能声称"阻断路径已实测"。列为可测试性缺口（见 §7 风险） |
+| 3 | 统计 gate_runner 的 B 级阻断当前不能由平台配置触发 | 三平台统计层都没有 B 级 gate；fact_gate 则有 F1–F4 B 级事实断言 | 统计层阻断使用构造样本/mock 并明确标注；事实层阻断可用满足 storyctl 前置条件的隔离书目录验证。记录夹具结构和实际触发阶段，不把工具故障或预检失败称为 fact_gate 内容阻断 |
 | 4 | **`undetermined=false` ≠ "判过"** | 对方实测：zongheng `metrics_only` + 短稿 → `undetermined=false` 但 `coverage={judged:0, observed:5}` | 我方判定必须同时看 `coverage.judged`；只看 `undetermined` 会把"一闸未判"读成"全部判过且没问题" |
 
 > 陷阱 1 尤其关键：我方 `submissions.mjs`/`inline_runner.py` 若把 advisory 一律当作"有待修问题"计入报告，
 > 会给作者制造**不存在的问题清单**；反过来若一律忽略，又会漏掉真提示。两者都必须靠 `advisory_count` 分流。
 
-> 陷阱 3 是诚实性要求：TDD T-3 的"blocking 非空必须抛 fact_blocked"用例只能用夹具/mock 达成，
-> 报告中须写明"经 mock 验证，真平台暂无 B 级闸门可触发"，不得伪装成端到端已验证。
+> 陷阱 3 是证据边界：统计 gate_runner 的 B 级阻断只能用构造样本/mock 验证；fact_gate 的 F1–F4 有真实 B 级配置，可在完整隔离书目录中验证。夹具若先被 storyctl 或正文定位拦截，不能记为事实层内容阻断证据。
 
-### 4.2b 暂不写入 PRD 的外部能力（对方主动拦截，我方接受）
+### 4.2b 暂不纳入质量门禁的外部探针（2026-11-01 复核）
 
-对方本轮新增两个探针 `mood_probe.py` / `check_payoff.py`，其 target_baselines
-（≥20% / ≥8 / ≥3 / ≤14；≥80% / ≥1.5）**是从单本书手工对照推出的，尚未用三平台语料校准**，
-且对方自查出两处自相矛盾：
+`mood_probe.py` / `check_payoff.py` 提供描述性线索，不是闸门。对方最新接口复核补充：
 
-1. 「章尾短句爆发」在《顶职》实测 **0.0**，与其复盘报告写的 **2.6** 不符 —— 探针按行统计且要求行末是句标点，对话行以右引号结尾即漏计
-2. `check_payoff` 实测第三拍覆盖率 **77.8%**（9 章中 7 章有信号），与报告写的"9 章全部停在第二拍"不符 —— 疑似"没说话/把X推到桌上"这类克制文风高频词造成假阳性
+- `mood_probe` 的章节级 `results[].results[].emotion_intensity_percent` 是该章自身占比；全书加权率位于 `totals.avg_emotion_pct`，多目录顶层 `totals` 含 `dialog_count`、`dialog_punct_count`。尾窗实际行数由 `tail_window_lines` 提供。对方报告《顶职》9 章共 527 条对话、71 条含情绪标点；旧逐章等权均值为 13.7%，按对话加权为 13.5%。
+- `check_payoff` 的 `field_semantics` 位于 JSON 根对象；单目录章节字段路径为 `results[].results[]`，书级聚合位于根 `totals.*`。多目录时每个 `results[]` 是目录对象，目录的章节结果位于其 `results[]`、目录聚合在其 `totals.*`。新增清晰弱信号字段 `has_weak_signal_match`、`weak_signal_chapter_coverage_rate`、`avg_weak_signals_per_chap`；旧字段名称和值保持兼容。以上强弱模式字段都只代表模式命中/覆盖，不证明语义兑现；`tail_window_lines` 表示实际扫描窗口。
+- 三个探针的所有阈值仍为 `calibrated=false`。正则/模式命中只提示人工复核，不构成质量结论、改稿要求或签约预测。
+- 对方报告三个探针在 Windows 默认 GBK 下的编码回退用例已覆盖实际警告符；我方只读源码确认相关探测字符包含 `⚠`，并分别运行 `chapter_check.py --selftest`、`mood_probe.py --selftest`、`check_payoff.py --selftest`，三项均通过。对方本轮另外报告三平台独立/等号形式 `--platform` 解析、`chapter_check.py --describe` 缺参、`mood_probe --json` 多目录汇总及 `check_payoff` 字段语义回归通过；我方本轮未独立重跑这些新增接口用例。跨平台 9/9 入口矩阵是对方报告结果，本轮未独立重跑。
 
-**处置**：v1.0 **不引用这两个探针的任何阈值**。等对方给出带样本量的校准分布
-（各指标 min/中位/max + 语料到底是签约正文还是教学文章）后再评估是否纳入。
-
-理由：把未校准阈值写进 PRD，等于对外主张"能阻止平淡"——而这恰是本产品最容易被证伪的承诺，
-也正是审计里 `writing-contract.md` 已经犯过的错（把 `calibrated:false` 的描述性统计写成"生死线"）。
+我方仅按显式契约字段展示指标与采样窗口，不消费兼容旧键作为语义结论。阈值在取得带样本量、语料来源和校准方法的证据前不得纳入门禁或对外承诺。
 
 ### 4.3 不承诺的改动范围
 
 | 类型 | 承诺 | 不承诺 |
 |---|---|---|
-| **CLI 参数顺序** | ✓ 不改 | ✗ |
-| **退出码语义** | ✓ 保持 {0,1} | ✗ |
-| **JSON 顶层键** | ✓ status/executed/not_executed_reason/assertion_stats 固定 | ✗ 新增 enum |
-| **函数签名** | ✓ style_probe.probe(path) 不变 | ✗ |
-| **存储格式** | ✓ fact_gate台账 JSON schema 兼容 | ✗ |
+| **CLI 参数与退出码** | ✓ 调用形态及退出码按已复核契约消费；综合 verdict 以当前可达状态和自检覆盖为准，未调用的 `advisory` rank 项列为清理项，跨平台 9/9 结果注明为对方报告 | ✗ 把未独立验证的跨平台结果说成我方实测，或只按 rc=0 判通过 |
+| **JSON 顶层键** | ✓ 消费已复核的 fact_gate `status` / `executed` / `not_executed_reason` / `assertion_stats` 字段 | ✗ 把可选字段视为必有，或擅自重命名既有键 |
+| **函数签名** | ✓ style_probe.probe(path) 保持兼容 | ✗ |
+| **存储格式** | ✓ fact_gate 台账 JSON schema 保持兼容 | ✗ |
 
 ---
 
@@ -582,46 +466,29 @@ novel-workbench-win-x64.zip
 
 ## 六、TDD 执行规划
 
-### 6.1 第一轮测试（修复 Critical）
+### 6.1 当前修复队列（以 TDD §2 的 T- 编号为准）
 
-| 测试 ID | 目标 | 失败时场景 | 预估工作量 |
+| 顺序 | TDD 项 | 目标 | 验收重点 |
 |---|---|---|---|
-| TDD-001 | M1: 正文文件存在性校验 | 删除第 006-009 章 → syncBook → preflight 应 fail | 4h |
-| TDD-002 | M1: MANIFEST 必含全文.md | 删除全文.md → packageSubmission 应抛错 | 2h |
-| TDD-003 | M2: _原稿_ 文件排除 | 放入 第005 章_原稿_.md → syncBook 不应更新章节 sha | 4h |
-| TDD-004 | M5: fact_gate fail-closed | 模拟 fact_gate timeout → commit_chapter 应抛 fact_tool_unavailable | 3h |
-| **小计** | | | **13h** |
+| 已完成 | M0 / T-6 | 测试闸门真实化 | 自动发现全部 `.test.mjs`；历史执行结果见 TDD §1.1 |
+| 1 | T-1 | 投稿内容完整性 | 缺正文、DB/磁盘/定稿数不一致或 MANIFEST 缺全文时拒绝 |
+| 2 | T-2 / T-2b | 原稿排除与章号导入 | 备份稿不进入正文；未补零命名可导入，歧义明确报错 |
+| 3 | T-3 | fact_gate 三态与错误处理 | 缺席可继续并登记；配置故障 fail-closed；阻断与 unverified 正确呈现 |
+| 4 | T-3c | 防线缺席台账 | 追加留痕、三处呈现及补检回路 |
+| 5 | T-3b | N16 事实门禁接入 | 无人值守与人工定稿对阻断、缺席和故障处理一致 |
+| 6 | T-4 | N21 未判定与工具错误处理 | gate_runner 故障行和 fact_gate rc=2 不得被当作通过 |
+| 7 | T-3d / T-4b / T-5 | 字数信息与门槛 | borderline 提示、双口径、provisional 来源及平台门槛分离 |
+| 8 | T-7 / T-8 / T-9 | 可靠性与首次体验 | 服务退出、幽灵书处理、写页保存可靠性 |
 
-### 6.2 第二轮测试（修复 High）
+### 6.2 后续宣发验收
 
-| 测试 ID | 目标 | 失败时场景 | 预估工作量 |
-|---|---|---|---|
-| TDD-005 | M3: words_total 双口径 | 对比 visible_chars_v1 vs 汉字数 → 体检报告应有双数字 | 3h |
-| TDD-006 | security: network token | POST 带 wrong_token → 应返回 401 而非 200 | 2h |
-| TDD-007 | static service XSS | upload `><script>alert()</script>.md` → render 应转义 | 3h |
-| TDD-008 | concurrency: edit conflict | 两个浏览器窗口同时 save 同一章 → 应回滚冲突 | 6h |
-| **小计** | | | **14h** |
+| 阶段 | 验收范围 | 放行条件 |
+|---|---|---|
+| 全量回归 | 相关测试、`npm test`、Python 契约测试 | 以当次命令输出为准；T-6 历史数字不替代本次结果 |
+| 发布形态 | G6 首书运行、G7 开源脱敏、G8 空环境分发 | 目标机器验证完成，个人路径及越界语料清理完成 |
+| 版本发布 | v1.0-RC1 | PRD Release Criteria 全部通过并完成单独发布验收 |
 
-### 6.3 第三轮测试（加固）
-
-| 测试 ID | 目标 | 失败时场景 | 预估工作量 |
-|---|---|---|---|
-| TDD-009 | test-truth: fact-gate.test.mjs | npm test 漏跑 → CI 应红 | 1h |
-| TDD-010 | docs-drift: SKILL.md N15 里程碑 | 文档说"1/3/6/10" vs 实际"1/3/6/10/20/22" | 1h |
-| TDD-011 | maintainability: npm test auto-discover | 添加新测试文件 → npm test 应自动包含 | 2h |
-| TDD-012 | reliability: autosave race condition | 保存中快速输入 10 次 → 不应丢失尾段 | 4h |
-| **小计** | | | **8h** |
-
-**总计：35h**（单人，熟悉代码情况下）
-
-### 6.4 TDD 执行顺序
-
-1. **Day 1**: TDD-001 ~ TDD-004（Critical → 确保投稿包真）
-2. **Day 2**: TDD-005 ~ TDD-008（High → 确保安全性与一致性）
-3. **Day 3**: TDD-009 ~ TDD-012（加固 → 确保测试与文档对齐）
-4. **Day 4**: 回归测试 + PRD Review → Novel tools 接口审查
-5. **Day 5**: 合并 + tag v1.0-RC1 → beta 分发
-
+工时仅供排期，不作为验收或完成状态依据。
 ---
 
 ## 七、验收标准
@@ -630,14 +497,14 @@ novel-workbench-win-x64.zip
 
 | 标准 | 达标证明 |
 |---|---|
-| npm test 114 用例全绿 | package.json 已改为 `node --test server/tests/*.test.mjs` |
-| fact-gate.test.mjs 已纳入 npm test | `npm test server/tests/fact-gate.test.mjs` 通过 |
-| 投稿包 全文.md 校验 | TDD-001 通过 |
-| _原稿_ 文件排除 | TDD-003 通过 |
-| words_total 双口径 | 体检报告有 visibly+CJK 两栏 |
-| network token 鉴权 | TDD-007 通过 |
-| static service XSS | TDD-006 通过 |
-| autosave 竞态修复 | TDD-012 通过 |
+| 测试闸门完整 | `npm test` 自动发现 `server/tests/*.test.mjs` 并在发布验收当次全绿；Python 契约测试当次返回 `PY_CONTRACTS_OK` |
+| 投稿包完整性 | T-1 通过：正文缺失、章节清单不一致、哈希不一致与 MANIFEST 缺项均明确拒绝 |
+| 正文导入与备份隔离 | T-2/T-2b 通过：原稿不污染章节；非补零文件正常导入；歧义明确报错 |
+| 事实门禁三态和无人值守路径 | T-3/T-3c/T-3b 通过：阻断、工具故障、能力缺席分别处理，缺席持续可追踪 |
+| N21 判定完整性 | T-4 通过：未判定和工具错误不能伪装成内容通过 |
+| 字数口径和投稿门槛 | T-3d/T-4b/T-5 通过：borderline 提示、双口径与 provisional 来源一致 |
+| 运行与保存可靠性 | T-7/T-9 通过：退出时清理子进程，并发输入不丢失尾段 |
+| 安全性与发布形态 | 对应安全验收、G6 首书运行、G7 脱敏、G8 空环境分发均完成 |
 
 ### 7.2 Not In Scope（v1.0）
 
@@ -655,8 +522,8 @@ novel-workbench-win-x64.zip
 
 | 风险 | 可能性 | 影响 | 缓解措施 |
 |---|---|---|---|
-| Novel tools 接口突变 | 中 | 高 | 固化 A-J 十条契约，改前先通知 |
-| Fact_gate 未接入门禁 | 已发生 | critical | 已有 PR（commit_chapter.py 191 行）待回归测试 |
+| Novel tools 接口突变 | 中 | 高 | 固化 A–L 十二项契约，改前先通知 |
+| fact_gate 目前未通过我方两条封板路径完成验证 | 已发生 | critical | 依 T-3/T-3b/T-3c 落地三态、N16 接线和缺席台账；平台配置已有 F1–F4，不代表 workbench 已调用 |
 | 测试覆盖率不足 | 高 | 中 | TDD 轮次重点补 |
 | 开源版权纠纷 | 低 | 高 | 删除 zc.html，语料不进仓 |
 | Node/Python 兼容性 | 中 | 中 | bundle portable 版本 |
@@ -669,12 +536,12 @@ novel-workbench-win-x64.zip
 |---|---|
 | **visible_chars_v1** | wordcount_core.py 的 count_visible_chars（去空白的所有可见字符） |
 | **CJK 汉字数** | 纯汉字统计，不计标点/拉丁/数字 |
-| **gate_runner** | F:/小说/platforms/_core/tools/gate_runner.py，文风闸门工具 |
-| **fact_gate** | F:/小说/platforms/_core/tools/fact_gate.py，事实层闸门工具 |
+| **gate_runner** | F:/小说/platforms/_core/tools/gate_runner.py，文风统计工具；三平台统计 gate 当前不具备 B 级阻断能力 |
+| **fact_gate** | F:/小说/platforms/_core/tools/fact_gate.py，事实层闸门工具；rc=0/1 时须读 JSON status，rc=2 为配置/用法错误且不保证有 JSON stdout |
 | **sync.mjs** | server/sync.mjs，书架同步/指纹比对模块 |
 | **state.json** | _pipeline/state.json，游标/节点状态真相源 |
 | **tracking 账本** | 追踪/_tracking-state.json，字数/章节数真相源 |
-| **has_error** | gate_runner/fact_gate JSON 中标记工具失败的布尔字段 |
+| **has_error** | gate_runner 行中标记工具/读取失败的布尔字段；fact_gate 不提供此字段，故障用 rc=2 + stderr 表达 |
 | **undetermined** | gate_runner JSON 中标记判定不可靠的布尔字段 |
 | **M1/M2/M3** | 门禁（Gate）编号，对应本节 3.1-3.3 |
 
@@ -685,9 +552,9 @@ novel-workbench-win-x64.zip
 | 版本 | 日期 | 修订者 | 说明 |
 |---|---|---|---|
 | 1.0 | 2026-10-28 | Wane.Zhihao | 初始版本（基于审计证据 + 外部契约） |
-| ? | ? | ? | ? |
+| 1.0 | 2026-11-01 | Novel Platform | 按接口复核更新事实层、统计口径、导入及测试计划；记录工具侧探针字段和验证边界 |
 
 ---
 
 > **本文档发送对象**：Novel tools 团队（接口面审查）
-> **下一步行动**：请 Novel tools 确认 A-J 十条契约 + fact_gate status 字段语义，无异议则进入 TDD 执行阶段。
+> **修订状态（2026-11-01）**：已纳入 Novel tools 接口复核与最新探针字段说明。我方运行三个工具自检并核对共享源码；三平台 9/9 矩阵依据对方报告记录，未由我方独立重跑。Novel Platform 按 TDD 顺序继续实施，N16 接入需等待 T-3 三态策略完成。

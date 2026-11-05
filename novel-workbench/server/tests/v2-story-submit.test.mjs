@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,18 +8,76 @@ import { openDatabase } from "../db.mjs";
 import { readStoryDoc, saveStoryDoc, storyIndex, StoryConflictError } from "../story.mjs";
 import { packageSubmission, preflightSubmission } from "../submissions.mjs";
 
-function makeBook(root, words = 20000) {
+function sha256Of(text) {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+function makeBook(root, { words = 20000, chapters = 10, targetWords = 20000 } = {}) {
   const book = join(root, "book");
-  for (const dir of ["正文", "大纲", "设定", "追踪", "投稿包"]) {
+  for (const dir of ["正文", "大纲", "设定", "追踪", "投稿包", "_pipeline"]) {
     mkdirSync(join(book, dir), { recursive: true });
   }
   writeFileSync(join(book, "设定", "角色.md"), "## 陈砚\n- 身份：厂办会计\n", "utf8");
   writeFileSync(join(book, "大纲", "卷纲_第一卷.md"), "- 主线：顶职名额\n", "utf8");
   writeFileSync(join(book, "大纲", "目录_前12章.md"), "1. 换名\n", "utf8");
-  writeFileSync(join(book, "投稿包", "全文.md"), "# 全文\n" + "正文".repeat(100), "utf8");
+  const chapterBodies = [];
   writeFileSync(join(book, "投稿包", "体检报告.md"), "# 体检\n", "utf8");
   writeFileSync(join(book, "投稿包", "投稿邮件.md"), "# 邮件\n", "utf8");
+
+  const records = {};
+  const baseWords = Math.floor(words / chapters);
+  const extraWords = words % chapters;
+  for (let number = 1; number <= chapters; number += 1) {
+    const title = number === 1 ? "测试" : `测试${number}`;
+    const filePath = `正文/第${String(number).padStart(3, "0")}章_${title}.md`;
+    const chapterWords = baseWords + (number <= extraWords ? 1 : 0);
+    const heading = `# 第${String(number).padStart(3, "0")}章 ${title}\n\n`;
+    const body = `${heading}${"文".repeat(chapterWords - heading.replace(/\s+/g, "").length)}\n`;
+    chapterBodies.push(body);
+    writeFileSync(join(book, filePath), body, "utf8");
+    records[String(number)] = {
+      actual: baseWords + (number <= extraWords ? 1 : 0),
+      body_sha256: sha256Of(body),
+    };
+  }
+  writeFileSync(join(book, "投稿包", "全文.md"), `${chapterBodies.map((body) => body.trim()).join("\n\n")}\n`, "utf8");
+  writeFileSync(join(book, "追踪", "_tracking-state.json"), JSON.stringify({
+    last_committed_chapter: chapters,
+    wordcount_records: records,
+  }), "utf8");
+  writeFileSync(join(book, "_pipeline", "state.json"), JSON.stringify({
+    chapters_committed: chapters,
+    words_total: words,
+    target_words: targetWords,
+  }), "utf8");
   return book;
+}
+
+function insertBookRows(db, bookPath, title = "测试书") {
+  const state = JSON.parse(readFileSync(join(bookPath, "_pipeline", "state.json"), "utf8"));
+  const tracking = JSON.parse(readFileSync(join(bookPath, "追踪", "_tracking-state.json"), "utf8"));
+  const info = db.prepare(`
+    INSERT INTO books (path, synced_at, title, chapters_committed, words_total, target_words)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    bookPath, new Date().toISOString(), title, state.chapters_committed,
+    state.words_total, state.target_words,
+  );
+  const bookId = Number(info.lastInsertRowid);
+  for (let number = 1; number <= state.chapters_committed; number += 1) {
+    const chapter = tracking.wordcount_records[String(number)];
+    const title = number === 1 ? "测试" : `测试${number}`;
+    db.prepare(`
+      INSERT INTO chapters (book_id, number, title, file_path, words, committed, sha256, dirty)
+      VALUES (?, ?, ?, ?, ?, 1, ?, 0)
+    `).run(
+      bookId, number, title,
+      `正文/第${String(number).padStart(3, "0")}章_${title}.md`,
+      chapter.actual,
+      chapter.body_sha256,
+    );
+  }
+  return db.prepare("SELECT * FROM books WHERE id = ?").get(bookId);
 }
 
 test("故事库索引与文件保存", () => {
@@ -75,15 +134,7 @@ test("投稿预检与不可变投稿包", () => {
   const bookPath = makeBook(root);
   const db = openDatabase({ dataDir: join(root, "data") });
   try {
-    db.prepare(`
-      INSERT INTO books (path, synced_at, title, chapters_committed, words_total)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(bookPath, new Date().toISOString(), "测试书", 10, 20000);
-    db.prepare(`
-      INSERT INTO chapters (book_id, number, title, file_path, words, committed, dirty)
-      VALUES (1, 1, '第一章', '正文/第001章_测试.md', 2000, 1, 0)
-    `).run();
-    const book = db.prepare("SELECT * FROM books WHERE id = 1").get();
+    const book = insertBookRows(db, bookPath);
     const ready = preflightSubmission(db, book);
     assert.equal(ready.ready, true, JSON.stringify(ready.checks));
 
@@ -106,16 +157,9 @@ test("投稿预检与不可变投稿包", () => {
 // ── 0.9 preflight 参数化：去掉「永久失败」的写死值 ──────────────────────
 function makeMultiVolBook(root) {
   // 新书流水线的真实产物命名：卷纲_第N卷.md / 目录_第N卷.md（没有 目录_前12章.md）
-  const book = join(root, "book");
-  for (const dir of ["正文", "大纲", "设定", "追踪", "投稿包"]) {
-    mkdirSync(join(book, dir), { recursive: true });
-  }
-  writeFileSync(join(book, "大纲", "卷纲_第一卷.md"), "- 主线：顶职名额\n", "utf8");
+  const book = makeBook(root, { words: 610000, chapters: 60, targetWords: 600000 });
   writeFileSync(join(book, "大纲", "卷纲_第二卷.md"), "- 主线：南下\n", "utf8");
   writeFileSync(join(book, "大纲", "目录_第1卷.md"), "1. 换名\n", "utf8");
-  writeFileSync(join(book, "投稿包", "全文.md"), "# 全文\n" + "正文".repeat(100), "utf8");
-  writeFileSync(join(book, "投稿包", "体检报告.md"), "# 体检\n", "utf8");
-  writeFileSync(join(book, "投稿包", "投稿邮件.md"), "# 邮件\n", "utf8");
   return book;
 }
 
@@ -124,11 +168,7 @@ test("0.9 多卷书按实际大纲文件判定（不再写死 卷纲_第一卷+�
   const bookPath = makeMultiVolBook(root);
   const db = openDatabase({ dataDir: join(root, "data") });
   try {
-    db.prepare(`
-      INSERT INTO books (path, synced_at, title, chapters_committed, words_total, target_words)
-      VALUES (?, ?, ?, ?, ?, 600000)
-    `).run(bookPath, new Date().toISOString(), "多卷书", 60, 610000);
-    const book = db.prepare("SELECT * FROM books WHERE id = 1").get();
+    const book = insertBookRows(db, bookPath, "多卷书");
     const ready = preflightSubmission(db, book);
     assert.equal(ready.ready, true, JSON.stringify(ready.checks));
     // 投稿包应把扫到的所有大纲一起打包（确认 gate 全勾）
@@ -145,15 +185,11 @@ test("0.9 多卷书按实际大纲文件判定（不再写死 卷纲_第一卷+�
 
 test("0.9 字数门槛用 target_words（25 万字书不再被 2 万卡死/放行错线）", () => {
   const root = mkdtempSync(join(tmpdir(), "wb-submit-target-"));
-  const bookPath = makeBook(root);
+  const bookPath = makeBook(root, { words: 50000, chapters: 25, targetWords: 600000 });
   const db = openDatabase({ dataDir: join(root, "data") });
   try {
     // 60 万字目标的书只写了 5 万字：按旧写死的 2 万会「可投」，按 target 应不可投
-    db.prepare(`
-      INSERT INTO books (path, synced_at, title, chapters_committed, words_total, target_words)
-      VALUES (?, ?, ?, ?, ?, 600000)
-    `).run(bookPath, new Date().toISOString(), "长篇", 25, 50000);
-    let book = db.prepare("SELECT * FROM books WHERE id = 1").get();
+    let book = insertBookRows(db, bookPath, "长篇");
     let result = preflightSubmission(db, book);
     const wordsCheck = result.checks.find((c) => c.id === "words");
     assert.equal(wordsCheck.ok, false, JSON.stringify(wordsCheck));
@@ -179,11 +215,7 @@ test("0.9 大纲缺失时 detail 说明缺什么类型 + fix 指路", () => {
     // 删掉全部大纲
     rmSync(join(bookPath, "大纲", "卷纲_第一卷.md"), { force: true });
     rmSync(join(bookPath, "大纲", "目录_前12章.md"), { force: true });
-    db.prepare(`
-      INSERT INTO books (path, synced_at, title, chapters_committed, words_total)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(bookPath, new Date().toISOString(), "测试书", 10, 20000);
-    const book = db.prepare("SELECT * FROM books WHERE id = 1").get();
+    const book = insertBookRows(db, bookPath);
     const result = preflightSubmission(db, book);
     const outline = result.checks.find((c) => c.id === "outline");
     assert.equal(outline.ok, false);
@@ -205,11 +237,7 @@ test("0.10 package 必须带 4 条人工确认，非全 true 拒绝并落盘审�
   const bookPath = makeBook(root);
   const db = openDatabase({ dataDir: join(root, "data") });
   try {
-    db.prepare(`
-      INSERT INTO books (path, synced_at, title, chapters_committed, words_total)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(bookPath, new Date().toISOString(), "测试书", 10, 20000);
-    const book = db.prepare("SELECT * FROM books WHERE id = 1").get();
+    const book = insertBookRows(db, bookPath);
 
     // 缺 confirmations → 拒绝（老调用方式不能静默通过）
     assert.throws(() => packageSubmission(db, book, { channel: "七猫" }),

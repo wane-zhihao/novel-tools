@@ -608,8 +608,15 @@ export function syncBook(db, bookDir, { now = new Date(), force = false } = {}) 
   const absolute = resolve(bookDir);
   const fingerprint = fingerprintOf(absolute);
   if (!force) {
-    const existing = db.prepare("SELECT fingerprint FROM books WHERE path = ?").get(absolute);
+    const existing = db.prepare("SELECT id, fingerprint FROM books WHERE path = ?").get(absolute);
     if (existing && existing.fingerprint === fingerprint) {
+      // 指纹跳过也要归正 words_total：T-1 之前入库的书带着 state 缓存值，
+      // 文件不再变化就永远不会走全量路径，旧缓存会永久驻留书架列表。
+      db.prepare(`
+        UPDATE books SET words_total = (
+          SELECT COALESCE(SUM(words), 0) FROM chapters WHERE book_id = ?
+        ) WHERE id = ?
+      `).run(existing.id, existing.id);
       return { path: absolute, skipped: true };
     }
   }
@@ -621,6 +628,11 @@ export function syncBook(db, bookDir, { now = new Date(), force = false } = {}) 
     const versions = syncVersions(db, bookId, absolute);
     const storyDocs = syncStoryDocs(db, bookId, absolute);
     const chapters = syncChapters(db, bookId, absolute, state);
+    db.prepare(`
+      UPDATE books SET words_total = (
+        SELECT COALESCE(SUM(words), 0) FROM chapters WHERE book_id = ?
+      ) WHERE id = ?
+    `).run(bookId, bookId);
     const nodes = syncNodes(db, bookId, state);
     const findings = syncFindings(db, bookId, absolute, nowIso);
     const judgments = syncJudgments(db, bookId, absolute);

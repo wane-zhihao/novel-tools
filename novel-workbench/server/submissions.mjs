@@ -1,9 +1,13 @@
-import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync,
+} from "node:fs";
+import { basename, join, resolve } from "node:path";
+import { countVisibleChars, isBackupChapterFile, resolveInsideBook } from "./book-files.mjs";
 
 const DEFAULT_MIN_WORDS = 20000;   // target_words 缺失（老书/未同步）时的回退线
 const CONFIRMATION_COUNT = 4;      // 与 submit.js HUMAN_CONFIRM 一一对应
+const MAX_COMMITTED_CHAPTERS = 500;
 
 function readJson(path, fallback) {
   try {
@@ -34,11 +38,177 @@ function scanOutlines(bookPath) {
   };
 }
 
+function readBookJson(bookPath, relPath) {
+  try {
+    return JSON.parse(readFileSync(join(bookPath, relPath), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function checkBodyIntegrity(db, book) {
+  const rows = db.prepare(
+    "SELECT number, file_path, words, committed, sha256 FROM chapters WHERE book_id = ? ORDER BY number",
+  ).all(book.id);
+  const state = readBookJson(book.path, "_pipeline/state.json");
+  const tracking = readBookJson(book.path, "追踪/_tracking-state.json");
+  const records = tracking?.wordcount_records && typeof tracking.wordcount_records === "object"
+    ? tracking.wordcount_records
+    : {};
+  const errors = [];
+  const rowByNumber = new Map(rows.map((row) => [row.number, row]));
+  const diskByNumber = new Map();
+  let diskFiles = [];
+  const bodyDir = join(book.path, "正文");
+
+  try {
+    if (resolveInsideBook(book.path, "正文") !== resolve(book.path, "正文")) {
+      throw new Error("正文路径不规范");
+    }
+    diskFiles = readdirSync(bodyDir);
+  } catch {
+    errors.push("正文目录不存在、越界或无法读取");
+  }
+  for (const name of diskFiles) {
+    const match = /^第(\d{3})章_(.*)\.md$/.exec(name);
+    if (!match || isBackupChapterFile(name)) continue;   // 备份稿不参与现役/重复判定
+    const number = Number(match[1]);
+    const names = diskByNumber.get(number) ?? [];
+    names.push(name);
+    diskByNumber.set(number, names);
+  }
+  for (const [number, names] of diskByNumber) {
+    if (names.length > 1) {
+      errors.push(`第${String(number).padStart(3, "0")}章存在多份磁盘正文：${names.join("、")}`);
+    }
+  }
+
+  const countValue = (doc, key) => {
+    if (!doc || !Object.hasOwn(doc, key)) return null;
+    return Number(doc[key]);
+  };
+  const committedCount = countValue(state, "chapters_committed");
+  const trackingCommittedCount = countValue(tracking, "last_committed_chapter");
+  const validCount = (count) => Number.isSafeInteger(count) && count >= 0 && count <= MAX_COMMITTED_CHAPTERS;
+  if (committedCount === null || !validCount(committedCount)) {
+    errors.push(`state 定稿章数无效或超出支持范围（0–${MAX_COMMITTED_CHAPTERS}）`);
+  }
+  if (trackingCommittedCount === null || !validCount(trackingCommittedCount)) {
+    errors.push(`tracking 定稿章数无效或超出支持范围（0–${MAX_COMMITTED_CHAPTERS}）`);
+  }
+  const committedNumbers = new Set();
+  let verifiedWords = 0;
+  const largestValidCount = Math.max(
+    validCount(committedCount) ? committedCount : 0,
+    validCount(trackingCommittedCount) ? trackingCommittedCount : 0,
+  );
+  for (let number = 1; number <= largestValidCount; number += 1) {
+    committedNumbers.add(number);
+  }
+  if (committedCount !== trackingCommittedCount) {
+    errors.push(`定稿章数账本不一致：state ${committedCount} 章、tracking ${trackingCommittedCount} 章`);
+  }
+  for (const row of rows) {
+    if (row.committed) committedNumbers.add(Number(row.number));
+  }
+  for (const number of committedNumbers) {
+    const row = rowByNumber.get(number);
+    const names = diskByNumber.get(number);
+    if (!row || !names?.length) {
+      errors.push(`第${String(number).padStart(3, "0")}章缺少章节记录或磁盘正文`);
+      continue;
+    }
+    let diskSha;
+    let body;
+    try {
+      const filePath = resolveInsideBook(book.path, row.file_path);
+      const canonicalPath = resolve(book.path, "正文", names[0]);
+      if (!diskFiles.length || filePath !== canonicalPath) {
+        errors.push(`第${String(number).padStart(3, "0")}章章节路径未指向正文目录中的现役正文`);
+        continue;
+      }
+      body = readFileSync(filePath, "utf8");
+      diskSha = sha256File(filePath);
+    } catch {
+      errors.push(`第${String(number).padStart(3, "0")}章章节路径无效或磁盘正文无法读取`);
+      continue;
+    }
+    if (diskSha !== row.sha256) {
+      errors.push(`第${String(number).padStart(3, "0")}章磁盘正文与章节记录不一致`);
+    }
+    const actualWords = countVisibleChars(body);
+    verifiedWords += actualWords;
+    if (Number(row.words) !== actualWords) {
+      errors.push(`第${String(number).padStart(3, "0")}章字数记录 ${row.words} 与正文复算 ${actualWords} 不一致`);
+    }
+    const committedSha = records[String(number)]?.body_sha256;
+    if (typeof committedSha !== "string" || !committedSha) {
+      errors.push(`第${String(number).padStart(3, "0")}章缺少 body_sha256 定稿摘要`);
+    } else if (diskSha !== committedSha) {
+      errors.push(`第${String(number).padStart(3, "0")}章正文与定稿摘要不一致`);
+    }
+  }
+
+  const fullPath = join(book.path, "投稿包", "全文.md");
+  if (existsSync(fullPath)) {
+    // Python _merge_full/N17g 用 encoding="utf-8" 读章节：UTF-8 BOM 原样保留且
+    // strip() 不删它，导致首章带 BOM 时会多冠一行书名。校验两侧都剥 BOM，
+    // 并容忍「裸全文」与「冠书名全文」两种生成产物，其余任何出入都算不一致。
+    const norm = (text) => text.replace(/\r\n?/g, "\n").replaceAll("﻿", "");
+    try {
+      const chapterFiles = diskFiles
+        .filter((name) => /^第\d{3}章_.*\.md$/.test(name) && !isBackupChapterFile(name)).sort();
+      const body = chapterFiles
+        .map((name) => norm(readFileSync(join(book.path, "正文", name), "utf8")).trim())
+        .join("\n\n");
+      const title = state?.book || basename(book.path);
+      const actualFull = norm(readFileSync(fullPath, "utf8"));
+      const candidates = [`${body}\n`, `# ${title}\n\n${body}\n`];
+      if (!candidates.includes(actualFull)) {
+        errors.push("投稿包/全文.md 与当前正文目录章节内容不一致");
+      }
+    } catch {
+      errors.push("投稿包/全文.md 或章节正文无法读取");
+    }
+  }
+
+  const expectedDiskCount = committedCount;
+  const committedRows = rows.filter((row) => row.committed).length;
+  if (committedRows !== expectedDiskCount || diskByNumber.size !== expectedDiskCount
+    || rows.length !== diskByNumber.size) {
+    const known = new Set([...rowByNumber.keys(), ...diskByNumber.keys()]);
+    const missing = [...known].filter((number) =>
+      Boolean(rowByNumber.get(number)) !== Boolean(diskByNumber.get(number))
+      || number > committedCount,
+    ).sort((a, b) => a - b);
+    const chapterList = missing.length
+      ? `；差异章节：${missing.map((number) => `第${String(number).padStart(3, "0")}章`).join("、")}`
+      : "";
+    errors.push(`章节数量不一致：定稿 ${expectedDiskCount} 章、数据库 ${rows.length} 行（已定稿 ${committedRows}）、磁盘 ${diskByNumber.size} 个正文文件${chapterList}`);
+  }
+
+  const words = verifiedWords;
+  return {
+    words,
+    ok: errors.length === 0,
+    detail: errors.length ? errors.join("；") : `已核对 ${committedNumbers.size} 章定稿正文，数据库 ${rows.length} 行与磁盘正文一致`,
+    fix: errors.length ? "恢复缺失正文，或同步并重新定稿后再次预检" : null,
+  };
+}
+
 export function preflightSubmission(db, book) {
   const checks = [];
-  const words = Number(book.words_total) || 0;
+  const integrity = checkBodyIntegrity(db, book);
+  const words = integrity.words;
   // 0.9：门槛跟随这本书自己的目标字数，不再写死 2 万
   const minWords = Number(book.target_words) > 0 ? Number(book.target_words) : DEFAULT_MIN_WORDS;
+  checks.push({
+    id: "body_integrity",
+    label: "定稿正文与章节记录一致",
+    ok: integrity.ok,
+    detail: integrity.detail,
+    fix: integrity.fix,
+  });
   checks.push({
     id: "words",
     label: `已定稿正文 ≥ ${minWords.toLocaleString("zh-CN")} 字`,
@@ -114,10 +284,6 @@ export function packageSubmission(db, book, { channel = "七猫", confirmations 
     error.checks = preflight.checks;
     throw error;
   }
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const relDir = `_pipeline/submissions/${stamp}_${safeSegment(channel)}`;
-  const dir = join(book.path, relDir);
-  mkdirSync(dir, { recursive: true });
   // 0.9：打包实际存在的全部大纲（多卷书带全所有卷纲/目录），不再按写死清单漏文件
   const { volumes, catalogs } = scanOutlines(book.path);
   const outlineFiles = [
@@ -125,35 +291,75 @@ export function packageSubmission(db, book, { channel = "七猫", confirmations 
     ...catalogs.map((name) => `大纲/${name}`),
   ];
   const files = ["投稿包/全文.md", "投稿包/体检报告.md", "投稿包/投稿邮件.md", ...outlineFiles];
-  const manifest = { schema_version: 1, created_at: new Date().toISOString(), channel, words: preflight.words, files: [] };
-  for (const rel of files) {
-    const source = join(book.path, rel);
-    if (!existsSync(source)) continue;
-    const name = rel.split("/").at(-1);
-    const target = join(dir, name);
-    copyFileSync(source, target);
-    manifest.files.push({
-      name,
-      source: rel,
-      sha256: sha256File(target),
-      bytes: readFileSync(target).length,
-    });
+  const missingFiles = files.filter((rel) => {
+    try {
+      resolveInsideBook(book.path, rel);
+      return !existsSync(join(book.path, rel));
+    } catch {
+      return true;
+    }
+  });
+  if (missingFiles.length) {
+    const error = new Error(`投稿包文件不完整：${missingFiles.join("、")}`);
+    error.code = "manifest_incomplete";
+    error.missing = missingFiles;
+    throw error;
   }
-  writeFileSync(join(dir, "MANIFEST.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const submissionsRoot = join(book.path, "_pipeline", "submissions");
+  mkdirSync(submissionsRoot, { recursive: true });
+  let relDir;
+  let dir;
+  do {
+    relDir = `_pipeline/submissions/${stamp}_${safeSegment(channel)}_${randomUUID()}`;
+    dir = join(book.path, relDir);
+  } while (existsSync(dir));
+  mkdirSync(dir);
+  const manifest = { schema_version: 1, created_at: new Date().toISOString(), channel, words: preflight.words, files: [] };
+  try {
+    for (const rel of files) {
+      const source = resolveInsideBook(book.path, rel);
+      const name = rel.split("/").at(-1);
+      const target = join(dir, name);
+      copyFileSync(source, target);
+      manifest.files.push({
+        name,
+        source: rel,
+        sha256: sha256File(target),
+        bytes: readFileSync(target).length,
+      });
+    }
+    if (!manifest.files.some((file) => file.name === "全文.md")) {
+      const error = new Error("投稿包文件不完整：全文.md");
+      error.code = "manifest_incomplete";
+      error.missing = ["投稿包/全文.md"];
+      throw error;
+    }
+    writeFileSync(join(dir, "MANIFEST.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 
   // 确认审计：谁、何时、对哪个包勾了哪 4 条（追加式，绝不覆盖历史）
-  const auditPath = join(book.path, "_pipeline", "confirmations.json");
-  const audit = readJson(auditPath, { items: [] });
-  const items = Array.isArray(audit?.items) ? audit.items : [];
-  items.push({
-    at: new Date().toISOString(),
-    channel,
-    package_path: relDir,
-    confirmations: confirmations.slice(),
-    words: preflight.words,
-  });
-  mkdirSync(join(book.path, "_pipeline"), { recursive: true });
-  writeFileSync(auditPath, `${JSON.stringify({ schema_version: 1, items }, null, 2)}\n`, "utf8");
+  try {
+    const auditPath = join(book.path, "_pipeline", "confirmations.json");
+    const audit = readJson(auditPath, { items: [] });
+    const items = Array.isArray(audit?.items) ? audit.items : [];
+    items.push({
+      at: new Date().toISOString(),
+      channel,
+      package_path: relDir,
+      confirmations: confirmations.slice(),
+      words: preflight.words,
+    });
+    mkdirSync(join(book.path, "_pipeline"), { recursive: true });
+    writeFileSync(auditPath, `${JSON.stringify({ schema_version: 1, items }, null, 2)}\n`, "utf8");
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
 
   const full = manifest.files.find((file) => file.name === "全文.md");
   return {

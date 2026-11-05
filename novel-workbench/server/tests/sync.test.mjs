@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { openDatabase } from "../db.mjs";
-import { discoverBooks, rebuild, syncAll } from "../sync.mjs";
+import { discoverBooks, rebuild, syncAll, syncBook } from "../sync.mjs";
 
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const SKILL_DIR = resolve(TEST_DIR, "..", "..");
@@ -93,6 +96,69 @@ test("同步三本夹具书并写入正确数值", () => withDb((db) => {
   const loop = book(db, "chapter_loop");
   assert.equal(loop.cursor, "C1.N15");
   assert.ok(loop.blocked_reason);
+}));
+
+test("sync 的 words_total 以章节行求和为准且不改写 state 缓存", () => withDb((db) => {
+  const bookDir = mkdtempSync(join(tmpdir(), "wb-book-"));
+  try {
+    mkdirSync(join(bookDir, "_pipeline"), { recursive: true });
+    mkdirSync(join(bookDir, "正文"), { recursive: true });
+    mkdirSync(join(bookDir, "追踪"), { recursive: true });
+    const statePath = join(bookDir, "_pipeline", "state.json");
+    writeFileSync(statePath, JSON.stringify({
+      schema_version: 2, book: "《求和测试》", genre: "niandai", target_words: 100,
+      max_chapters: 12, cursor: "C2.N01", current_chapter: 1,
+      chapters_committed: 1, words_total: 999, nodes: {},
+    }), "utf8");
+    const body = "正文";
+    writeFileSync(join(bookDir, "正文", "第001章_测试.md"), body, "utf8");
+    writeFileSync(join(bookDir, "追踪", "_tracking-state.json"), JSON.stringify({
+      last_committed_chapter: 1,
+      wordcount_records: { "1": { actual: 2, body_sha256: sha256Of(body) } },
+    }), "utf8");
+
+    assert.equal(syncAll(db, [bookDir]).synced, 1);
+    const row = db.prepare("SELECT * FROM books WHERE path = ?").get(bookDir);
+    assert.equal(row.words_total, 2, "DB words_total 必须来自章节行求和，不得抄 state 缓存 999");
+    assert.equal(JSON.parse(readFileSync(statePath, "utf8")).words_total, 999, "sync 不得改写流水线 state 文件");
+  } finally {
+    rmSync(bookDir, { recursive: true, force: true });
+  }
+}));
+
+test("指纹跳过时也必须归正历史遗留的 words_total（升级前缓存值不能永久驻留）", () => withDb((db) => {
+  const bookDir = mkdtempSync(join(tmpdir(), "wb-book-"));
+  try {
+    mkdirSync(join(bookDir, "_pipeline"), { recursive: true });
+    mkdirSync(join(bookDir, "正文"), { recursive: true });
+    mkdirSync(join(bookDir, "追踪"), { recursive: true });
+    writeFileSync(join(bookDir, "_pipeline", "state.json"), JSON.stringify({
+      schema_version: 2, book: "《跳过测试》", genre: "niandai", target_words: 100,
+      max_chapters: 12, cursor: "C2.N01", current_chapter: 1,
+      chapters_committed: 1, words_total: 999, nodes: {},
+    }), "utf8");
+    const body = "正文";
+    writeFileSync(join(bookDir, "正文", "第001章_测试.md"), body, "utf8");
+    writeFileSync(join(bookDir, "追踪", "_tracking-state.json"), JSON.stringify({
+      last_committed_chapter: 1,
+      wordcount_records: { "1": { actual: 2, body_sha256: sha256Of(body) } },
+    }), "utf8");
+
+    const statePath = join(bookDir, "_pipeline", "state.json");
+    syncBook(db, bookDir);
+    const bookId = db.prepare("SELECT id FROM books WHERE path = ?").get(bookDir).id;
+    // 模拟旧版本入库的缓存值：文件此后不再变化，常规同步只会按指纹跳过
+    db.prepare("UPDATE books SET words_total = 999 WHERE id = ?").run(bookId);
+
+    const stateBefore = readFileSync(statePath, "utf8");
+    const summary = syncBook(db, bookDir);
+    assert.equal(summary.skipped, true, "前提：指纹未变，本次同步必须走跳过路径");
+    assert.equal(db.prepare("SELECT words_total FROM books WHERE id = ?").get(bookId).words_total, 2,
+      "跳过路径也必须把章节行数归正回 books.words_total，否则书架列表永远显示升级前的旧缓存");
+    assert.equal(readFileSync(statePath, "utf8"), stateBefore, "归正只写 DB 镜像，不得改写流水线 state 文件");
+  } finally {
+    rmSync(bookDir, { recursive: true, force: true });
+  }
 }));
 
 test("二次同步按指纹跳过，findings 保留 first_seen", () => withDb((db) => {

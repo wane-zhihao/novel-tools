@@ -901,27 +901,69 @@ export function createApi({
     // blocked_reason 说明为什么停着不动。
     const dirtyCount = chapters.filter((chapter) => chapter.dirty).length;
     const committedNumbers = chapters.filter((chapter) => chapter.committed).map((chapter) => chapter.number);
-    // 账本一致性：state.json 里的 words_total / chapters_committed 是流水线自己写的，
-    // 会与真实章节表漂移（实测有书 state 说 4 章 9,288 字，正文其实是 9 章 20,066 字）。
-    // 漂移时最危险的是**投稿预检**：它读 words_total，于是明明够字数却报「还差」。
-    // 这里只报事实与两个数字，不擅自改谁——判断哪个对需要人看正文。
+    // state.json 保留流水线账本原值；books.words_total 则由 sync 按章节行求和，
+    // 所以漂移披露必须直接读 state，不能把修正后的 DB 镜像再次当成缓存值。
+    // state 读不出来时更不能把 0 冒充原值——那会把「无法核对」洗成「账本一致」。
+    let state = null;
+    let stateError = null;
+    try {
+      const parsed = parseJson(readFileSync(join(row.path, "_pipeline", "state.json"), "utf8"), null);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        stateError = "state.json 不是有效 JSON 对象";
+      } else {
+        state = parsed;
+      }
+    } catch {
+      stateError = "state.json 无法读取";
+    }
+    // 字段缺失/非数值同样不得拿 0 冒充账本原值：没记账就是没记。
+    const ledgerNumber = (key) => {
+      if (!state || !Object.hasOwn(state, key)) return null;
+      const value = Number(state[key]);
+      return Number.isFinite(value) ? value : null;
+    };
+    const stateWords = ledgerNumber("words_total");
+    const stateCommitted = ledgerNumber("chapters_committed");
     const sumWords = chapters.reduce((sum, chapter) => sum + (Number(chapter.words) || 0), 0);
     const driftItems = [];
-    if (Number(row.words_total ?? 0) !== sumWords) {
+    if (stateError) {
       driftItems.push({
-        id: "words_total",
-        state: Number(row.words_total ?? 0),
-        actual: sumWords,
-        detail: `state 记 ${Number(row.words_total ?? 0)} 字，章节表合计 ${sumWords} 字`,
+        id: "state_unreadable",
+        state: null,
+        actual: null,
+        detail: `${stateError}，无法与章节表核对漂移（state 路径：_pipeline/state.json）`,
       });
-    }
-    if (Number(row.chapters_committed ?? 0) !== committedNumbers.length) {
-      driftItems.push({
-        id: "chapters_committed",
-        state: Number(row.chapters_committed ?? 0),
-        actual: committedNumbers.length,
-        detail: `state 记已定稿 ${Number(row.chapters_committed ?? 0)} 章，章节表有 ${committedNumbers.length} 章已定稿`,
-      });
+    } else {
+      if (stateWords === null) {
+        driftItems.push({
+          id: "words_total_missing",
+          state: null,
+          actual: sumWords,
+          detail: `state.json 没有有效的 words_total 字段（章节表合计 ${sumWords} 字，无法核对）`,
+        });
+      } else if (stateWords !== sumWords) {
+        driftItems.push({
+          id: "words_total",
+          state: stateWords,
+          actual: sumWords,
+          detail: `state 记 ${stateWords} 字，章节表合计 ${sumWords} 字`,
+        });
+      }
+      if (stateCommitted === null) {
+        driftItems.push({
+          id: "chapters_committed_missing",
+          state: null,
+          actual: committedNumbers.length,
+          detail: `state.json 没有有效的 chapters_committed 字段（章节表已定稿 ${committedNumbers.length} 章，无法核对）`,
+        });
+      } else if (stateCommitted !== committedNumbers.length) {
+        driftItems.push({
+          id: "chapters_committed",
+          state: stateCommitted,
+          actual: committedNumbers.length,
+          detail: `state 记已定稿 ${stateCommitted} 章，章节表有 ${committedNumbers.length} 章已定稿`,
+        });
+      }
     }
     sendJson(response, 200, {
       chapters: chapters.map((chapter) => ({
@@ -933,8 +975,8 @@ export function createApi({
       dirty_count: dirtyCount,
       last_committed_chapter: committedNumbers.length ? Math.max(...committedNumbers) : null,
       blocked_reason: row.blocked_reason ?? null,
-      words_total_state: Number(row.words_total ?? 0),
-      chapters_committed_state: Number(row.chapters_committed ?? 0),
+      words_total_state: stateWords,
+      chapters_committed_state: stateCommitted,
       drift: { ok: driftItems.length === 0, items: driftItems },
     });
   }
@@ -1054,15 +1096,21 @@ export function createApi({
 
   async function handleSubmissionPreflight(request, response, url, id) {
     const row = getBookRow(id);
-    refresh(row);
-    const fresh = db.prepare(`${bookSelect} WHERE b.id = ?`).get(row.id);
+    const refreshed = refresh(row);
+    if (refreshed.warning) {
+      throw new HttpError(400, "submission_sync_failed", refreshed.warning);
+    }
+    const fresh = refreshed.row;
     sendJson(response, 200, preflightSubmission(db, fresh));
   }
 
   async function handleSubmissionPackage(request, response, url, id) {
     const row = getBookRow(id);
-    refresh(row);
-    const fresh = db.prepare(`${bookSelect} WHERE b.id = ?`).get(row.id);
+    const refreshed = refresh(row);
+    if (refreshed.warning) {
+      throw new HttpError(400, "submission_sync_failed", refreshed.warning);
+    }
+    const fresh = refreshed.row;
     const body = await readJsonBody(request);
     try {
       const result = packageSubmission(db, fresh, {
@@ -1078,6 +1126,9 @@ export function createApi({
       }
       if (error.code === "confirmations_required" || error.code === "confirmations_incomplete") {
         throw new HttpError(400, error.code, error.message);
+      }
+      if (error.code === "manifest_incomplete") {
+        throw new HttpError(400, error.code, error.message, { missing: error.missing ?? [] });
       }
       throw error;
     }

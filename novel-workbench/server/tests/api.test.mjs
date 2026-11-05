@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test, { after, before } from "node:test";
@@ -326,6 +327,75 @@ test("投稿包端点：确认 gate 与 preflight 拦截（0.10/0.9）", async (
   assert.ok(Array.isArray(blocked.body.error.details.checks));
 });
 
+test("投稿端点同步失败时不得基于旧数据库继续处理", async () => {
+  const statePath = join(bookDir, "_pipeline", "state.json");
+  const originalState = readFileSync(statePath, "utf8");
+  writeFileSync(statePath, "{ malformed json", "utf8");
+  try {
+    const preflight = await post(`/api/books/${bookId}/submissions/preflight`, {});
+    assert.equal(preflight.status, 400);
+    assert.equal(preflight.body.error.code, "submission_sync_failed");
+
+    const packaged = await post(`/api/books/${bookId}/submissions/package`, {
+      channel: "七猫", confirmations: [true, true, true, true],
+    });
+    assert.equal(packaged.status, 400);
+    assert.equal(packaged.body.error.code, "submission_sync_failed");
+  } finally {
+    writeFileSync(statePath, originalState, "utf8");
+  }
+});
+
+test("投稿包缺必需文件时返回明确客户端错误", async () => {
+  const reportsPath = join(bookDir, "投稿包", "体检报告.md");
+  const statePath = join(bookDir, "_pipeline", "state.json");
+  const findingsPath = join(bookDir, "_pipeline", "findings_C2.json");
+  const trackingPath = join(bookDir, "追踪", "_tracking-state.json");
+  const fullTextPath = join(bookDir, "投稿包", "全文.md");
+  const originals = [statePath, findingsPath, trackingPath].map((path) => readFileSync(path, "utf8"));
+  const originalFullText = existsSync(fullTextPath) ? readFileSync(fullTextPath, "utf8") : null;
+  const tracking = JSON.parse(originals[2]);
+  const chapterNames = readdirSync(join(bookDir, "正文")).filter((name) => /^第\d{3}章_.*\.md$/.test(name)).sort();
+  const chapterBodies = chapterNames.map((name) => readFileSync(join(bookDir, "正文", name), "utf8"));
+  chapterNames.forEach((name, index) => {
+    const number = String(Number(name.slice(1, 4)));
+    const body = chapterBodies[index];
+    tracking.wordcount_records[number].actual = body.replace(/\s+/g, "").length;
+    tracking.wordcount_records[number].body_sha256 = createHash("sha256").update(body, "utf8").digest("hex");
+  });
+  writeFileSync(trackingPath, JSON.stringify(tracking), "utf8");
+  writeFileSync(fullTextPath, `${chapterBodies.map((body) => body.trim()).join("\n\n")}\n`, "utf8");
+  const submissionsDir = join(bookDir, "_pipeline", "submissions");
+  const previousPackages = existsSync(submissionsDir) ? new Set(readdirSync(submissionsDir)) : new Set();
+  writeFileSync(reportsPath, "# 体检\n", "utf8");
+  const state = JSON.parse(originals[0]);
+  state.target_words = 1;
+  state.chapters_committed = 2;
+  writeFileSync(statePath, JSON.stringify(state), "utf8");
+  const findings = JSON.parse(originals[1]);
+  findings.items = [];
+  writeFileSync(findingsPath, JSON.stringify(findings), "utf8");
+  rmSync(reportsPath, { force: true });
+  try {
+    const response = await post(`/api/books/${bookId}/submissions/package`, {
+      channel: "七猫", confirmations: [true, true, true, true],
+    });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, "manifest_incomplete");
+    assert.match(response.body.error.message, /体检报告\.md/);
+    assert.ok(response.body.error.details.missing.includes("投稿包/体检报告.md"));
+    const afterPackages = existsSync(submissionsDir) ? readdirSync(submissionsDir) : [];
+    assert.deepEqual(afterPackages.sort(), [...previousPackages].sort(), "失败打包不能留下投稿包目录");
+  } finally {
+    writeFileSync(statePath, originals[0], "utf8");
+    writeFileSync(findingsPath, originals[1], "utf8");
+    writeFileSync(trackingPath, originals[2], "utf8");
+    if (originalFullText == null) rmSync(fullTextPath, { force: true });
+    else writeFileSync(fullTextPath, originalFullText, "utf8");
+    writeFileSync(reportsPath, "# 体检\n", "utf8");
+  }
+});
+
 test("投稿包 reveal 端点：路径校验与本机打开", async () => {
   const pkgName = "2026-10-25_七猫";
   const pkgDir = join(bookDir, "_pipeline", "submissions", pkgName);
@@ -429,26 +499,69 @@ test("manuscript 暴露 drift：state 与章节表不一致时必须说出来（
   if (consistent) assert.equal(body.drift.ok, true, "数字一致却报 drift");
 });
 
-test("drift 真的能抓到 state 漂移（Prove-It）", async () => {
-  const before = await request(`/api/books/${bookId}/manuscript`);
-  const goodWords = before.body.words_total_state;
-  const goodChapters = before.body.chapters_committed_state;
+test("drift 仍以 state 缓存披露：sync 修正 DB 字数后 API 继续显示差异（Prove-It）", async () => {
+  const statePath = join(bookDir, "_pipeline", "state.json");
+  const originalState = readFileSync(statePath, "utf8");
   try {
-    // 造出真实漂移：state 说 9288 字 4 章，章节表其实是别的数
-    workspace.db.prepare("UPDATE books SET words_total = 9288, chapters_committed = 4 WHERE id = ?").run(bookId);
+    // 造出真实漂移：state 说 9288 字 4 章，正文账本实际是 4760 字 2 章。
+    const state = JSON.parse(originalState);
+    state.words_total = 9288;
+    state.chapters_committed = 4;
+    writeFileSync(statePath, JSON.stringify(state), "utf8");
+
     const { body } = await request(`/api/books/${bookId}/manuscript`);
-    assert.equal(body.drift.ok, false, "漂移了却报一致");
+    assert.equal(body.drift.ok, false, "刷新 DB 后 state 漂移仍必须可见");
+    assert.equal(body.words_total_state, 9288, "字段必须展示 state 文件原值，而非已修正的 DB 镜像");
     const words = body.drift.items.find((i) => i.id === "words_total");
     assert.ok(words, JSON.stringify(body.drift.items));
     assert.equal(words.state, 9288);
-    assert.equal(typeof words.actual, "number");
+    assert.equal(words.actual, 4760);
     assert.match(words.detail, /9288/);
     const chapters = body.drift.items.find((i) => i.id === "chapters_committed");
     assert.ok(chapters, JSON.stringify(body.drift.items));
     assert.equal(chapters.state, 4);
+    assert.equal(chapters.actual, 2);
   } finally {
-    workspace.db.prepare("UPDATE books SET words_total = ?, chapters_committed = ? WHERE id = ?")
-      .run(goodWords, goodChapters, bookId);
+    writeFileSync(statePath, originalState, "utf8");
+  }
+});
+
+test("manuscript 在 state 不可读时必须披露无法核对，而不是报「账本一致」", async () => {
+  const statePath = join(bookDir, "_pipeline", "state.json");
+  const originalState = readFileSync(statePath, "utf8");
+  try {
+    writeFileSync(statePath, "{ broken json", "utf8");
+    const { body } = await request(`/api/books/${bookId}/manuscript`);
+    assert.equal(body.drift.ok, false, "state 读不出来时不得宣称无漂移");
+    const unreadable = body.drift.items.find((item) => item.id === "state_unreadable");
+    assert.ok(unreadable, `drift 里必须有「state 不可读」项：${JSON.stringify(body.drift.items)}`);
+    assert.match(unreadable.detail, /state/);
+    assert.equal(body.words_total_state, null, "state 不可读时不得把 0 冒充 state 原值");
+    assert.equal(body.chapters_committed_state, null);
+  } finally {
+    writeFileSync(statePath, originalState, "utf8");
+  }
+});
+
+test("manuscript 对缺失/非数值的 state 账本字段报无法核对，而不是拿 0 冒充原值", async () => {
+  const statePath = join(bookDir, "_pipeline", "state.json");
+  const originalState = readFileSync(statePath, "utf8");
+  try {
+    const state = JSON.parse(originalState);
+    delete state.words_total;
+    state.chapters_committed = "abc";
+    writeFileSync(statePath, JSON.stringify(state), "utf8");
+    const { body } = await request(`/api/books/${bookId}/manuscript`);
+    assert.equal(body.drift.ok, false);
+    const words = body.drift.items.find((item) => item.id === "words_total_missing");
+    assert.ok(words, `应报 words_total 缺账项：${JSON.stringify(body.drift.items)}`);
+    assert.equal(words.state, null);
+    const committed = body.drift.items.find((item) => item.id === "chapters_committed_missing");
+    assert.ok(committed, `chapters_committed 非数值也应报缺账项：${JSON.stringify(body.drift.items)}`);
+    assert.equal(body.words_total_state, null);
+    assert.equal(body.chapters_committed_state, null);
+  } finally {
+    writeFileSync(statePath, originalState, "utf8");
   }
 });
 

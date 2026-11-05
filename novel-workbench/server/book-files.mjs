@@ -64,6 +64,16 @@ export function writeAtomic(target, text) {
   renameSync(temp, target);
 }
 
+// PRD M2 / 上游 wordcount_core.py:279：改稿流程会产出 `第NNN章_标题_原稿_<日期|ts>.md`
+// 之类的备份稿，它们不是「本章现役正文」，不能进章节记录、全文合成或字数统计。
+// 备份稿命名判定（单一事实源）——`_原稿_` 中缀、`.bak`/`~` 后缀、`_backup`。
+export function isBackupChapterFile(name) {
+  return /_原稿(?:_|\.)/.test(name)
+    || /\.(?:bak|backup)(?:\.md)?$/i.test(name)
+    || /_backup(?:_|\b)/i.test(name)
+    || name.endsWith("~");
+}
+
 export function chapterFiles(bookDir, chapter) {
   const bodyDir = join(bookDir, "正文");
   if (!existsSync(bodyDir)) return [];

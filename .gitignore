@@ -71,3 +71,7 @@ agents.json
 
 # 本地临时脚本/探针（不进仓库）
 .tmp-*
+
+# 计划工作区（执行记录）。取证留证目录含外部篡改样本，不入库；
+# 事故结论与指纹清单见 novel-workbench/docs/incident-2026-11-05-fixture-tampering.md
+novel-workbench/.superpowers/
