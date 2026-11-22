@@ -21,6 +21,8 @@
   "GATE_RUNNER": "F:\\小说\\platforms\\_core\\tools\\gate_runner.py",
   "STYLE_PROBE": "F:\\小说\\platforms\\_core\\tools\\style_probe.py",
   "CLARITY_ORG_PROBE": "F:\\小说\\platforms\\_core\\tools\\clarity_org_probe.py",
+  "COMMERCIAL_TENSION_PROBE": "F:\\小说\\platforms\\_core\\tools\\commercial_tension_probe.py",
+  "QIMAO_TEMPLATES_DIR": "F:\\小说\\platforms\\qimao\\templates",
   "BOOKS_ROOT": "F:\\小说\\works",
   "PYTHON": "C:\\Users\\Wane-\\.workbuddy-ai\\binaries\\python\\versions\\3.13.12\\python.exe",
   "NODE": "C:\\Users\\Wane-\\.workbuddy-ai\\binaries\\node\\versions\\22.22.2-6\\node.exe",

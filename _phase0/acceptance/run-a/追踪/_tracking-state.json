@@ -1,0 +1,370 @@
+{
+  "book_title": "重生八零：从废品站开始",
+  "characters": {
+    "柴广利": {
+      "abilities_resources": [
+        "在巷口蹲守半个月，认得往来的人。"
+      ],
+      "goal": "把自己从这桩事里摘出去。",
+      "identity": "本章对峙对象，与 041 案有关联的中间环节人物。",
+      "knowledge": [
+        "只知道中间人戴帽子，不知道公司名。"
+      ],
+      "location": "仓桥老街。",
+      "open_threads": [
+        "他提的投诉会让沈砚的协查证面临作废风险。"
+      ],
+      "relationships": [
+        "只与戴帽子的中间人接触，未见过上家。"
+      ],
+      "state": "已被沈砚当场按住并取走证据，随后提出投诉。"
+    },
+    "沈砚": {
+      "abilities_resources": [
+        "方志、口述史、旧报纸、档案编号四样互证。"
+      ],
+      "goal": "把042做成人为递话，并沿审批线靠近2017旧案。",
+      "identity": "异闻协查组协查员，在编两年，29岁。",
+      "knowledge": [
+        "「空棺」被换成「空穴」，禁忌被倒置。",
+        "2017年6月19日有人调过同源卷，登记人姓沈。"
+      ],
+      "location": "市异闻协查组档案室。",
+      "open_threads": [
+        "四页记录被谁撕走。",
+        "第17页写了什么。",
+        "七年周期是谁在按点数。"
+      ],
+      "relationships": [
+        "韩素秋是上级兼半个师父，限期也给兜底。",
+        "郑维山是合规的墙，签字客气，程序无懈。"
+      ],
+      "state": "042结案；记录本缺四页；2017卷缺第17页。"
+    },
+    "罗小满": {
+      "abilities_resources": [
+        "一口仓桥话，能叫开老街半扇门。"
+      ],
+      "goal": "摘掉靠关系的帽子，拿到正式核查名额。",
+      "identity": "协查组档案数字化劳务派遣，仓桥本地人，24岁。",
+      "knowledge": [
+        "六千是按户计价的一环，项目部在后面。"
+      ],
+      "location": "龙潭迁坟工地至协查组。",
+      "open_threads": [
+        "亲属关系入卷宗后如何自处。",
+        "陈立会不会反手。"
+      ],
+      "relationships": [
+        "陈立是表哥，恒岳置业项目部经理，已被当众切割。",
+        "沈砚把选择权交给他，没替他决定。"
+      ],
+      "state": "当众退回表哥六千并录音，家族退路已断。"
+    },
+    "韩素秋": {
+      "abilities_resources": [
+        "定编号、压限期、盖组里的章。"
+      ],
+      "goal": "守住编制，让异闻有正规出口。",
+      "identity": "异闻协查组组长，前《临江晚报》记者，42岁。",
+      "knowledge": [
+        "第17页是禁区，连问都不能问。"
+      ],
+      "location": "协查组办公室至楼梯间。",
+      "open_threads": [
+        "她为何知道第17页不能问。",
+        "组里经费与数字化封存动议。"
+      ],
+      "relationships": [
+        "沈砚是下属兼半个徒弟，她替挡也记账。",
+        "与档案审批线表面客气。"
+      ],
+      "state": "压下一周限期，章末私下划线，不许碰郑馆长。"
+    },
+    "顾秀英": {
+      "abilities_resources": [
+        "熟悉本巷各家底细，知道谁家最近动过工。"
+      ],
+      "goal": "弄清自家门口这桩事到底算谁的，不愿被糊弄过去。",
+      "identity": "仓桥老街住户，泼水事件的当事人之一。",
+      "knowledge": [
+        "本巷近期有人上门谈过搬迁。"
+      ],
+      "location": "仓桥老街自家门口。",
+      "open_threads": [
+        "她与罗小满的亲属关系会在第 2 章被翻出。"
+      ],
+      "relationships": [
+        "与罗小满有亲属关系，此关系已被写进 041 卷宗首页。",
+        "对沈砚持观望态度，未真正配合。"
+      ],
+      "state": "当面质疑罗小满「是陈家那边的人」，态度松动但未真正信任协查组。"
+    }
+  },
+  "context": {
+    "active_character_names": [
+      "沈砚",
+      "罗小满",
+      "韩素秋"
+    ],
+    "continuity_risks": [
+      "记录本已缺四页，第3章起不得引用被撕四页的内容；撕页的人尚未查明。",
+      "沈砚已因抢证据被投诉一次，不得再用同类越界手段，否则协查证当场作废。",
+      "郑维山已正面出场且程序无懈，不得写成动怒或使用任何非合规手段。",
+      "陈立只到项目部这一层，不得供出上层；第17页内容与韩素秋是否留有复印件均未揭示。",
+      "七年周期只呈现现象；沈砚尚不知2017旧案与自己有关。"
+    ],
+    "long_term_constraints": [
+      "沈砚无阴阳眼、无执法权，工具只有方志、口述史、旧报纸、档案编号四样。",
+      "异闻按编号入库，结案需派出所或居委会在协查结论上盖章。",
+      "七年周期只呈现现象，暂不解释成因与动机。",
+      "韩素秋机关语域：句子短，不带情绪词；老唐派出所语域。",
+      "周慕松不卖消息，只收「替他了结一桩小事」当报酬。"
+    ],
+    "next_chapter_commitments": [
+      "起骨日冯桂英自捡江石压棺底。",
+      "第17页去向与2017年调阅人身份。",
+      "韩素秋为何不让问郑馆长。",
+      "谁进档案室撕了那四页。"
+    ],
+    "position": {
+      "scene": "市异闻协查组楼梯间",
+      "story_time": "2021年3月19日 上午",
+      "volume": "第一卷",
+      "volume_start_chapter": 1
+    },
+    "recent_chapters": [
+      {
+        "chapter": 1,
+        "summary": "041 在公示期内结案：沈砚当场从柴广利棉袄夹层里抽出按户报价单，三户当日重签，老唐盖章。代价同日到账：…"
+      },
+      {
+        "chapter": 2,
+        "summary": "042结案：迁坟禁忌是被人倒置的词义，罗小满当众退六千并录音，冯家同意起骨；调2017卷仍缺第17页。"
+      }
+    ]
+  },
+  "foreshadow": {
+    "F001": {
+      "id": "F001",
+      "importance": "高",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "《临江晚报》同一句招贴在 1996、2003、2010、2017 四次出现，一字不差，间隔正好七年。",
+      "updated_chapter": 1
+    },
+    "F002": {
+      "id": "F002",
+      "importance": "中",
+      "planned_resolution_chapter": 2,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "合订本调阅单签字栏一个「郑」字，沈砚认出这是三年前把他借调进协查组的人，意识到自己被提前放在了这一页前面。",
+      "updated_chapter": 1
+    },
+    "F003": {
+      "id": "F003",
+      "importance": "中",
+      "planned_resolution_chapter": 2,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "罗小满与仓桥老街的亲属关系被沈砚主动写进卷宗首页，堵了后路也留了把柄。",
+      "updated_chapter": 1
+    },
+    "F004": {
+      "id": "F004",
+      "importance": "低",
+      "planned_resolution_chapter": 2,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "付钱的中间人戴帽子、未露脸，柴广利不知其姓名，线头到此断掉。",
+      "updated_chapter": 1
+    },
+    "F005": {
+      "id": "F005",
+      "importance": "高",
+      "planned_resolution_chapter": 2,
+      "planted_chapter": 1,
+      "status": "已埋",
+      "summary": "沈砚记着三户口述与四个年份的本子，在档案室走廊灯灭后不翼而飞，门外有人停步未敲门。",
+      "updated_chapter": 1
+    },
+    "F007": {
+      "id": "F007",
+      "importance": "高",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 2,
+      "status": "已埋",
+      "summary": "记录本被撕走四页，撕口齐整，撕的人知道页码。",
+      "updated_chapter": 2
+    },
+    "F008": {
+      "id": "F008",
+      "importance": "高",
+      "planned_resolution_chapter": null,
+      "planted_chapter": 2,
+      "status": "已埋",
+      "summary": "2017卷缺第17页，调阅人被刮去半边，只剩「沈」字左半。",
+      "updated_chapter": 2
+    }
+  },
+  "imported_through_chapter": 0,
+  "last_committed_chapter": 2,
+  "schema_version": 4,
+  "state_revision": 2,
+  "timeline": {
+    "E001": {
+      "characters": [
+        "沈砚",
+        "顾秀英"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E001",
+      "objective_fact": "顾家门口泼水，罗小满被质疑是陈家的人。",
+      "reader_knowledge": "居民把协查员当成拆迁帮凶，公示期只剩十二天。",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "2021年3月11日 上午9:40",
+      "updated_chapter": 1
+    },
+    "E002": {
+      "characters": [
+        "沈砚",
+        "韩素秋",
+        "顾秀英"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E002",
+      "objective_fact": "韩素秋电话催办 041，期限压到五天。",
+      "reader_knowledge": "流言用词不是本地口语，像照着稿子念的。",
+      "reveal_chapter": 1,
+      "reveal_status": "部分揭示",
+      "story_time": "2021年3月11日 上午",
+      "updated_chapter": 1
+    },
+    "E003": {
+      "characters": [
+        "沈砚",
+        "周慕松",
+        "罗小满"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E003",
+      "objective_fact": "周慕松以问米旧事点出「七年」周期。",
+      "reader_knowledge": "流言是旧广告文案，不是民俗；收旧货的柴广利被三户见过在门口转。",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "2021年3月11日 下午",
+      "updated_chapter": 1
+    },
+    "E004": {
+      "characters": [
+        "沈砚",
+        "顾秀英",
+        "柴广利"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E004",
+      "objective_fact": "堂屋对峙，沈砚从柴广利棉袄夹层抽出按户报价单。",
+      "reader_knowledge": "041 结案，但雇主与中间人都没露名；沈砚动手抢证据，被投诉。",
+      "reveal_chapter": 1,
+      "reveal_status": "已揭示",
+      "story_time": "2021年3月15日 下午",
+      "updated_chapter": 1
+    },
+    "E005": {
+      "characters": [
+        "沈砚"
+      ],
+      "first_recorded_chapter": 1,
+      "id": "E005",
+      "objective_fact": "沈砚夜调临江府志，发现第 17 页缺失。",
+      "reader_knowledge": "流言按七年复发；沈砚自己被安排过；041 只剩一夜，他的记录本落到别人手里。",
+      "reveal_chapter": 1,
+      "reveal_status": "部分揭示",
+      "story_time": "2021年3月15日 夜",
+      "updated_chapter": 1
+    },
+    "E008": {
+      "characters": [
+        "沈砚",
+        "韩素秋"
+      ],
+      "first_recorded_chapter": 2,
+      "id": "E008",
+      "objective_fact": "档案室门开着，记录本缺四页；同日接042迁坟案。",
+      "reader_knowledge": "沈砚没追进档案室的人，缺页成悬账。",
+      "reveal_chapter": null,
+      "reveal_status": "未揭示",
+      "story_time": "3月16日晨",
+      "updated_chapter": 2
+    },
+    "E009": {
+      "characters": [
+        "沈砚",
+        "冯桂英",
+        "陆阿全",
+        "倪长根"
+      ],
+      "first_recorded_chapter": 2,
+      "id": "E009",
+      "objective_fact": "三户以「江不空葬」拒迁；陆阿全口述与县志卷三互证，空棺被换成空穴。",
+      "reader_knowledge": "禁忌拦的是空棺，流言被换了字。",
+      "reveal_chapter": 2,
+      "reveal_status": "已揭示",
+      "story_time": "3月16至17日",
+      "updated_chapter": 2
+    },
+    "E010": {
+      "characters": [
+        "沈砚",
+        "罗小满",
+        "陈立",
+        "倪长根",
+        "老唐"
+      ],
+      "first_recorded_chapter": 2,
+      "id": "E010",
+      "objective_fact": "罗小满退回六千并录音，倪长根改口「上头让这么说的」，老唐出受案回执。",
+      "reader_knowledge": "递话来自恒岳置业龙潭滨江项目部。",
+      "reveal_chapter": 2,
+      "reveal_status": "已揭示",
+      "story_time": "3月18日下午",
+      "updated_chapter": 2
+    },
+    "E011": {
+      "characters": [
+        "沈砚",
+        "郑维山",
+        "韩素秋"
+      ],
+      "first_recorded_chapter": 2,
+      "id": "E011",
+      "objective_fact": "042归档；调2017卷，第17页是齐口，登记卡只剩半个「沈」字。",
+      "reader_knowledge": "第17页在2017年6月19日被取走，取者姓沈。",
+      "reveal_chapter": 2,
+      "reveal_status": "部分揭示",
+      "story_time": "3月18至19日",
+      "updated_chapter": 2
+    }
+  },
+  "wordcount_records": {
+    "1": {
+      "actual": 2163,
+      "body_sha256": "9b47fc673458c80176d9fc54597893a6cb1fd76e8e07e67fd72c97e0f66fe3bf",
+      "metric": "visible_chars_v1",
+      "resolution": "within_user_band",
+      "status": "borderline",
+      "target": 1900
+    },
+    "2": {
+      "actual": 2094,
+      "body_sha256": "a61fe928b4b1f8ac5f88e7b78604190d4275a0db494ba5c9a05176ad6b2f4ca9",
+      "metric": "visible_chars_v1",
+      "resolution": "within_user_band",
+      "status": "internal_pass",
+      "target": 1900
+    }
+  }
+}

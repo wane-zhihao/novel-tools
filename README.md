@@ -1,324 +1,223 @@
-# 书房 · 签约工作台（Novel Platform）
+# 书房 · 商业网文智能工作台与因果质检流水线（Novel Platform & Tools）
 
-> 建立：2026-10-23 ｜ 分支 `master` ｜ 提交身份 Wane.Zhihao
+> **最新版本**：v2.4 (商业因果量化与双轨审写分离版) ｜ **分支**：`t1-body-integrity` ｜ **作者**：Wane.Zhihao  
+> **定位**：面向国内商业网文（七猫、番茄、纵横等）全自动化辅助生产与签约质检的工作台工程系统。
 
-## v2：正文中心（当前）
+---
 
-界面围绕作者的一天重做：**书房 → 写 → 故事 → 改 → 投**。节点、运行日志、闸门与路径全部收进“制作台”（`/studio.html`）。
+## 一、项目核心理念与重大范式转移
 
-- **书房**：继续写第 N 章、目标字数、三件待办；没有统计卡堆叠。
-- **写**：17px/1.8 的稿纸编辑器，1.2 秒自动保存、冲突保护、专注/夜间/预览、章节抽屉、字数与保存态。
-- **故事**：人物、世界、大纲、伏笔、时间线；直接编辑书内 Markdown，AI 用的是同一份资料。
-- **改**：每次 AI 写正文都会留版本；看 diff、回滚到较早版本。默认自动跑，事后可回滚。
-- **投**：2 万字/大纲/无待定稿/无阻塞问题/未投他处的投前检查；生成不可变投稿包；记录编辑、预计回复与跟进。
-- **首次开书**：书名/题材/一句话卖点三字段；路径、Python、Agent 配置默认隐藏。
-- **移动端**：390px 起可用，底部导航、44px 触控、无横向滚动。
+传统网文辅助工具往往聚焦于“标点符号密度”、“段落长度”、“词频比例”等表面统计。然而实测表明：**纯排版或标点改动就能彻底改变指标分数，但对作品的签约率毫无实质帮助。**
 
-> 逐章“暂停等审”尚未启用；本轮按“自动跑完 + 版本/diff/回滚”落地。旧界面保留在 `/studio.html`，CLI 不变。
+针对平台编辑真实拒稿反馈（如“故事叙述较为平淡”、“细节刻画力度稍弱”、“文笔在风格上不够统一”），本项目确立了三大核心商业认知与设计原则：
 
-## 这个仓库是什么
+1. **从签约样本反向推导量化标准（Pillar 1）**：
+   - 从成熟平台（七猫等）的已过签爆款语料中，反向提炼客观度量基线：开篇冲突时延（中位数 209 字符进入第一重压迫/危机）、前序纯背景阻滞（首行即见动作/对白，纯背景 $\le 300$ 字符）、利益具象化密度与章末断章悬念率（97.6% 签约样本在末尾 250 字内留钩）。
+2. **商业因果根植于整体架构与人设逻辑（Pillar 2 & 3）**：
+   - **大纲 DAG 对齐**：从“商业策划 $\to$ 卷纲 $\to$ 细纲 $\to$ 正文”的三层节拍流严格映射，强制核验细纲四拍在正文中的覆盖率（$\ge 75\%$）；
+   - **提前释放禁令（Fail-Closed）**：对细纲中声明的“本章禁止提前释放”（如禁提前暴露最高战力、禁反派提前求饶）实行硬阻断，违规即禁止出包；
+   - **人设主动破局置信度（Agency Score）**：严查主角在危机与受辱环境下的主动决策与反击力度，排查降智屈服与认知边界外泄（禁止全知剧透）。
+3. **审写分离与红队裁决契约（Dual-Track Separation）**：
+   - **创作端（Writer）**：长上下文生成，专注场景渲染、情绪反差与节奏推进；
+   - **裁决端（Judge）**：红队审稿模式，严格执行**逐字引文契约（Verify Contract）**——判定 fail 必须给出正文中连续 12~30 字未经省略号跳跃的逐字原文，杜绝模型“自评自夸”与“凭空假通过”。
 
-**小说自动生产的工程仓库**——承载 Skill / Agent / Workflow / Harness / 工具代码。
-输入一条指令，自动完成 选题 → 设定 → 卷纲 → 细纲 → 正文至 2 万字 → 质检 → 投稿包。
+> [!IMPORTANT]
+> **绝对隔离与零接触原则（Zero-Touch on Novels）**：  
+> 本工程仓库**仅收录工具代码、流水线调度器、审查门禁与环境配置**，绝不包含任何商业小说正文与私有创作稿件。正文创作库保持物理隔离，本仓库所有改动均为工具、扫描器与契约测试。
 
-## 与旧数据的分工（重要）
+---
 
-**本仓库只放"代码与流程"，不放"资料与数据"**：
+## 二、全流水线时序与状态机架构
 
-| 留在原处 | 位置 | 内容 |
-|---|---|---|
-| 平台方案与语料 | `F:\小说\platforms\` | 七猫/番茄两仓库：投稿方案、写作方案、评分卡、gates、thresholds、genre-baselines、校准报告 |
-| 平台语料原文 | `F:\小说\platforms\qimao\corpus\` | 329 篇学院文 + 42 章签约正例（爽文 24 + 年代 18） |
-| 探针与工具 | `F:\小说\platforms\_core\tools\` | style_probe / clarity_probe / clarity_org_probe / calibrate / gate_runner / selftest |
-| 抓取原始数据 | `F:\小说\_调研\raw\` | 七猫 329 + 番茄 271 篇原文 |
-| 技能链备份 | `F:\小说\_backup\` | skills-20261022 |
+全系统由 `pipeline_spec.py` 统一定义节点流转游标（Cursor），由 `autopilot.py` 与 `inline_runner.py` 调度驱动：
 
-**本仓库通过 `novel-workbench/config.json` 的绝对路径引用上述数据，不复制、不迁移。**
+```mermaid
+flowchart TD
+    classDef scriptNode fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef writerNode fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
+    classDef judgeNode fill:#ffebee,stroke:#d32f2f,stroke-width:2px;
+    classDef toolNode fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
 
-理由：语料与校准结论是**证据**，必须留在原处可回溯；代码是**实现**，需要版本管理与迭代。两者混在一个仓库会让语料的每次抓取都产生无意义的 diff。
+    %% 阶段 1
+    subgraph S1["阶段一：冷启动与商业选题定位"]
+        N01["N01 初始化<br/>(Script: 创建 state.json)"]:::scriptNode --> N02["N02 文风锚定<br/>(Script: 校验 42章签约正例基准)"]:::scriptNode
+        N02 --> N03["N03 选题报告<br/>(Writer: 5个题材/商业吸量名/生死节拍)"]:::writerNode
+        N03 --> N04{"N04 选题闸门<br/>(Judge: 红队商业拒稿排查)"}:::judgeNode
+        N04 -- "block (B级硬伤)" --> N03
+    end
 
-## 目录
+    %% 阶段 2
+    subgraph S2["阶段二：世界观设定与多卷大纲骨架"]
+        N04 -- "pass" --> N05["N05 设定生成<br/>(Writer: 文风/角色/世界观/势力)"]:::writerNode
+        N05 --> N06{"N06 设定校验<br/>(Judge: 动机/设定膨胀/文风兼容)"}:::judgeNode
+        N06 -- "block" --> N05
+        N06 -- "pass (单卷/老书)" --> N07["N07 卷纲生成<br/>(Writer: 主线/高潮/悬念接力)"]:::writerNode
+        N06 -- "pass (多卷计划)" --> V1_N07["V1.N07 第一卷卷纲<br/>(Writer)"]:::writerNode
+        N07 --> N08{"N08 主线闸门<br/>(Judge: 一句话主线/黄金三章打脸闭环)"}:::judgeNode
+        V1_N07 --> V1_N08{"V1.N08 卷主线闸门<br/>(Judge)"}:::judgeNode
+        N08 -- "block" --> N07
+        V1_N08 -- "block" --> V1_N07
+        N08 -- "pass" --> N09d["N09d 前12章目录骨架<br/>(Writer: 爽点/钩子/预估字数)"]:::writerNode
+        V1_N08 -- "pass" --> V1_N09d["V1.N09d 本卷目录骨架<br/>(Writer)"]:::writerNode
+    end
+
+    %% 阶段 3：单章循环
+    subgraph S3["阶段三：单章流水线闭环 (C{n}.N09 ~ C{n}.N16)"]
+        N09d & V1_N09d --> CN09["C{n}.N09 单章场景卡 (细纲)<br/>(Writer: 9字段+情节细化表+情绪走势+禁止提前释放)"]:::writerNode
+        CN09 --> CN10{"C{n}.N10 细纲机械闸门<br/>(Script: check-outline-contract 字节上限校验)"}:::scriptNode
+        CN10 -- "fail" --> CN09
+        CN10 -- "pass" --> CN11["C{n}.N11 章节上下文组装<br/>(Script: S1-S7 锚点/伏笔/角色快照)"]:::scriptNode
+        CN11 --> CN12["C{n}.N12 正文撰写 + 填追踪事务<br/>(Writer: 分段写+因果密度+围观震惊+断章)"]:::writerNode
+        CN12 --> CN13{"C{n}.N13 平台指标机械闸门<br/>(Script: visible_chars/句式/违禁词/段频)"}:::scriptNode
+        
+        CN13 -- "has findings" --> CN14["C{n}.N14 定点外科手术改写<br/>(Writer: 针对性修复/禁重写整章)"]:::writerNode
+        CN14 --> CN13
+        
+        CN13 -- "clean pass" --> CN15_DEC{"是否为审查章？<br/>(n=1, 3 或 Milestone)"}
+        CN15_DEC -- "否 (普通章)" --> CN15_SKIP["C{n}.N15 自动 Skip"]:::scriptNode
+        CN15_DEC -- "是 (关键里程碑)" --> CN15{"C{n}.N15 阶段质量闸门<br/>(Judge: 删除测试/白描vs流水账/首章冲突)"}:::judgeNode
+        CN15 -- "block" --> CN14
+        
+        CN15 -- "pass" --> CN16["C{n}.N16 章末原子封板<br/>(Script: tracking_commit 伏笔/事件/快照入账)"]:::scriptNode
+        CN15_SKIP --> CN16
+    end
+
+    %% 循环分支
+    CN16 --> LOOP_DEC{"当前章完成？<br/>n < 本卷结束章？"}
+    LOOP_DEC -- "继续下一章 (n = n + 1)" --> CN09
+    
+    %% 阶段 4：卷末与汇总
+    subgraph S4["阶段四：卷末合成与全书终审"]
+        LOOP_DEC -- "本卷结束 (有后续卷)" --> VN17["V{v}.N17 卷全文合成"]:::scriptNode
+        VN17 --> VN18["V{v}.N18 卷AI味/退化扫描"]:::scriptNode
+        VN18 --> VN19["V{v}.N19 卷文风漂移+伏笔"]:::scriptNode
+        VN19 --> VN20{"V{v}.N20 卷终审<br/>(Judge: 弃书点/高潮落地)"}:::judgeNode
+        VN20 -- "block" --> CN14
+        VN20 -- "pass" --> NEXT_V["进入下一卷: V{v+1}.N07"]
+
+        LOOP_DEC -- "全书章节写完" --> N17["N17/N17g 全文合成 + 概要提取"]:::scriptNode
+        N17 --> N18["N18 AI味与退化机械扫描"]:::scriptNode
+        N18 --> N19["N19 文风漂移与伏笔回收率核算"]:::scriptNode
+        N19 --> N20{"N20 评分卡终审<br/>(Judge: 20大硬项红队评审)"}:::judgeNode
+        N20 -- "block (B级问题)" --> N20f["N20f 段落级外科手术补丁<br/>(Writer: 只修正文，禁改大纲设定)"]:::writerNode
+        N20f --> N17
+    end
+
+    %% 阶段 5：因果质检与打包
+    subgraph S5["阶段五：商业因果质检与投稿封装 (N21)"]
+        N20 -- "pass" --> N21_GATE["N21 核心质检流水线"]:::toolNode
+        
+        subgraph CASUAL_PROBES["商业因果与人设硬质检 (Causal & Persona Consistency)"]
+            T1["signed_corpus_anatomy.py<br/>(签约样本解剖基线)"]:::toolNode
+            T2["architecture_consistency_gate.py<br/>· 细纲4拍覆盖率 (≥75%)<br/>· 禁止提前释放死线拦截 (Fail-Closed)<br/>· 正文主线漂移检测 (≥350字游离)"]:::toolNode
+            T3["persona_confidence_probe.py<br/>· 主角能动性/支配力评分 (Agency Score)<br/>· 认知边界外泄检测 (Knowledge Leak)"]:::toolNode
+        end
+        
+        N21_GATE --> CASUAL_PROBES
+        CASUAL_PROBES --> SUBMIT_CHECK{"causal_breaches == 0 ?"}
+        
+        SUBMIT_CHECK -- "违规 (Breaches > 0)" --> PKG_BLOCK["阻断提交<br/>体检报告标红 + 投稿记录标为不可投"]:::judgeNode
+        SUBMIT_CHECK -- "全部合规 (0 Breaches)" --> PKG_READY["生成标准投稿包<br/>- 全文.md<br/>- 体检报告.md (含商业因果全项)<br/>- 投稿邮件.md<br/>- 投稿记录.md"]:::scriptNode
+    end
+```
+
+---
+
+## 三、工程结构与核心模块
 
 ```
 Novel Platform/
-├── README.md                    本文件
-├── start-workbench.cmd          Windows 一键启动（检查 Node 24+，失败暂停）
-├── start-workbench.sh           macOS / Linux 一键启动
-├── ci.cmd / ci.sh               语法检查 + 全量回归（发版前跑）
-├── references/
-│   ├── plan-v2.1.md             **实现方案 v2.1**（含两轮红队审查的 10 项修补，代码的设计依据）
-│   └── phase0-report.md         Phase 0 纪律阈值实测报告
-├── novel-workbench/             Skill（~/.workbuddy-ai/skills/novel-workbench 是指向这里的 junction）
-│   ├── SKILL.md                 入口 + 铁律
-│   ├── config.json              绝对路径根目录（指向旧数据与上游技能）
-│   ├── package.json             版本 / Node>=24 / start·test 脚本
-│   ├── agents.default.json      Agent 角色 / provider / 预算默认配置（仓库只读模板）
-│   ├── references/
-│   │   └── decisions.md         无人值守默认决策表
-│   ├── server/                  Node 后端（零依赖）
-│   │   ├── paths.mjs            数据目录与书库根目录解析
-│   │   ├── db.mjs               SQLite 打开与迁移
-│   │   ├── schema.mjs           books / chapters / nodes / findings / judgments / runs
-│   │   ├── sync.mjs             文件→DB 增量同步与全量重建
-│   │   ├── settings.mjs         用户路径设置 → dataDir/pipeline.json
-│   │   ├── secrets.mjs          Windows DPAPI 密钥存储（只进不出）
-│   │   ├── agent-config.mjs     配置合并、校验、密钥状态
-│   │   ├── agent/
-│   │   │   ├── runtime.mjs      autopilot 桥 + 节点执行器 + 预算/停止
-│   │   │   ├── providers.mjs    OpenAI 兼容客户端 + mock provider
-│   │   │   └── tools.mjs        read_file / write_file / list_dir 沙箱
-│   │   ├── http.mjs             路由辅助、本机校验、静态文件
-│   │   ├── api.mjs              REST 接口（书库/运行/报告/投稿/配置）
-│   │   ├── run-manager.mjs      单书单运行、事件流、停止、入库
-│   │   ├── gate-report.mjs      gate_runner 实时报告
-│   │   ├── version.mjs          版本单一来源（package.json）
-│   │   ├── index.mjs            HTTP 服务入口
-│   │   ├── cli.mjs              sync / rebuild / status / config / run
-│   │   └── tests/               node --test 回归
-│   ├── scripts/
-│   │   ├── mock_autopilot.py    Phase 0 纪律阈值实测（仅历史用途）
-│   │   ├── autopilot.py          状态机入口（init/next/done/skip/block/status/resume）
-│   │   ├── commands.py           done / skip / block / resume 实现
-│   │   ├── inline_runner.py      script 节点内联执行 + 原文引用硬校验
-│   │   └── pipeline_spec.py      节点表（流程唯一真相）
-│   └── web/
-│       ├── index.html           书房（v2 入口）
-│       ├── app.js               v2 路由与启动
-│       ├── styles.css           案头/稿纸设计系统
-│       ├── lib/                 api / dom / format
-│       ├── views/               书房 / 写 / 故事 / 改 / 投 / 设置
-│       ├── studio.html          旧控制台（制作台）
-│       ├── studio.js            旧控制台脚本
-│       └── studio.css           旧控制台样式
-├── _fixtures/                   回归夹具（chapter_e2e / chapter_loop / workbench_e2e）
-└── _phase0/                     Phase 0 测试目录（联试书 book2，已暂停）
+├── README.md                                  本说明文档
+├── start-workbench.cmd / start-workbench.sh   跨平台一键启动脚本
+├── ci.cmd / ci.sh                             全量语法检查与回归脚本
+├── references/                                架构说明书、PRD 与 TDD 规范
+│   ├── prd-workbench-1.0.md
+│   └── tdd-workbench-1.0.md
+└── novel-workbench/                           工作台核心工程
+    ├── package.json                           Node.js 运行时依赖与启动脚本
+    ├── config.json                            环境路径与平台配置唯一定义
+    ├── scripts/                               流水线与核心算法探针
+    │   ├── pipeline_spec.py                   节点流程表（状态机唯一真相）
+    │   ├── inline_runner.py                   内联调度器、N21 打包质检与体检报告生成
+    │   ├── architecture_consistency_gate.py   细纲4拍对齐、禁止提前释放与游离漂移审查
+    │   ├── persona_confidence_probe.py        主角能动性（Agency Score）与认知边界探针
+    │   ├── signed_corpus_anatomy.py           签约语料深层因果特征解构工具
+    │   ├── commercial_tension_probe.py        七猫下沉爽点反差与黄金三章张力探针
+    │   ├── causal_rotator.py                  因果词轮转生成器（防止 AI 词频指纹聚集）
+    │   ├── editor_criteria_scan.py            编辑审稿指南与一眼拒硬红线机检扫描器
+    │   ├── autopilot.py                       状态机主入口（init/next/done/skip/block/resume）
+    │   ├── commands.py                        状态推进、裁决校验与事务驱动
+    │   └── commit_chapter.py                  章末原子化事务提交（Tracking Commit）
+    ├── server/                                零外部重度依赖的 Node.js 后端服务
+    │   ├── index.mjs                          HTTP REST API 入口
+    │   ├── paths.mjs                          书库与数据目录安全解析
+    │   ├── db.mjs / schema.mjs                SQLite 状态存储与版本记录
+    │   ├── sync.mjs                           磁盘 Markdown 与 DB 双向同步
+    │   ├── gate-report.mjs                    实时质检闸门聚合
+    │   ├── submissions.mjs                    投稿包导出与渠道跟进
+    │   ├── agent/                             Agent 运行时（Provider 调度、令牌鉴权与沙箱工具）
+    │   └── tests/                             168+ 项自动化契约回归测试集
+    └── web/                                   极简现代化的纯原生前端（书房/写/故事/改/投）
 ```
 
-### Dashboard 扩展（仓库外）
+---
 
-`F:\WorkBuddy AI\Novel Platform` 只放流水线代码；写作台界面在
-`C:\Users\Wane-\.qoder\skills\story\`（`scripts/dashboard-server.mjs` + `assets/`）。
-> 这是早期在 story skill 里做的临时看板；仓库内自有后端与界面见下方 P3 / P4。
-> 它继续保留作通用文稿编辑器，工作台功能以 `novel-workbench/server/` 为准。
+## 四、核心工具详解
 
-流水线页签通过四个端点和 `_pipeline/state.json` 通信。确定性节点由 Dashboard
-**直接执行**；LLM 节点返回提示词，交给对话里的编排者：
+### 1. `architecture_consistency_gate.py`（架构一致性闸门）
+- **细纲 4 拍对齐度**：使用子句级语义滑窗算法提取细纲 `情节安排` 的核心动作与实体词，核验正文是否真实推进行动，执行率门槛 $\ge 75\%$；
+- **禁止提前释放硬阻断（Fail-Closed）**：提取细纲 `本章禁止提前释放` 字段（如“禁止暴露仙帝修为”、“禁止让反派提前下跪”），在正文中进行语义倒错比对。一旦命中，直接阻断打包流程；
+- **叙事漫游检测（Narrative Drift）**：定位正文中连续超过 350 字符且不含对白、脱离大纲核心词的纯说明文字，防止注水平铺。
 
-| 端点 | 作用 |
-|---|---|
-| `GET /api/pipeline/status` | 节点进度、blocked 原因、evidence 链接、最近 findings |
-| `POST /api/pipeline/start` | 执行 `autopilot.py next`，写 `run.json`，返回当前节点 instruction |
-| `POST /api/pipeline/resume` | 先 `resume` 清阻断/中断节点，再执行 `next`；返回 instruction |
-| `GET /api/pipeline/report?chapter=N` | 实时调 `gate_runner.py`，失败时回退到 N13 findings |
+### 2. `persona_confidence_probe.py`（人设置信度探针）
+- **主角能动性评分（Agency Score）**：自动提取主角的主动抉择、反抗、调查、反击动作，过滤被动妥协。实测表明，七猫被拒稿样本的主角能动性往往低至 0.4（窝囊憋屈），而签约样本稳定在 0.8~1.0（果断破局）；
+- **认知边界防泄露（Knowledge Boundary Leak）**：比对当前章节时间线与角色已知知识库，防止主角在未知情前提前说出幕后反派机密。
 
-`instruction` 在 llm/verify 节点会带 `subagent_prompt`（服务端已剥离 `step_token` 与
-`done_cmd_for_orchestrator_only`），界面自动复制提示词；写作/审查本身仍由对话 agent 完成。
+### 3. `signed_corpus_anatomy.py`（签约样本解剖器）
+- 离线反向推导签约样本数据，输出 `signed_anatomy_baseline.json`；
+- 量化开篇冲突偏移（$p50=209$ 字符）、前序背景阻滞（$p50=0$ 字符）、利益具象化频次与章末悬念留钩率（$97.6\%$）。
 
-书目录里的 `_pipeline/workbench.json` 由 `autopilot.py` 自动写入（python / autopilot /
-gate_runner / platform 的绝对路径），Dashboard 只认这份清单，不读仓库 `config.json`。
+### 4. `causal_rotator.py`（因果词轮换引擎）
+- 解决大模型因果词刷屏（如“果然”连刷几十次导致编辑一眼判定为 AI 劣质文）问题；
+- 维护涵盖动作后果、转折心理与陈述句式的多维候选池，维持全章因果词占比均衡。
 
-> **Plan 溯源**：`references/plan-v2.1.md` 从 `C:\Users\Wane-\.workbuddy-ai\plans\cosmic-nebula-babbage-MnzvwCoC.md`
-> 复制而来（sha256 已校验一致）。原文件保留在原地不动——按"旧资料留原处"的约定。
-> 本仓库的代码以这份方案为唯一设计依据；方案若改，改这里，不要改原处。
+---
 
-## 数据层（P1，已完成）
+## 五、快速开始与测试验证
 
-**文件是唯一真相，SQLite 只做索引与历史**——DB 可随时从磁盘重建，脚本离线仍能跑。
+### 1. 运行要求
+- **Node.js**：`v22+` 或 `v24+`
+- **Python**：`3.10+`（支持 UTF-8 编码与标准库）
 
+### 2. 一键启动工作台
 ```bash
-# 数据目录默认 %LOCALAPPDATA%\NovelWorkbench，可用 WORKBENCH_DATA_DIR 覆盖
-node novel-workbench/server/cli.mjs sync   --root _fixtures
-node novel-workbench/server/cli.mjs status
-node novel-workbench/server/cli.mjs rebuild --root _fixtures   # 清空业务表后全量重建
-node novel-workbench/server/cli.mjs config --book <书目录>      # 合并后的 Agent 配置
+# Windows
+start-workbench.cmd
 
-# 回归（临时库，不写真实数据目录）
-node --test novel-workbench/server/tests/sync.test.mjs \
-            novel-workbench/server/tests/agent-config.test.mjs
-```
-
-- 书库根目录：`WORKBENCH_BOOKS_ROOTS`（`;`/`,` 分隔）优先，缺省读 `config.json` 的 `BOOKS_ROOT`。
-- 同步器解析 `state.json`、`正文/`、`追踪/_tracking-state.json`、`findings_C*.json`、
-  `endgame_findings.json`、`judgments_*.json`、`run.json`；按 mtime+size 指纹跳过未变化的书。
-- findings 保留 `first_seen_at`，文件里消失的条目只置 `active=0`，不删历史。
-- Agent 配置：`agents.default.json` + 每书 `_pipeline/agents.json` 覆盖；
-  密钥可来自环境变量（如 `DEEPSEEK_API_KEY`）或 UI（Windows DPAPI 加密存数据目录）；
-  接口与日志只暴露"已配置/未配置/来源"，永不回显密钥。
-- 默认 provider 是 `mock`，未接真实模型前不会产生调用费用；`writer` 与 `judge` 同模型会告警。
-
-## Agent 运行时（P2，已完成）
-
-运行时把 `autopilot.py` 当成状态机，自己完成"取指令 → 调模型 → 写文件 → 交令牌"的闭环：
-
-```bash
-# 安全演练：mock provider，只推一个节点
-node novel-workbench/server/cli.mjs run --book <书目录> --mock --max-steps 1
-
-# 接真实模型：在 UI「Agent 配置」里选 provider 并填密钥，
-# 或改 agents.default.json / 书内 _pipeline/agents.json 后设环境变量
-set DEEPSEEK_API_KEY=...
-node novel-workbench/server/cli.mjs run --book <书目录>
-
-# 机器可读结果（不含 token / done_cmd）
-node novel-workbench/server/cli.mjs run --book <书目录> --json
-```
-
-- Provider：`mock`（默认，不联网）与 OpenAI 兼容（DeepSeek / Kimi / 智谱 / Ollama / OpenRouter）。
-  每个角色独立配置 provider、model、temperature、timeout、max_attempts。
-- 工具循环只暴露 `read_file / write_file / list_dir`，路径锁死在书目录（拒绝 `~` 路径段，防 Windows 8.3 短名伪装）；
-  控制文件（state/.step_token/workbench/run/agents）默认不可读，禁止改写；`submissions.json`、`snapshots/`、`findings_*` 禁写；
-  `judgments_*` 只有 judge 角色可写（writer 覆写裁决记录可翻转历史结论）。
-- 令牌由运行时自己从 `_pipeline/.step_token` 读取并调 `done`，不进结果、不进日志；经子进程 argv 传递
-  （本机进程管理器可见——单机威胁模型内的已知残留，2026-10-25 审查 A1/C1）。
-- `done` 返回引用校验失败时，把失败原因回喂给 judge 重写（受 `max_attempts` 限制）；
-  N15/N20 的 block 按状态机路由（N14 / N20f），第三次连续失败才停机。
-- 停止：Ctrl+C（AbortSignal）；预算：`budgets.llm_rounds`、`budgets.node_timeout_s`；`--max-steps` 限制本轮节点数。
-  注意 `llm_rounds` 按 **chat 轮**计（一次节点 attempt 内工具循环可多次 chat），不是按节点数：
-  默认 400 约够 25–40 章/run，130 章的长篇要分 3–4 个 run 跑完。
-- 每轮结束自动同步 SQLite，`status` 立即能看到新进度。
-- 回归：`node --test novel-workbench/server/tests/*.test.mjs`（含真实 autopilot 单节点集成测试，全部在临时副本上跑）。
-
-## 后端 API（P3，已完成）
-
-```bash
-# 只监听 127.0.0.1；--open 用系统浏览器打开
-node novel-workbench/server/index.mjs --port 43120 --root <书库根目录> --open
-```
-
-| 端点 | 作用 |
-|---|---|
-| `GET /api/health` | 数据目录、书库根、已入库书数 |
-| `GET /api/books` | 同步书库并返回汇总（进度、章节数、现行阻断数） |
-| `POST /api/books` | 在首个书库根下调用 `autopilot init` 新建书 |
-| `GET /api/books/:id` | 书详情：章节、节点、findings、判词 |
-| `POST /api/books/:id/sync` | 强制从文件重建该书索引 |
-| `GET /api/books/:id/report?chapter=N` | 实时 `gate_runner`，失败回退已存 findings |
-| `POST /api/books/:id/run` | 异步启动运行时（`mode: real\|mock`、`max_steps`），返回 202 |
-| `GET /api/books/:id/run?since=N` | 运行快照 + 序号增量事件；结束后仍保留最后一次 |
-| `POST /api/books/:id/stop` | AbortSignal 停止当前运行 |
-| `POST /api/books/:id/resume` | 清掉残留 token / running 标记后继续（停止或崩溃后） |
-| `PUT/DELETE /api/providers/:name/secret` | 写入/删除本地密钥（只返回是否已配置） |
-| `GET /api/books/:id/runs` | 运行历史（含 `agent_run`） |
-| `GET/POST /api/books/:id/submissions` | 投稿记录列表 / 追加 |
-| `PUT /api/books/:id/submissions/:sid` | 更新编辑反馈、下一步动作 |
-| `GET /api/agents`、`PUT /api/agents` | 全局或按书读取/写入 Agent 配置 |
-
-- 安全：只接受回环 Host；写请求的 Origin 必须与服务端同源（主机名+端口严格匹配，附 Sec-Fetch-Site 校验）；配置文件拒绝任何明文密钥字段；
-  静态文件路径锁死在 `novel-workbench/web/`。
-- 运行互斥：同一本书同时只允许一个运行；`next` 另有跨驱动锁；开始即写 `runs` 行，
-  重启后残留运行标为 `interrupted`；事件最多保留 600 条并定期落库。
-- 停止/崩溃后不会自动清 token：UI 显示「待恢复」，点「恢复」后再继续，避免两个驱动互抢。
-- N21 若字数不足 2 万 / N20 未 pass / 机械 blocking 非 0，会返回 `NOT_SUBMITTABLE` 并阻断，不会进入完成态。
-- 投稿记录以 `_pipeline/submissions.json` 为真相，DB 只是索引；编辑器反馈可直接回填。
-
-## 工作台界面（P4，已完成）
-
-```bash
-node novel-workbench/server/index.mjs --port 43120 --root <书库根目录> --open
-```
-
-- **书库**：左侧列出所有书与进度/阻断状态；「新建书」直接调用 `autopilot init`。
-- **书详情**：统计卡、执行面板、流程节点、章节闸门、问题清单、运行历史。
-  - 「演练一步」用 mock provider 走通链路，不产生模型费用；「执行一步」按配置 provider 跑一个节点；
-    「连续执行」直到收尾/阻断/预算/步数上限；「停止」发送 AbortSignal。
-  - 运行事件每 800ms 增量拉取（`?since=seq`），结束后自动刷新书详情并落库。
-  - 章节「闸门」实时调 `gate_runner`，并展示本章 findings；问题清单区分 B/A 与已解决。
-- **投稿记录**：新增渠道/编辑/反馈/下一步；直接回填编辑反馈并随时更新状态。
-- **Agent 配置**：全局或按书编辑完整 JSON（provider、角色、温度、超时、重试、预算）；
-  provider 状态只显示"已配置/未配置"；保存前校验，失败自动回滚。
-- 布局在窄屏自动堆叠；无横向滚动；所有数据来自本机 API，不上传。
-
-## 启动与首次运行（P5，已完成）
-
-**前置**：Node.js 24+；Python 3.10+；`gate_runner.py` 与七猫平台目录（可选，缺省时闸门报告只显示已存 findings）。
-
-```bash
-# Windows：双击 start-workbench.cmd
-# macOS / Linux：
+# Linux / macOS
 ./start-workbench.sh
-
-# 或者：
-npm start --prefix novel-workbench
 ```
+启动后访问 `http://127.0.0.1:43120` 即可进入作者工作台。
 
-- 首次启动会自动检测路径；不可用时浏览器进入「首次运行设置」，填写：
-  书库根目录（不存在可自动创建）、Python、autopilot（默认仓库自带）、可选的 gate_runner / 平台目录。
-- 设置保存在数据目录的 `settings.json`（默认 `%LOCALAPPDATA%\NovelWorkbench`，可用 `WORKBENCH_DATA_DIR` 覆盖），
-  **不写入仓库**；保存后立即同步书库。
-- 路径优先级：`--root` / 环境变量 > `settings.json` > 仓库 `config.json` 默认值。
-  生效路径会写成数据目录的 `pipeline.json`，autopilot 及其子脚本只读这一份，避免双配置漂移。
-- 必填：Python、story-long-write 技能目录、autopilot；gate_runner / 平台目录缺失时只告警。
-- 环境变量包括 `WORKBENCH_BOOKS_ROOTS`、`WORKBENCH_PYTHON`、`WORKBENCH_STORY_LONG_WRITE`、
-  `WORKBENCH_GATE_RUNNER`、`WORKBENCH_PLATFORM_DIR` 等。
-- 版本：`novel-workbench/package.json`（当前 0.7.0）；`GET /api/health` 返回版本、DB schema 版本与 `needs_setup`。
-- 数据库迁移随启动自动执行；业务数据在数据目录，删掉 DB 可从文件重建，不影响书稿。
-- 模型密钥：环境变量优先；也可在 UI 设置页填写，Windows 用 DPAPI（CurrentUser）加密存
-  `<dataDir>/secrets.json`，接口只返回是否已配置与来源。首次运行默认 mock，不需要密钥。
-
-## 关键设计（详见方案）
-
-- **瘦主控 + 文件指针协议**：主会话只调 `autopilot.py`，禁读正文；`next` 输出含路径的 `subagent_prompt`
-- **补丁1 脚本内联**：所有 `script` 节点由 `autopilot.py` 内部 `subprocess.run` 执行，LLM 物理上无法篡改脚本参数
-- **`step_token` 一次性令牌**：提高 subagent 越权调用成本的速度 bump——2026-10-25 审查 A1 实证"100% 机械隔离"不成立
-  （能读 `_pipeline/` 的 agent 可拿令牌、`next` 会向调用方发令牌），已撤回该声称；配套防线：done 的 evidence-spec
-  模式比对、控制文件读写保护、judgments 角色感知
-- **先审后封**：`commit` 必须是单章生命周期的最后一个动作
-- **N14 后复检**：N14 改写完成先回 N13 复跑平台闸门，通过才进 N15；仍 blocking 记一轮 fix_rounds（与 N15/N16 失败同一预算），
-  超预算回滚 Blocker 最少的快照后终停（plan 5.2.2 + 补丁4，2026-10-25 落地）
-- **P5 诊断汇流**：N18/N19/N20 全是只读探针，问题统一汇入 `endgame_findings.json`，由 N20f 单点修补
-- **失败可回退**：N15/N16 失败回 N14 定点改写（上限 2 轮），N20 block 回 N20f（上限 2 轮），第三次停机交人工
-
-## 快速开始
+### 3. 执行全套工程回归测试
+本项目包含高密度的防回退自动化测试套件：
 
 ```bash
-PY="C:\Users\Wane-\.workbuddy-ai\binaries\python\versions\3.13.12\python.exe"
-AUT="F:\WorkBuddy AI\Novel Platform\novel-workbench\scripts\autopilot.py"
+# 1. 运行 Node.js 全量测试套件 (168 项用例)
+cd novel-workbench
+npm test
 
-# 1. 初始化新书（正式书放 F:\小说\works\<书名>）
-"$PY" "$AUT" init --title "《书名》" --genre niandai --target-words 20000 --max-chapters 12 \
-  --book "F:\小说\works\书名"
+# 2. 运行 Python 状态机与闸门契约测试
+python server/tests/python_contracts.py
 
-# 2. 主循环：next → 按 subagent_prompt 派 subagent → done
-"$PY" "$AUT" next --book "F:\小说\works\书名"
-
-# 3. 查进度 / 续跑
-"$PY" "$AUT" status --book "F:\小说\works\书名"
-"$PY" "$AUT" resume --book "F:\小说\works\书名"
-
-# 4. 写作台（可选）
-node "C:\Users\Wane-\.qoder\skills\story\scripts\dashboard-server.mjs" \
-  --root "F:\小说\works" --open
+# 3. 运行核心因果工具单元测试
+python -m unittest server/tests/test_architecture_consistency_gate.py
+python -m unittest server/tests/test_persona_confidence_probe.py
+python -m unittest server/tests/test_signed_corpus_anatomy.py
 ```
 
-## 当前进度
+---
 
-- [x] 两轮红队审查 + 宿主选型 + 方案 v2.1 定稿
-- [x] **Phase 0**：带真 subagent 测单轮纪律阈值 K（实测 6 轮零中断，报告见 `references/phase0-report.md`）
-- [x] 一期：autopilot.py 完整实现 + 全局节点 N01–N09d（联试 `book2` 实跑通过）
-- [x] 二期：章节循环 C{n}.N09–N16（C01 全节点闭环；C02 夹具回归通过：N10/N11 → N12 → N13 → N16 封板，words_total 回写正确）
-- [x] 三期：N17–N21 + N20f 回跳 + 投稿包四文件 + Dashboard 四端点 + 执行桥（确定性节点直接跑，LLM 节点交提示词）
-  - 夹具 `_fixtures/workbench_e2e`：N17→N21 通过路径与 N20 三次 block 停机路径
-  - 夹具 `_fixtures/chapter_e2e`：N13 闸门 / N14 auto-skip / N15 跳过 / N16 封板 / 事务缺失回退
-  - 夹具 `_fixtures/chapter_loop`：N15 block→N14 两轮→第三次停机
-- [x] **P1 数据层**：SQLite schema + 迁移、文件→DB 增量同步/重建、Agent 配置合并与校验（`node --test` 回归）
-- [x] **P2 Agent 运行时**：OpenAI 兼容 provider + mock、书内工具沙箱、autopilot 桥、引用回喂重试、预算/停止（11 项回归 + 真实 autopilot 单节点集成通过）
-- [x] **P3 后端 API 与执行桥**：书库/详情/闸门报告、异步运行+增量事件+停止、运行历史、投稿反馈、Agent 配置读写（HTTP 集成测试）
-- [x] **P4 仓库内工作台 UI**：书库/详情/执行事件流/章节闸门/问题清单/投稿反馈/Agent 配置（浏览器实测：演练运行、停止、投稿新增与更新、配置保存与非法回滚、新建书）
-- [x] **P5 打包与首次运行**：一键启动脚本、Node 24 检查、路径设置层（env/本地设置/默认值）、首次运行向导、版本与迁移、浏览器实测首次设置
-- [x] **修复轮（2026-10-25）**：全量对抗性审查后的 P0/P1/P2 修复
-  - P0：N12 通配证据、judge 空引用、Python/Node 双路径、停止/崩溃恢复、书外参考只读、关键产物保护
-  - P1：N13 状态矩阵、N21 不可投阻断、证据新鲜度、N16 幂等、全局配置迁出仓库、DPAPI 密钥、token 预算/节点超时、测试去环境化
-  - P2：运行持久化与中断标记、唯一临时名 + next 锁、UI 竞态/输入边界/网络 token、版本与发版卫生
-- [x] **v2 正文中心**：书房/写作台/自动保存/版本 diff 回滚/故事库/投稿 CRM/三字段开书/移动端底栏；旧控制台保留为制作台
-- [x] **对抗性审查整改波（2026-10-25，见 `references/adversarial-review-2026-10-25.md`）**
-  - P0 安全止损：8.3 短名写穿修复（`~` 段拒绝 + realpath.native 归一化）、agents.json/submissions.json 写保护、
-    judgments 角色感知（仅 judge 可写）、控制文件读保护、Origin 同源严格匹配 + Sec-Fetch-Site、
-    done 的 evidence-spec 模式比对、block/resume 在途令牌与 --force 鉴权、攻击回归测试 6 用例
-  - P1 状态机：N14→N13 复检（有界轮次 + Blocker 最少快照回滚）、resume 轮次返还 + tracking 交叉校验、
-    done/skip 跨驱动锁、gate rc 断言 + stderr 分离、words_total 真实书回写验证与漂移报告、llm_rounds 按 chat 计、
-    Windows stop 杀进程树
-  - P2 产品回路：v2↔制作台双向出口、空态二分（加载失败≠空书房）、移动端 44px/保存态常驻/toast 避让、
-    设计令牌对齐、改视图版本按 source 分组、投稿包 reveal 端点 + 人工确认 checklist
-  - P3 运行时：sync 指纹逐文件比对、rebuild 版本历史重建、事件增量落库、provider 错误脱敏
-- [ ] 逐章暂停审阅（AI 写完先等作者接受；当前默认自动跑 + 事后回滚）
-- [ ] 真实新书端到端（等用户放行；`_phase0/book2` 暂停，不续跑）
+## 六、开源与同步协议
+
+本仓库代码基于 MIT 协议开源。仅包含通用写作流水线算法、审查工具与脚手架配置，不含商业小说版权文本。

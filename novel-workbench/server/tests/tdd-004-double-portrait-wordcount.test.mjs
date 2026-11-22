@@ -188,7 +188,7 @@ test("DL-004 visible 过线、汉字没过线时不得只凭 visible 放行", ()
   // 复刻《顶职》的真实形状：visible 20,000+ 而汉字 1 万 6 —— 差 20%，闸门线 20,000
   const { result, totals } = preflightFor({
     targetWords: 20000,
-    chapters: [makeChapter(1, "换名", 700, 90), makeChapter(2, "茶缸", 700, 90)],
+    chapters: [makeChapter(1, "换名", 500, 90), makeChapter(2, "茶缸", 500, 90)],
   });
   const words = result.checks.find((check) => check.id === "words");
   const divergence = (totals.visible - totals.cjk) / totals.visible;

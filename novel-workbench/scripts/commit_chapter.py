@@ -22,8 +22,9 @@ from pathlib import Path
 from autopilot import (acquire_next_lock, load_state, now, read_token,
                        release_next_lock, save_state, sha256_of)
 from inline_runner import (_cfg, _chapter_check, _mark_findings_resolved,
-                           _normalize_tracking, run_script)
-from pipeline_spec import next_cursor
+                           _normalize_tracking, _stale_gate_evidence,
+                           extract_json, run_script)
+from pipeline_spec import body_file_for_chapter, chapter_number_in_body, next_cursor
 
 
 class CommitError(Exception):
@@ -60,21 +61,40 @@ def _fact_check(book: Path):
     if conf.is_file():
         args += ["--config", str(conf)]
     rc, out = run_script(args, book, timeout=120)
-    try:
-        return rc, json.loads(out)
-    except ValueError:
-        return rc, {"raw": str(out)[-400:]}
+    if rc not in (0, 1):
+        return 2, {"error": f"fact_gate 异常退出 (rc={rc})", "raw": str(out)[-400:]}
+    payload = extract_json(out)
+    if not isinstance(payload, dict):
+        return 2, {"error": "fact_gate 输出无法解析为 JSON", "raw": str(out)[-400:]}
+    return rc, payload
 
 
 def _chapter_body(book: Path, chapter: int) -> Path:
-    files = sorted((book / "正文").glob(f"第{chapter:03d}章_*.md"))
+    # T-2/T-2b：走统一判定——排除 _原稿_ 备份稿，章号认 1–4 位。
+    files = body_file_for_chapter(book, chapter)
     if not files:
         raise CommitError("chapter_missing", f"找不到第 {chapter} 章正文", 409)
     if len(files) > 1:
         raise CommitError("chapter_ambiguous",
                           f"第 {chapter} 章有 {len(files)} 个正文文件，先清理歧义", 409,
                           {"files": [f.name for f in files]})
-    return files[0]
+    path = files[0]
+    # T-2b 规则 2：正文里声明的章号与文件名冲突 = 歧义，报错不猜。
+    # 封板是「这本书的第 N 章」的最后一道关——在这里放过，后面的账本全错。
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return path
+    declared = chapter_number_in_body(text)
+    if declared is not None and declared != chapter:
+        raise CommitError(
+            "chapter_ambiguous",
+            f"章号歧义：正文/{path.name} 正文里写的是第 {declared} 章，"
+            f"但这是第 {chapter} 章的定稿",
+            409,
+            {"file": path.name, "declared": declared, "expected": chapter},
+        )
+    return path
 
 
 def _backup(book: Path, chapter: int, revision: int) -> Path:
@@ -122,7 +142,7 @@ def _book_summary(book: Path, tk: dict) -> dict:
             n = int(key)
         except (TypeError, ValueError):
             continue
-        files = sorted((book / "正文").glob(f"第{n:03d}章_*.md"))
+        files = body_file_for_chapter(book, n)
         if len(files) == 1 and sha256_of(files[0]) != rec["body_sha256"]:
             dirty += 1
     return {
@@ -135,16 +155,22 @@ def _book_summary(book: Path, tk: dict) -> dict:
 
 
 def commit_chapter(book: Path, chapter: int, *, mode: str = "auto", verify: bool = True,
-                   accept_current_length: bool = False) -> dict:
+                   accept_current_length: bool = False, _lock_held: bool = False) -> dict:
+    """把某一章定稿进账本。
+
+    `_lock_held=True` 表示调用方**已经持有** `_pipeline/.next.lock`
+    （例如 commands.cmd_done 在 N20f 分支里重封被改过的章）——
+    此时不能再取锁，否则自己等自己。
+    """
     book = Path(book).resolve()
-    lock = acquire_next_lock(book)
-    if lock is None:
+    lock = None if _lock_held else acquire_next_lock(book)
+    if lock is None and not _lock_held:
         raise CommitError("chapter_busy", "流水线正忙（另一个 next/done/commit 在跑）", 409)
     try:
         st = load_state(book)
         if not st:
             raise CommitError("not_initialized", "这本书还没初始化", 400)
-        if read_token(book).get("token"):
+        if not _lock_held and read_token(book).get("token"):
             raise CommitError("chapter_busy", "流水线正卡在一个节点上，先恢复或停止", 409)
 
         tk = _read(book / "追踪" / "_tracking-state.json", {}) or {}
@@ -257,11 +283,24 @@ def commit_chapter(book: Path, chapter: int, *, mode: str = "auto", verify: bool
             k: rec.get(k) for k in ("actual", "target", "metric", "status", "resolution")
             if rec.get(k) is not None
         })
+        # 改写正文 = 裁决依据可能作废（2026-11-20）。
+        # revision 路径会把正文和账本 sha 一起更新，漂移检测看不见，
+        # 但 N15 裁决引用的原文可能已经不存在了——那就是一份过期绿灯。
+        # 这里不拦（拦了会卡住正常的修订），但必须让人知道，并给出修法。
+        stale_gate = _stale_gate_evidence(book, chapter)
+        if stale_gate:
+            warnings.append(
+                f"第 {chapter} 章的裁决依据已失效（{len(stale_gate)} 条引文在改写后不再命中"
+                f"当前正文）：该章的 N15 裁决是**过期绿灯**。"
+                f"请跑 `autopilot.py rejudge --book <书> --chapter {chapter}` 重判该章，"
+                f"否则全书打包（N21）会判不可投。")
         return {
             "committed": True, "already": False, "chapter": chapter, "mode": resolved,
             "words": rec.get("actual"), "state_revision": state2.get("state_revision"),
             "committed_at": now(), "gate": gate,
+            "stale_gate": stale_gate,
             "book": _book_summary(book, state2), "warnings": warnings,
         }
     finally:
-        release_next_lock(lock)
+        if lock is not None:
+            release_next_lock(lock)

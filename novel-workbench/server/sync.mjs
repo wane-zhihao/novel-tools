@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { normalizeText } from "./book-files.mjs";
+import { chapterBodyFiles, chapterNumberInBody, isBackupChapterFile } from "./book-files.mjs";
 import { resetData } from "./db.mjs";
 import { storyIndex } from "./story.mjs";
 
@@ -192,7 +193,8 @@ function syncVersions(db, bookId, bookDir) {
     }
     for (const entry of chapterDirs) {
       if (!entry.isDirectory()) continue;
-      const match = /^第(\d{3})章$/.exec(entry.name);
+      // T-2b：章号认 1–4 位（写入侧 padChapter 补零，但目录被外部改名时不该静默丢版本）
+      const match = /^第(\d{1,4})章$/.exec(entry.name);
       if (!match) continue;
       const chapter = Number(match[1]);
       const dir = join(root, entry.name);
@@ -203,7 +205,8 @@ function syncVersions(db, bookId, bookDir) {
         continue;
       }
       for (const name of files) {
-        const rel = `_pipeline/versions/第${String(chapter).padStart(3, "0")}章/${name}`;
+        // 路径用目录真实名（entry.name），不重新拼——补零目录与未补零目录都要对上磁盘
+        const rel = `_pipeline/versions/${entry.name}/${name}`;
         keep.push(rel);
         const file = join(dir, name);
         let text;
@@ -280,12 +283,40 @@ function syncChapters(db, bookId, bookDir, state) {
   const records = readTracking(bookDir).wordcount_records ?? {};
   const rows = [];
   if (existsSync(bodyDir)) {
-    for (const name of readdirSync(bodyDir)) {
-      const match = /^第(\d{3})章_(.*)\.md$/.exec(name);
-      if (!match) continue;
-      const number = Number(match[1]);
-      const file = join(bodyDir, name);
+    // T-2/T-2b：现役正文判定收敛到 book-files.mjs 的单一事实源——排除 _原稿_ 备份稿，
+    // 章号认 1–4 位（个人作者的「第1章_开局.md」不能被静默忽略）。
+    const candidates = chapterBodyFiles(bookDir);
+    const byNumber = new Map();
+    for (const item of candidates) {
+      const list = byNumber.get(item.number) ?? [];
+      list.push(item);
+      byNumber.set(item.number, list);
+    }
+    for (const item of candidates) {
+      const number = item.number;
+      const list = byNumber.get(number);
+      // 同章多份现役稿（如 `第001章_标题.md` 与 `第001章_标题_v2.md`）：不按遍历顺序挑一个。
+      // 已定稿的章取「与 tracking 封板 sha 一致」的那份（封板指纹才是事实）；
+      // 未定稿的章取文件名排序最末的一份（确定性，不依赖 readdir 顺序）。
+      // 歧义本身由 T-1 预检的「同章多份磁盘正文」显式阻断，不在这里猜完就放过。
+      let chosen = item;
+      if (list.length > 1) {
+        const committedSha = records[String(number)]?.body_sha256;
+        const matched = typeof committedSha === "string"
+          ? list.find((candidate) => sha256(readFileSync(candidate.path, "utf8")) === committedSha)
+          : null;
+        chosen = matched ?? list[list.length - 1];
+      }
+      const file = chosen.path;
       const text = readFileSync(file, "utf8");
+      // T-2b 规则 2：正文里声明的章号与文件名冲突 = 歧义，列出来报错，不猜。
+      const declared = chapterNumberInBody(text);
+      if (declared !== null && declared !== number) {
+        throw new Error(
+          `章号歧义：正文/${chosen.name} 正文里写的是第 ${declared} 章，文件名写的是第 ${number} 章。`
+          + "请改文件名或正文标题，让两者一致（不要猜）。",
+        );
+      }
       const record = records[String(number)];
       const committed = record ? 1 : 0;
       const sha = sha256(text);
@@ -294,7 +325,7 @@ function syncChapters(db, bookId, bookDir, state) {
       const dirty = committed && committedSha && sha !== committedSha ? 1 : 0;
       rows.push({
         number,
-        title: match[2],
+        title: chosen.title,
         filePath: toPosix(relative(bookDir, file)),
         words: Number(record?.actual) || countVisibleChars(text),
         committed,
@@ -302,6 +333,14 @@ function syncChapters(db, bookId, bookDir, state) {
         committedAt: state.nodes?.[`C${number}.N16`]?.at ?? null,
         dirty,
       });
+    }
+    // T-2b fail-closed：目录里有 .md 却一章都没解析出来 = 出错，不是「0 章且成功」。
+    const stray = readdirSync(bodyDir).filter((name) => name.endsWith(".md") && !isBackupChapterFile(name));
+    if (stray.length > 0 && candidates.length === 0) {
+      throw new Error(
+        `正文目录里有 ${stray.length} 个 .md 文件，但没有一个能解析出章号：`
+        + `${stray.slice(0, 5).join("、")}。请把章节文件改成「第N章_标题.md」这类命名。`,
+      );
     }
   }
   // 这三个字段以前只由运行期/保存接口写，rebuild 后全部丢失；现在从磁盘推导回写

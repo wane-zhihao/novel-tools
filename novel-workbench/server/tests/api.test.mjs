@@ -569,7 +569,7 @@ test("开书字段落盘：platform / vol_size / one_line 必须进 state.json�
   const folder = "开书字段书";
   const created = await post("/api/books", {
     title: "开书字段书",
-    genre: "shuangwen",
+    genre: "dushi",
     platform: "zongheng",
     vol_size: 20,
     target_words: 20000,
@@ -584,11 +584,11 @@ test("开书字段落盘：platform / vol_size / one_line 必须进 state.json�
   assert.equal(state.one_line, "重回九零，从厂办开始", "one_line 没落盘");
 
   // 非法值必须拒绝，而不是静默回落默认值
-  const badPlatform = await post("/api/books", { title: "坏平台", genre: "shuangwen", platform: "起点", folder: "坏平台" });
+  const badPlatform = await post("/api/books", { title: "坏平台", genre: "dushi", platform: "起点", folder: "坏平台" });
   assert.equal(badPlatform.status, 400);
   assert.equal(badPlatform.body.error.code, "invalid_platform");
 
-  const badVol = await post("/api/books", { title: "坏卷", genre: "shuangwen", vol_size: 999, folder: "坏卷" });
+  const badVol = await post("/api/books", { title: "坏卷", genre: "dushi", vol_size: 999, folder: "坏卷" });
   assert.equal(badVol.status, 400);
   assert.equal(badVol.body.error.code, "invalid_vol_size");
 });

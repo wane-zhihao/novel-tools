@@ -297,6 +297,7 @@ export class AgentRuntime {
       chapter: instruction.chapter,
       bookDir: this.bookDir,
       evidence: instruction.evidence ?? [],
+      roleConfig,
     };
     const maxToolSteps = this.budgets.max_tool_steps ?? DEFAULT_MAX_TOOL_STEPS;
     let toolSteps = 0;

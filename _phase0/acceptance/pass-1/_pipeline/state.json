@@ -1,0 +1,182 @@
+{
+ "schema_version": 2,
+ "book": "三章真实模型验收-pass-1",
+ "genre": "dushi",
+ "target_words": 6000,
+ "max_chapters": 3,
+ "platform": "zongheng",
+ "plan": {
+  "vol_size": 22,
+  "vol_llm_cap": 80
+ },
+ "uncontrollable": [],
+ "created_at": "2026-10-26T03:59:08+0800",
+ "current_chapter": 0,
+ "chapters_committed": 0,
+ "words_total": 0,
+ "cursor": "C1.N12",
+ "nodes": {
+  "N01": {
+   "status": "done",
+   "at": "2026-10-26T04:02:25+0800",
+   "output": "{\"last_committed_chapter\": 0, \"state_revision\": 0}\n"
+  },
+  "N02": {
+   "status": "done",
+   "at": "2026-10-26T04:02:25+0800",
+   "output": "style anchor 已校准：F:\\小说\\platforms\\zongheng\\harness\\style-anchor.json（正例切片 3 段）"
+  },
+  "N03": {
+   "status": "done",
+   "at": "2026-10-26T04:02:59+0800",
+   "evidence": [
+    "大纲\\选题报告.md"
+   ],
+   "sha256": [
+    "a7c7e5067378b76506a22421d7a632c32593c313f456b52ea71469b2866fb906"
+   ],
+   "reused_evidence": false,
+   "attempts": 1
+  },
+  "N04": {
+   "status": "done",
+   "at": "2026-10-26T04:03:45+0800",
+   "evidence": [
+    "_pipeline\\judgments_N04.json"
+   ],
+   "sha256": [
+    "9da57728c20f5fd6bc24e2561001110eb6a80ba551f85002c65a97c6de3fc0d7"
+   ],
+   "reused_evidence": false,
+   "attempts": 1
+  },
+  "N05": {
+   "status": "done",
+   "at": "2026-10-26T04:04:35+0800",
+   "evidence": [
+    "设定\\题材定位.md"
+   ],
+   "sha256": [
+    "45c670f7ac8109161408c1a2542aed0b81955f93b5e39d05e858b83b740c326c"
+   ],
+   "reused_evidence": false,
+   "attempts": 1
+  },
+  "N06": {
+   "status": "done",
+   "at": "2026-10-26T04:08:22+0800",
+   "evidence": [
+    "_pipeline\\judgments_N06.json"
+   ],
+   "sha256": [
+    "4fc8303bdd3862022ba33d9628c7fef28a68606b1b1f452ae87b98230ca6e2e7"
+   ],
+   "reused_evidence": false,
+   "attempts": 1
+  },
+  "V1.N07": {
+   "status": "done",
+   "at": "2026-10-26T04:09:10+0800",
+   "evidence": [
+    "大纲\\卷纲_第1卷.md"
+   ],
+   "sha256": [
+    "e2ee84c93e8721baf7b77cb4789b7d40f540bb7c8091c240c601c17d7fa20a12"
+   ],
+   "reused_evidence": false,
+   "attempts": 1
+  },
+  "V1.N08": {
+   "status": "done",
+   "at": "2026-10-26T04:09:38+0800",
+   "evidence": [
+    "_pipeline\\judgments_V1.N08.json"
+   ],
+   "sha256": [
+    "8fc290fc568e02ed08cf1de95559f39b68e7b7ecf725e67c02eedd8ec96c87ba"
+   ],
+   "reused_evidence": false,
+   "attempts": 1
+  },
+  "V1.N09d": {
+   "status": "done",
+   "at": "2026-10-26T04:09:49+0800",
+   "evidence": [
+    "大纲\\目录_第1卷.md"
+   ],
+   "sha256": [
+    "810892190d51702af9e66ef5ba3251f975217e2b154693b829042213fbb3ee21"
+   ],
+   "reused_evidence": false,
+   "attempts": 1
+  },
+  "C1.N09": {
+   "status": "done",
+   "at": "2026-10-26T04:10:28+0800",
+   "evidence": [
+    "大纲\\细纲_第001章.md"
+   ],
+   "sha256": [
+    "bef4d227d7d6377033aac8a87e9b97a14b94779f5a874d5877049b067c3e1434"
+   ],
+   "reused_evidence": false,
+   "attempts": 1
+  },
+  "C1.N10": {
+   "status": "done",
+   "at": "2026-10-26T04:10:30+0800",
+   "output": "ty\": \"advisory\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"本章禁止提前释放列了 8 条\",\n      \"expected\": \"章级只写本章特有的三五条；卷级常任禁忌写在卷纲「本卷禁碰的终局底牌」，不逐章复读\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"把与卷纲常任重复的条目删掉，只留本章特有；本项不阻断。\"\n    },\n    {\n      \"id\": \"outline.setting-refs-exist\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"4 处项目内引用全部存在\",\n      \"expected\": \"细纲引用的每个项目内 .md 文件都真实存在——不许把槽位指向查无实据的权威文件\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"修正引用路径；或按新增物三级先把缺的设定落档（「写了要报」直接补并登记、「先问作者」进排纲底稿的供给自查提案），再在细纲引用。\"\n    },\n    {\n      \"id\": \"outline.wordcount-target\",\n      \"ok\": true,\n      \"severity\": \"blocking\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"字数目标：1900；字数口径 visible_chars_v1：true\",\n      \"expected\": \"字数目标为 500-20000 的正整数（可写「2300 字」「约 2300」「2,300」，可带括号备注），并声明 字数口径：visible_chars_v1；作者给了上下限时另写一行「字数范围：2000-2600」\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"只补字数目标、字数范围或字数口径行，不调整情节安排。\"\n    }\n  ],\n  \"failures\": [],\n  \"advisories\": [\n    {\n      \"id\": \"outline.release-brevity\",\n      \"ok\": false,\n      \"severity\": \"advisory\",\n      \"file\": \"细纲_第001章.md\",\n      \"evidence\": \"本章禁止提前释放列了 8 条\",\n      \"expected\": \"章级只写本章特有的三五条；卷级常任禁忌写在卷纲「本卷禁碰的终局底牌」，不逐章复读\",\n      \"references\": [\n        \"references/workflow-outline.md\"\n      ],\n      \"repair\": \"把与卷纲常任重复的条目删掉，只留本章特有；本项不阻断。\"\n    }\n  ],\n  \"repair_scope\": []\n}\n"
+  },
+  "C1.N11": {
+   "status": "done",
+   "at": "2026-10-26T04:10:31+0800",
+   "output": "上下文已组装 -> F:\\WorkBuddy AI\\Novel Platform\\_phase0\\acceptance\\pass-1\\追踪\\上下文.md（5435 字符）"
+  },
+  "C1.N12": {
+   "status": "running",
+   "attempts": 1,
+   "started_at": "2026-10-26T04:10:31+0800"
+  }
+ },
+ "budget": {},
+ "fix_rounds": {},
+ "global_fix_rounds": {},
+ "n20_rounds": 0,
+ "degraded_volumes": [],
+ "volume_advisories": {},
+ "decisions_taken": [],
+ "pending_questions": [],
+ "blocked_reason": null,
+ "relay_count": 0,
+ "run_started_at": "2026-10-26T03:59:08+0800",
+ "evidence_ledger": {
+  "N03::大纲\\选题报告.md": [
+   "a7c7e5067378b76506a22421d7a632c32593c313f456b52ea71469b2866fb906"
+  ],
+  "N04::_pipeline\\judgments_N04.json": [
+   "9da57728c20f5fd6bc24e2561001110eb6a80ba551f85002c65a97c6de3fc0d7"
+  ],
+  "N05::设定\\题材定位.md": [
+   "45c670f7ac8109161408c1a2542aed0b81955f93b5e39d05e858b83b740c326c"
+  ],
+  "N06::_pipeline\\judgments_N06.json": [
+   "4fc8303bdd3862022ba33d9628c7fef28a68606b1b1f452ae87b98230ca6e2e7"
+  ],
+  "V1.N07::大纲\\卷纲_第1卷.md": [
+   "e2ee84c93e8721baf7b77cb4789b7d40f540bb7c8091c240c601c17d7fa20a12"
+  ],
+  "V1.N08::_pipeline\\judgments_V1.N08.json": [
+   "8fc290fc568e02ed08cf1de95559f39b68e7b7ecf725e67c02eedd8ec96c87ba"
+  ],
+  "V1.N09d::大纲\\目录_第1卷.md": [
+   "810892190d51702af9e66ef5ba3251f975217e2b154693b829042213fbb3ee21"
+  ],
+  "C1.N09::大纲\\细纲_第001章.md": [
+   "bef4d227d7d6377033aac8a87e9b97a14b94779f5a874d5877049b067c3e1434"
+  ]
+ },
+ "llm_rounds": 8,
+ "text_preflight_attempts": {
+  "C1.N12": 1
+ }
+}

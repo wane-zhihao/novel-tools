@@ -73,6 +73,20 @@ const COMMIT_ERRORS = {
     text: () => "质检工具没跑起来（多半是路径配置问题）。正文没动，先修设置。",
     actions: [{ label: "去设置", run: ({ go }) => go("#/settings") }],
   },
+  fact_blocked: {
+    tone: "danger",
+    text: (error) => {
+      const count = error?.details?.fact_gate?.blocking_count;
+      const countStr = count != null ? `${count} 条阻断` : (error?.message || "事实层阻断");
+      return `事实层未过：${countStr}，先改再定稿。`;
+    },
+    actions: [{ label: "去审：看问题", run: ({ go, bookId, chapter }) => go(`#/books/${bookId}/revise/${chapter}`) }],
+  },
+  fact_tool_unavailable: {
+    tone: "danger",
+    text: () => "事实闸门不可用（多半是路径配置问题）。正文没动，先修设置。",
+    actions: [{ label: "去设置", run: ({ go }) => go("#/settings") }],
+  },
 };
 
 const CONTENT_ERRORS = {

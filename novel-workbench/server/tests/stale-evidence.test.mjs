@@ -56,7 +56,10 @@ test("拒绝未验收的陈旧证据并跨 resume 复用同 hash", () => {
     const state = JSON.parse(readFileSync(statePath, "utf8"));
     state.cursor = token.node;
     writeFileSync(statePath, JSON.stringify(state), "utf8");
-    execFileSync(settings.python, [settings.autopilot, "resume", "--book", book, "--force"], {
+    execFileSync(settings.python, [
+      settings.autopilot, "resume", "--book", book, "--force",
+      "--reset-budget", "--scope", token.node,
+    ], {
       env, encoding: "utf8", stdio: "pipe",
     });
     execFileSync(settings.python, [settings.autopilot, "next", "--book", book], { env, stdio: "ignore" });
@@ -74,7 +77,10 @@ test("拒绝未验收的陈旧证据并跨 resume 复用同 hash", () => {
 
     acceptedState.cursor = resumedToken.node;
     writeFileSync(statePath, JSON.stringify(acceptedState), "utf8");
-    execFileSync(settings.python, [settings.autopilot, "resume", "--book", book, "--force"], {
+    execFileSync(settings.python, [
+      settings.autopilot, "resume", "--book", book, "--force",
+      "--reset-budget", "--scope", token.node,
+    ], {
       env, encoding: "utf8", stdio: "pipe",
     });
     execFileSync(settings.python, [settings.autopilot, "next", "--book", book], { env, stdio: "ignore" });

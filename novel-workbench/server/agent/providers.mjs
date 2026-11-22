@@ -283,13 +283,50 @@ export class MockProvider {
     const pattern = pending[0];
     const target = String(pattern).includes("*") ? String(pattern).replace("*", "mock") : pattern;
     state.written.add(pattern);
+    const toolCalls = [{
+      id: `mock-${key}-${(state.counter += 1)}`,
+      name: "write_file",
+      arguments: JSON.stringify({ path: target, content: mockMarkdown(target, context) }),
+    }];
+    if (String(node).endsWith(".N12") && context.bookDir && !context.roleConfig?.omit_tracking) {
+      const match = /^C(\d+)\.N12$/.exec(String(node));
+      const ch = context.chapter ?? (match ? Number(match[1]) : 1);
+      const chNo = String(ch).padStart(3, "0");
+      const txnRel = `.story/work/第${chNo}章/tracking.json`;
+      const txnAbs = join(context.bookDir, txnRel);
+      if (existsSync(txnAbs)) {
+        try {
+          const raw = JSON.parse(readFileSync(txnAbs, "utf8"));
+          raw.delta = {
+            ...(raw.delta ?? {}),
+            result: "主角在厂办完成交接并发现账本矛盾。",
+            character_changes: [{ name: "陈砚", change: "完成交接" }],
+            timeline_events: [{
+              id: `E${chNo}`,
+              story_time: "1987年某日",
+              objective_fact: "陈砚在厂办完成交接",
+              reader_knowledge: "知晓交接",
+              reveal_status: "已揭示",
+              reveal_chapter: ch,
+              characters: ["陈砚"],
+            }],
+          };
+          raw.character_snapshots = { "陈砚": "主角" };
+          raw.context = {
+            ...(raw.context ?? {}),
+            position: { story_time: "1987年某日", scene: "厂办" },
+          };
+          toolCalls.push({
+            id: `mock-${key}-${(state.counter += 1)}`,
+            name: "write_file",
+            arguments: JSON.stringify({ path: txnRel, content: JSON.stringify(raw, null, 2) }),
+          });
+        } catch {}
+      }
+    }
     return {
       content: "",
-      toolCalls: [{
-        id: `mock-${key}-${(state.counter += 1)}`,
-        name: "write_file",
-        arguments: JSON.stringify({ path: target, content: mockMarkdown(target, context) }),
-      }],
+      toolCalls,
       usage: { prompt: 0, completion: 0 },
     };
   }

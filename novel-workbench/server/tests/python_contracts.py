@@ -89,7 +89,8 @@ def probe(path):
 
 def make_book(root: Path, words: int = 2380) -> Path:
     book = root / "book"
-    write(book / "正文" / "第001章_测试.md", "顶职名单今天换名字，换掉的正是他。" * 80)
+    repeat = max(80, (words + 14) // 15)
+    write(book / "正文" / "第001章_测试.md", "顶职名单今天换名字，换掉的正是他。" * repeat)
     write(book / "大纲" / "卷纲_第一卷.md", "- 主线：顶职名额与三天期限\n")
     write(book / "投稿包" / "全文.md", "# 全文\n" + "正文" * 100)
     write(book / "_pipeline" / "endgame_findings.json", '{"items": []}')
@@ -99,6 +100,52 @@ def make_book(root: Path, words: int = 2380) -> Path:
         "wordcount_records": {"1": {"actual": words}},
     }, ensure_ascii=False))
     return book
+
+
+def test_body_file_rules_t2b(root: Path) -> None:
+    """T-2/T-2b 的 Python 侧契约。
+
+    - `_原稿_` 备份稿不算现役正文
+    - 章号认 1–4 位（个人作者的「第1章_开局.md」不是隐形章）
+    - 同章多候选全部返回，不替作者挑一个
+    - 正文里声明的章号与文件名冲突 → 报歧义，不猜
+    """
+    from pipeline_spec import (body_files, chapter_number_in_body,
+                               is_backup_body_file, parse_body_file_name)
+    from commit_chapter import CommitError, _chapter_body
+
+    book = root / "t2b"
+    write(book / "正文" / "第001章_换名.md", "# 第001章 换名\n\n正文。\n")
+    write(book / "正文" / "第2章_茶缸.md", "# 第2章 茶缸\n\n正文。\n")
+    write(book / "正文" / "第002章_茶缸_原稿_20261028.md", "# 第002章 茶缸\n\n（旧稿）\n")
+    write(book / "正文" / "第003章_名额.md", "# 第003章 名额\n\n正文。\n")
+    write(book / "正文" / "第003章_名额_v2.md", "# 第003章 名额\n\n（改稿版本）\n")
+
+    names = [p.name for p in body_files(book)]
+    assert names == ["第001章_换名.md", "第2章_茶缸.md",
+                     "第003章_名额.md", "第003章_名额_v2.md"], names
+    assert is_backup_body_file("第002章_茶缸_原稿_20261028.md")
+    assert not is_backup_body_file("第003章_名额_v2.md"), "改稿版本不是备份稿"
+    assert parse_body_file_name("第2章_茶缸.md") == (2, "茶缸")
+    assert parse_body_file_name("随手记.md") is None
+    assert chapter_number_in_body("# 第005章 换名\n\n正文。\n") == 5
+    assert chapter_number_in_body("# 榜上换了名\n\n正文。\n") is None
+
+    # 同章多候选 → 定稿时报歧义，不猜
+    try:
+        _chapter_body(book, 3)
+        raise AssertionError("同章多候选时定稿必须报歧义")
+    except CommitError as exc:
+        assert exc.code == "chapter_ambiguous", exc.code
+
+    # 正文声明的章号与文件名冲突 → 定稿时报歧义，不猜
+    conflict = root / "t2b-conflict"
+    write(conflict / "正文" / "第001章_换名.md", "# 第005章 换名\n\n正文写的是第 5 章。\n")
+    try:
+        _chapter_body(conflict, 1)
+        raise AssertionError("章号冲突时定稿必须报歧义")
+    except CommitError as exc:
+        assert exc.code == "chapter_ambiguous", exc.code
 
 
 def test_outline_wordcount_contract(root: Path) -> None:
@@ -415,6 +462,17 @@ def test_n21_blocked(root: Path) -> None:
     book = make_book(root / "n21-ok", words=20000)
     rc, message = _package(book, st)
     assert rc == 0, message
+
+    # DL-004 对齐：可见字符 >= 20000，但纯汉字 < 20000 且分歧率 > 10% 必须 fail-closed 阻断
+    book_div = make_book(root / "n21-divergence-block", words=20500)
+    body_text = ("汉字" * 8500) + ("abcde," * 700)  # CJK = 17000, visible = 21200, div = 19.8%
+    write(book_div / "正文" / "第001章_测试.md", body_text)
+    rc, message = _package(book_div, st)
+    assert rc != 0, "Divergence > 10% and CJK < 20000 should block submission"
+    assert "NOT_SUBMITTABLE" in message, message
+    assert "分歧率" in message, message
+    report = (book_div / "投稿包" / "体检报告.md").read_text(encoding="utf-8")
+    assert "双口径分歧阻断（DL-004）" in report, report
 
 
 def test_next_lock(root: Path) -> None:
@@ -1110,6 +1168,575 @@ def test_tracking_fill_dry_run_then_apply(root: Path) -> None:
     assert json.loads(again.stdout)["changed"] is False, again.stdout
 
 
+def test_mechanical_fix_contract() -> None:
+    """机械修复器夹具必须全过（见 test_mechanical_fix.py）。
+
+    为什么单独一个文件而不是内联：夹具里每条都带「期望产物 + 主语残缺检查」，
+    放在这里会让本文件再长 100 行；而且它值得被单独运行来定位失败。
+    """
+    script = Path(__file__).resolve().parent / "test_mechanical_fix.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("机械修复器夹具未通过（MECHANICAL_FIX_FAILED）")
+
+
+def test_trim_to_band_contract() -> None:
+    """字数裁剪器夹具必须全过（见 test_trim_to_band.py）。
+
+    裁剪器的失败模式很危险：它可能**删掉承载信息的段落**来凑字数
+    （首版就删掉了「那张纸上有三个字：抚恤金。」）。夹具用
+    MUST_SURVIVE 三处关键内容做守卫，任何一处丢失即失败。
+    """
+    script = Path(__file__).resolve().parent / "test_trim_to_band.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("字数裁剪器夹具未通过（TRIM_TO_BAND_FAILED）")
+
+
+def test_context_md_guard_contract() -> None:
+    """N11 产物防篡改守卫夹具必须全过（见 test_context_md_guard.py）。
+
+    `追踪/上下文.md` 由脚本节点 N11 生成，是 writer 的**只读输入**。
+    实测第 6 章的 writer 把它整个覆写成了另一种七栏结构，导致下一章
+    读到缺 S2 上一章锚点 / S5 文风锚 / S7 事务说明的坏文件。
+    """
+    script = Path(__file__).resolve().parent / "test_context_md_guard.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("上下文防篡改守卫夹具未通过（CONTEXT_GUARD_FAILED）")
+
+
+def test_foreshadow_due_contract() -> None:
+    """到期伏笔显式标注夹具必须全过（见 test_foreshadow_due.py）。
+
+    伏笔只写「埋第2章｜第6章」时，writer 看到「第6章」无法判断是本章到期
+    还是已经过了。实测 F005/F008 计划回收章都是 6，第 6 章封板后仍未回收。
+    修法：N11 把「计划回收章 ≤ 本章」且未回收的伏笔显式列进 S6，区分到期/逾期。
+    """
+    script = Path(__file__).resolve().parent / "test_foreshadow_due.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("到期伏笔标注夹具未通过（FORESHADOW_DUE_FAILED）")
+
+
+def test_causal_diversity_contract() -> None:
+    """因果词多样性检测夹具必须全过（见 test_causal_diversity.py）。
+
+    因果**总量**指标测不出 AI 指纹：实测「果然」x44 时 causal_per_1000
+    只报 3.07（区间内）、闸门全绿。只有占比看得出。
+    阈值 0.60 来自 18 个七猫年代签约样本实测上界；**只报 advisory 不阻断**
+    （没过配对判别验证，按项目不变式不进 gates.json 区间判定）。
+    """
+    script = Path(__file__).resolve().parent / "test_causal_diversity.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("因果词多样性夹具未通过（CAUSAL_DIVERSITY_FAILED）")
+
+
+def test_partial_body_digest_contract() -> None:
+    """断点续写 digest 夹具必须全过（见 test_partial_body_digest.py）。
+
+    实测第 8 章的 writer 写到 1511 字卡死在高潮对峙戏，磁盘留下半截正文
+    就再也动不了；新 subagent 从零重写会丢掉已有内容，编排者只能手工续写。
+    修法：把已有正文尾部注入 N12 提示词，让接手者接着写。
+    """
+    script = Path(__file__).resolve().parent / "test_partial_body_digest.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("断点续写 digest 夹具未通过（PARTIAL_BODY_DIGEST_FAILED）")
+
+
+def test_shrink_delta_contract() -> None:
+    """delta 自动压缩器夹具必须全过（见 test_shrink_delta.py）。
+
+    实测第 8 章事务写完 3087 字节、上限 3072——**差 15 字节**被打回，
+    内容完全合格却要 writer 回来再改一轮。修法：超限时自动截断长度类字段，
+    不碰 id / status / 枚举 / 必填结构。
+    """
+    script = Path(__file__).resolve().parent / "test_shrink_delta.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("delta 自动压缩夹具未通过（SHRINK_DELTA_FAILED）")
+
+
+def test_ledger_integrity_contract() -> None:
+    """账本完整性与封板后漂移夹具必须全过（见 test_ledger_integrity.py）。
+
+    ① 旧压缩器用固定长度 +「…」后缀截断字段，「…」被 storyctl 当成**原文**
+       写进账本——截断伪装成了原始内容。实测 E002–E005 被截成半句。
+    ② sha256 此前只记录不比对：第 8 章 N16 封板后正文又被改（2383 字），
+       账本仍记 2348 字，伏笔/漂移/字数基线全部错位。
+    """
+    script = Path(__file__).resolve().parent / "test_ledger_integrity.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("账本完整性夹具未通过（LEDGER_INTEGRITY_FAILED）")
+
+
+def test_action_beat_contract() -> None:
+    """动作节拍密度检测夹具必须全过（见 test_action_beat.py）。
+
+    2026-11-17 拿到七猫侧第 2 个真实拒稿本后，action_beat_per_1000 的 AUC=0.972，
+    只差「拒稿书≥3」这一条门槛 → 只能作定位线索、不能作改稿目标（判别力不变式）。
+
+    **首版检测器自己实现了一遍口径，对两本真实拒稿样本都报 0 条**——
+    口径错了等于没测。夹具用真实拒稿样本当断言基准：口径再错一次立刻失败。
+    """
+    script = Path(__file__).resolve().parent / "test_action_beat.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("动作节拍密度夹具未通过（ACTION_BEAT_FAILED）")
+
+
+def test_shrink_delta_floor_contract() -> None:
+    """压缩器保底长度夹具必须全过（见 test_shrink_delta_floor.py）。
+
+    2026-11-17 实测：`cut = max(4, len-over-8)` 在 over 大于字段长度时下溢成负数，
+    max 取 4 —— 一句 60 字的 result 被砍成「陆明用爹」四个字，然后原样写进账本与
+    上下文.md。**这不是截断，是信息摧毁，且伪装成了原始内容。**
+    """
+    script = Path(__file__).resolve().parent / "test_shrink_delta_floor.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("压缩器保底长度夹具未通过（SHRINK_DELTA_FLOOR_FAILED）")
+
+
+def test_relative_days_contract() -> None:
+    """相对日互斥检查夹具必须全过（见 test_relative_days.py）。
+
+    2026-11-18 第二轮红队挖出全书 7 处日期网断裂（同一份报告的落款日在
+    相隔 ≥3 天的两章里都叫「前天」；父亲死亡时间三处互斥；顶职半年却写
+    「这两年签字都落在他一人身上」；月产 87 件与停一天少交 24 件差 8 倍）。
+
+    **这类缺陷是可计算的**，但当时工具查不出——账本 story_time 全是
+    「1983年某日」，没有具体日期锚。
+    """
+    script = Path(__file__).resolve().parent / "test_relative_days.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("相对日互斥夹具未通过（RELATIVE_DAYS_FAILED）")
+
+
+def test_cross_chapter_duplicate_contract() -> None:
+    """跨章逐字重复检测夹具必须全过（见 test_cross_chapter_duplicate.py）。
+
+    2026-11-18 三轮红队反复挖出「爽点只有一个模子」：
+    第3↔4章 26 字逐字相同、第7↔9章塞尺句 18 字逐字相同。
+    **我自己也制造过新的逐字重复**——为消除第9章的重复而改成与第7章一字不差。
+    人工逐章比对抓不到这种自己制造的重复，必须靠最长公共子串检测。
+    """
+    script = Path(__file__).resolve().parent / "test_cross_chapter_duplicate.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("跨章逐字重复夹具未通过（CROSS_CHAPTER_DUP_FAILED）")
+
+
+def test_daychain_contract() -> None:
+    """日链一致性校验夹具必须全过（见 test_daychain.py）。
+
+    2026-11-19：四轮红队最重的一类缺陷是**日期网断裂**（8+ 处）——
+    同一份报告的落款日在相隔 3 天的两章里都叫「前天」；第5章「封条是事故
+    前一天贴的」而第3/4章锁死封条于事故**后**一天；第9章「这两年…鉴定签字」
+    而签字权 4 天前才拿到。
+
+    **这些全部可计算**——把每章钉到绝对日（D0…D7）就能交叉校验。
+    此前查不出，因为账本 story_time 全是「1983年某日」，没有绝对日锚。
+    """
+    script = Path(__file__).resolve().parent / "test_daychain.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("日链一致性夹具未通过（DAYCHAIN_FAILED）")
+
+
+def test_coldstart_contract() -> None:
+    """冷启动夹具必须全过（见 test_coldstart.py）。
+
+    2026-11-19：四轮红队的「日期网断裂」检测可自动检出，但前提是书里有
+    `追踪/时间线/日链.md` 与 `追踪/复沓锚句.md`——**此前这两样只在被调试过
+    的书里手工长出来**，新书一开就没有，于是这些检测对新书全部失效
+    （冷启动实测：日链检测对新书静默返回 0 条，既不报也不提示）。
+
+    修法：`autopilot.py init` 生成两个骨架模板；缺基准文件时检测器
+    **明确报出**而不是静默通过。
+    """
+    script = Path(__file__).resolve().parent / "test_coldstart.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("冷启动夹具未通过（COLDSTART_FAILED）")
+
+
+def test_unattended_contract() -> None:
+    """无人值守夹具必须全过（见 test_unattended.py）。
+
+    2026-11-19：本会话 subagent 静默死亡 10+ 次，每次都要求人工发现 → resume → 重派。
+    **一条每隔一次就断的流水线，不能声称「工具能完成目标」。**
+
+    P2 运行时（server/cli.mjs run）由后端自己调模型、写证据、交令牌，
+    **没有对话 subagent 这个失败模式**——实测一次无人值守推进 12 个节点。
+
+    用 --mock（零成本）验证：状态机能无人值守前进，且守卫会在该拦的地方
+    （mock 不填追踪事务 → tracking_incomplete）精确停下。拦不住才是缺陷。
+    """
+    script = Path(__file__).resolve().parent / "test_unattended.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("无人值守夹具未通过（UNATTENDED_FAILED）")
+
+
+def test_wordcount_caliber_contract() -> None:
+    """字数双口径夹具必须全过（见 test_wordcount_caliber.py）。
+
+    2026-11-19 实测：同一套工具里两个检查器对**同一份稿子**给出相反结论——
+    `体检报告.md` 说 20903 字可投，`qimao_check.py` 报 BLOCK Q01（纯汉字 17822）。
+
+    根因：Q01 旧实现「判定仍按纯汉字（保持历史可比）」，而平台 api_words
+    **实测与可见字符同口径、与纯汉字 0 章相等**（24 章实测）。拿汉字口径去
+    BLOCK 一份平台会收的稿子，是**假 BLOCK**，会挡住合法投稿。
+
+    修法：可见字符不达标才 BLOCK；仅汉字不足则降 CONFIRM（人工后台核对）。
+    """
+    script = Path(__file__).resolve().parent / "test_wordcount_caliber.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("字数双口径夹具未通过（WORDCOUNT_CALIBER_FAILED）")
+
+
+def test_gate_prompt_schema_contract() -> None:
+    """闸门提示词必须自带裁决结构（见 test_gate_prompt_schema.py）。
+
+    2026-11-19 冷启动实测：`N06 设定校验` 的提示词只写「格式同 N04」，
+    而 subagent **看不到 N04 的提示词**，于是自己发明键名（`checks` / 顶层 `quote`），
+    `done` 以 `quote_check_failed: items 为空` 拒收——**任何书跑到 N06 都会卡住**。
+
+    这类缺陷的特点：**提示词之间互相引用，但引用目标对执行者不可见。**
+    写法上「格式同 N04」读起来自然，运行时等于没说。
+
+    本夹具要求每个 verify 节点自带完整 JSON 结构、无跨节点引用、说明 items 不可为空。
+    """
+    script = Path(__file__).resolve().parent / "test_gate_prompt_schema.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("闸门提示词结构夹具未通过（GATE_SCHEMA_FAILED）")
+
+
+def test_judgment_normalize_contract() -> None:
+    """裁决归一化层必须全过（见 test_judgment_normalize.py）。
+
+    2026-11-19 冷启动实测：judge 写了一份内容全对的裁决（5 个维度都查了、
+    引文是从 `设定/文风.md` 逐字抄的），只因把裁决项放在 `checks` 而不是
+    `items`、键名用 `name`/`result`/`detail`，就被 `done` 以
+    `quote_check_failed: items 为空` **整份判废**。被废掉的是语义有效的工作，
+    丢掉的只是接口约定；报错又不自解释（只说「items 为空」），
+    加上对话路径没有 P2 那样的自愈回路，一轮好裁决就此空转。
+
+    修法三层：① 提示词自带结构（test_gate_prompt_schema）
+    ② 归一化层（键名/容器别名 → canonical；散文回捞逐字引文；引文命中但
+    source 写错 → 改指）③ 报错自带结构/规则/允许清单/可抄示例，失败落盘
+    state.last_failure 并在下次 `next` 回灌「上一轮失败反馈」。
+
+    实质要求一条没放松：fail 项必须给命中源文件的逐字引文；整份裁决至少
+    要有一条命中引文；引文不命中 / source 越界 / block 无 fail 项 一律拒。
+    """
+    script = Path(__file__).resolve().parent / "test_judgment_normalize.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-3000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("裁决归一化夹具未通过（JUDGMENT_NORMALIZE_FAILED）")
+
+
+def test_stale_gate_contract() -> None:
+    """过期绿灯必须被检出、阻断，且有可走的补救路径（见 test_stale_gate.py）。
+
+    2026-11-20 实测：逆袭书 C1/C3/C6 的章级裁决共 10 条引文在当前正文里
+    已经找不到——正文被微改过（「又添**了**一句」→「又添一句」）。
+    **漂移检测看不见它**：revision 定稿把正文和账本 sha 一起更新，账本与磁盘
+    一致，看不出「被合法修订但没重裁」。于是裁决的节点状态仍写着 done，
+    是一份**过期绿灯**。
+
+    修法三件套：① 检测（逐条验证引文是否仍命中当前正文）② 阻断（N21 打包
+    判不可投）③ 补救（`autopilot.py rejudge` 带外重判，**不动流水线游标**——
+    流水线是线性的，回退会把已完稿的书重新拉回写作链）。
+    """
+    script = Path(__file__).resolve().parent / "test_stale_gate.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-3000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("过期绿灯夹具未通过（STALE_GATE_FAILED）")
+
+
+def test_auto_trim_contract() -> None:
+    """自动裁剪必须真的发生（见 test_auto_trim.py）。
+
+    2026-11-20 实测：`_text_preflight` 的自动裁剪写于 2026-11-17，用来替掉
+    「超长章由人逐段读、逐段删」的手工活（实测第 2 章手工裁了 689 字）。
+    但它**从来没跑起来过**：`from inline_runner import trim_to_band,
+    CHAPTER_BODY_MAX_CHARS` 抛 ImportError（常量在 pipeline_spec 里），
+    且 `wordcount_core`（平台字数口径的唯一实现）只在技能目录里、从没挂到
+    sys.path——而裸 `except Exception` 把这两个错吞成「没什么可裁」。
+    于是「工具坏了」和「没发现问题」变成同一件事。
+
+    修法：常量从 pipeline_spec 导入；`inline_runner.visible_chars()` 按 config
+    里的 STORY_LONG_WRITE 挂技能 scripts 目录（只挂路径不抄实现）；裁剪失败
+    不再吞，原因写进返回载荷的 `auto_trim_error`。
+    """
+    script = Path(__file__).resolve().parent / "test_auto_trim.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-3000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("自动裁剪夹具未通过（AUTO_TRIM_FAILED）")
+
+
+def test_causal_contract() -> None:
+    """因果收尾率与因果密度上限不得互相矛盾（见 test_causal_contract.py）。
+
+    2026-11-20 实测：写作契约同一页上写了两条互斥的规则——「收尾带因果词的段落
+    应 60%–85%」与「因果密度 ≤6.0/千字」。算术：2200 字 ÷ 段/千字 33 ⇒ 73 段；
+    60% ⇒ 44 段要带因果词；而 6.0/千字 × 2.2 ⇒ 全章只允许 13 个计分因果词。
+    44 > 13，不可达。
+
+    实测后果：一个 writer 直接向编排者报告「这两条规则互斥」；另一个只好用
+    **闸门不统计**的词凑收尾率——达标了，但那些词不在 CAUSAL 词表里，等于用漏洞
+    而不是用规则。
+
+    修法：以标定过的密度区间为准（1.0–6.0/千字，14 本签约书，不能改），收尾率
+    改成算得通的 1/4–1/3，并把算术写进契约。夹具会**自己算一遍**：从契约读出
+    段/千字带与密度上限，算出收尾率可达上限，断言契约写下的目标 ≤ 该上限——
+    以后谁再写死一个数，这个夹具会当场挂掉。
+    """
+    script = Path(__file__).resolve().parent / "test_causal_contract.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-3000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("因果契约夹具未通过（CAUSAL_CONTRACT_FAILED）")
+
+
+def test_tracking_retired() -> None:
+    """退役声明必须逐字原文（见 test_tracking_retired.py）。
+
+    2026-11-20 实测：writer 明明在 delta.retired_context_items 里声明了被删的
+    context 条目，`done` 仍报「context items were dropped without being
+    declared」——**报错信息与真实原因完全对不上**。真因是工作台的规整器为了把
+    delta 压到 3072 字节，把退役声明**截到 30 字**，而工具做的是精确集合比对，
+    截断一个字就匹配不上。更深一层：预检的体积口径**排除** retired，
+    压缩器的口径**包含**它，同一份事务两处口径不同 → 压缩被触发 → 截断。
+
+    修法：压缩器口径与预检对齐（都排除 retired）；退役声明不截断（工具提交时
+    会按账本重新生成）；规整器顺手还原历史上被截断过的声明。
+    """
+    script = Path(__file__).resolve().parent / "test_tracking_retired.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-3000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("退役声明夹具未通过（TRACKING_RETIRED_FAILED）")
+
+
+def test_editor_criteria_scan_contract() -> None:
+    """编辑口径自动化扫描夹具必须全过（见 test_editor_criteria_scan.py）。"""
+    script = Path(__file__).resolve().parent / "test_editor_criteria_scan.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("编辑口径自动化扫描夹具未通过（EDITOR_CRITERIA_SCAN_FAILED）")
+
+
+def test_causal_rotator_contract() -> None:
+    """因果词多样性自动轮换器夹具必须全过（见 test_causal_rotator.py）。"""
+    script = Path(__file__).resolve().parent / "test_causal_rotator.py"
+    proc = subprocess.run(
+        [sys.executable, "-X", "utf8", str(script)],
+        text=True, encoding="utf-8", capture_output=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(proc.stdout[-2000:])
+        print(proc.stderr[-1000:])
+        raise AssertionError("因果词多样性轮换夹具未通过（CAUSAL_ROTATOR_FAILED）")
+
+
+def test_partial_outline_digest_contract() -> None:
+    """细纲断点续写注入：当 writer 中途死掉留下半成品细纲时，必须生成断点摘要。"""
+    from pipeline_spec import _partial_outline_digest
+    with tempfile.TemporaryDirectory() as tmp:
+        book = Path(tmp)
+        outline_dir = book / "大纲"
+        outline_dir.mkdir(parents=True, exist_ok=True)
+        st = {}
+        assert _partial_outline_digest(st, book, 1) == ""
+
+        draft_text = """# 第001章 细纲
+
+- 核心事件：换名字引发冲突
+- 字数目标：2200字
+- 字数口径：visible_chars_v1
+- 目标情绪：憋屈转震惊
+### 内容概括
+起因：名单被调换。
+发展：陆明前去质问。
+"""
+        (outline_dir / "细纲_第001章.md").write_text(draft_text, encoding="utf-8")
+        digest = _partial_outline_digest(st, book, 1)
+        assert "【本章细纲已有草稿" in digest, digest
+        assert "请基于已有结构补完" in digest, digest
+
+
+def test_architecture_consistency_gate_contract() -> None:
+    """架构因果门禁：细纲四拍节拍流执行率与提前释放禁令 fail-closed 阻断。"""
+    from architecture_consistency_gate import verify_chapter_architecture
+    with tempfile.TemporaryDirectory() as tmp:
+        book = Path(tmp)
+        outline_file = book / "细纲.md"
+        text_file = book / "正文.md"
+        outline_file.write_text("""# 第001章 细纲
+- 核心事件：大伯逼主角放弃顶职名额按手印，陈砚当场掀桌撕毁协议断亲
+- 本章禁止提前释放：禁止第一章让大伯全家提前下跪求饶
+### 情节安排
+- 第一拍（压抑危机）：前200字大伯陈富贵破门逼签协议。
+- 第二拍（觉醒反击）：陈砚夺下协议撕成粉碎。
+- 第三拍（抽翻立威）：陈砚反手抽翻堂弟立威。
+- 第四拍（夜探厂办）：陈砚锁门夜奔厂办。
+""", encoding="utf-8")
+        good_text = """大伯陈富贵破门逼签协议，强扯重病妹妹按手印！
+陈砚夺下协议撕成粉碎，冷眼看着贪婪的大伯。
+堂弟还想逞凶，陈砚反手一巴掌抽翻堂弟！
+陈砚锁好房门，收起底联，夜奔厂办！"""
+        text_file.write_text(good_text, encoding="utf-8")
+        res = verify_chapter_architecture(str(outline_file), str(text_file))
+        assert res["ok"], res
+        assert res["beat_execution"]["rate"] >= 0.75
+
+        # 触犯禁止提前释放禁令
+        bad_text = good_text + "\n大伯陈富贵吓得浑身发抖，当场跪地求饶！"
+        text_file.write_text(bad_text, encoding="utf-8")
+        res_bad = verify_chapter_architecture(str(outline_file), str(text_file))
+        assert not res_bad["ok"], "Advance reveal violation must fail architecture gate!"
+        assert len(res_bad["advance_reveal_violations"]) > 0
+
+
+def test_persona_confidence_probe_contract() -> None:
+    """人设置信度审查：主角主动性决策评分与被动降智屈服拦截。"""
+    from persona_confidence_probe import probe_chapter_persona_confidence
+    good_prose = """陈砚冷笑一声，反手夺过协议当场撕碎！
+陈砚目光如刀，厉声喝道：“休想拿走我父亲的名额！”
+随后陈砚果断锁门，直奔厂办。"""
+    res = probe_chapter_persona_confidence(good_prose, protagonist_name="陈砚")
+    assert res["ok"], res
+    assert res["agency"]["proactive_actions"] >= 2
+
+    # 被动降智屈服文本
+    passive_prose = """陈砚委屈得直掉眼泪，面对大伯只能唯唯诺诺，心甘情愿让出顶职名额，毫无反抗之力任由摆布。"""
+    res_passive = probe_chapter_persona_confidence(passive_prose, protagonist_name="陈砚")
+    assert not res_passive["ok"], "Passive submission must fail agency check!"
+    assert res_passive["agency"]["submission_hits"] >= 1
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="wb-py-contracts-") as tmp:
         root = Path(tmp)
@@ -1145,6 +1772,83 @@ def main() -> int:
         # 后者正是 relay 那条被列为「从未实测」的路径。
         test_status_exposes_volume_degradation(root)
         test_terminal_block_writes_relay_reason(root)
+        # T-2/T-2b：正文文件判定（备份排除 / 章号解析 / 歧义报错）的 Python 侧契约
+        test_body_file_rules_t2b(root)
+        # 2026-11-17：机械修复器夹具。这四类句式被 check-ai-patterns.js 登记为
+        # mechanical+blocking（「不需判断、必须清零」），但 mechanical_fix 此前
+        # 一次都没修过它们，全靠 N14 烧 LLM 轮次、还会漏。
+        # 这里调子进程跑夹具，避免把断言逻辑复制两份。
+        test_mechanical_fix_contract()
+        # 2026-11-17：字数裁剪器夹具。storyctl 只报「该删多少字」却不实现压缩，
+        # 每章超长都靠人手工裁（第2章 689 字、第4章 500 字）。裁剪器的危险失败模式
+        # 是「删掉承载信息的段落来凑字数」，夹具用三处关键内容做守卫。
+        test_trim_to_band_contract()
+        # 2026-11-17：N11 产物防篡改守卫。writer 实测把脚本生成的
+        # 追踪/上下文.md 覆写成了另一种结构，下一章会读到缺栏的坏文件。
+        test_context_md_guard_contract()
+        # 2026-11-17：到期伏笔显式标注。此前伏笔逾期没有任何机制拦住，
+        # 实测 F005/F008 计划回收章都是 6、第 6 章封板后仍未回收。
+        test_foreshadow_due_contract()
+        # 2026-11-17：因果词多样性检测。总量指标测不出「同一词刷满全章」这种
+        # AI 指纹（实测「果然」x44 时 causal_per_1000 只报 3.07、闸门全绿）。
+        test_causal_diversity_contract()
+        # 2026-11-17：断点续写 digest。writer 写到一半卡死时，新 subagent 要能
+        # 接着写而不是从头重来——此前只能靠编排者手工续写。
+        test_partial_body_digest_contract()
+        # 2026-11-17：delta 自动压缩器。事务差 15 字节就被打回太浪费，
+        # 改成超限时自动截断长度类字段。
+        test_shrink_delta_contract()
+        # 2026-11-17：账本完整性 + 封板后漂移。旧压缩器把「…」当原文写进账本；
+        # sha256 此前只记录不比对，封板后偷改正文无人发现。
+        test_ledger_integrity_contract()
+        # 2026-11-17：动作节拍密度检测。判别力只差「拒稿书≥3」，故只作定位线索。
+        # 夹具用真实拒稿样本当基准——口径再错一次立刻失败。
+        test_action_beat_contract()
+        # 2026-11-17：压缩器保底长度。result 曾被砍成 4 个字后原样写进账本。
+        test_shrink_delta_floor_contract()
+        # 2026-11-17：相对日互斥检查。全书日期网断裂是可计算的，
+        # 但账本没有具体日期锚，此前完全查不出。
+        test_relative_days_contract()
+        # 2026-11-18：跨章逐字重复检测。「爽点只有一个模子」，
+        # 且我自己也制造过新的逐字重复——人工比对抓不到。
+        test_cross_chapter_duplicate_contract()
+        # 2026-11-19：日链一致性校验。日期网断裂是四轮红队最重的一类缺陷，
+        # 全部可计算——此前查不出是因为账本没有绝对日锚。
+        test_daychain_contract()
+        # 2026-11-19：冷启动。新书开箱即具备检测能力（init 生成日链/锚句骨架）。
+        test_coldstart_contract()
+        # 2026-11-19：无人值守。subagent 死亡 10+ 次是操作面最大问题，
+        # P2 运行时没有这个失败模式。
+        test_unattended_contract()
+        # 2026-11-19：字数双口径。两个检查器不得对同一份稿子给出相反结论。
+        test_wordcount_caliber_contract()
+        # 2026-11-19：闸门提示词必须自带裁决结构（「格式同 N04」对执行者不可见）。
+        test_gate_prompt_schema_contract()
+        # 2026-11-19：裁决归一化层 + 自解释报错 + 失败反馈回灌。
+        # judge 键名写错就整份判废，一轮好裁决白费；报错还不自解释。
+        test_judgment_normalize_contract()
+        # 2026-11-20：过期绿灯。章被改写后裁决依据失效，漂移检测看不见
+        # （revision 把正文和账本 sha 一起更新）。检测/阻断/补救三件套。
+        test_stale_gate_contract()
+        # 2026-11-20：自动裁剪此前是死代码（常量 import 错 + wordcount_core
+        # 不在 sys.path + 裸 except 吞掉）。超长章只会判 over 打回，由人裁。
+        test_auto_trim_contract()
+        # 2026-11-20：因果收尾率 60%–85% 与因果密度 ≤6.0/千字 在数学上互斥，
+        # writer 实测撞上并报告。以标定区间为准，收尾率改成 1/4–1/3 并写清算术。
+        test_causal_contract()
+        # 2026-11-20：退役声明被压缩器截到 30 字 → 工具的精确比对失败，
+        # 报错信息与真实原因对不上。压缩器口径与预检对齐 + 不截断 + 自动还原。
+        test_tracking_retired()
+        # 2026-11-22：编辑口径自动化扫描（开篇冲突/单章场景切换）
+        test_editor_criteria_scan_contract()
+        # 2026-11-22：因果词多样性保义自动轮换
+        test_causal_rotator_contract()
+        # 2026-11-22：细纲断点续写注入（防止 subagent 死亡后从头重写超时）
+        test_partial_outline_digest_contract()
+        # 2026-11-22：架构因果与细纲节拍/禁止提前释放门禁
+        test_architecture_consistency_gate_contract()
+        # 2026-11-22：人设核心动机与主动性置信度审查
+        test_persona_confidence_probe_contract()
     print("PY_CONTRACTS_OK")
     return 0
 

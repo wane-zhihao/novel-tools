@@ -1,0 +1,30 @@
+{
+ "schema": 1,
+ "at": "2026-10-26T01:33:58+0800",
+ "run_id": null,
+ "book": "重生八零：从废品站开始",
+ "cursor": "C3.N09",
+ "next_node": "C3.N09",
+ "current_chapter": 2,
+ "chapters_committed": 2,
+ "words_total": 4257,
+ "stop_reason": "自动检查点",
+ "blocked_reason": null,
+ "last_node": {
+  "id": "C2.N16",
+  "at": "2026-10-25T20:41:30+0800",
+  "evidence": [],
+  "sha256": []
+ },
+ "vol_budget": {
+  "vol": 1,
+  "start": 1,
+  "end": 3,
+  "used": 9,
+  "cap": 80
+ },
+ "degraded_volumes": [],
+ "budgets": {},
+ "open_findings": [],
+ "next_hint": "继续执行 C3.N09"
+}

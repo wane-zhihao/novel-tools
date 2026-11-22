@@ -76,15 +76,16 @@ M0 的环境与测试基线记录在 `.task/20261101-baseline.md`。T-6 后 `npm
 - sync → 断言 chapters 表 `number=5` 行的 sha 仍等于**真实正文**的 sha
 - 合成全文 → 断言输出不含"原稿"标记文件内容
 
-**Green**
-1. 新增**单一**判定函数（三处共用，避免再次漂移）：
-   - Node 侧：T-1 已在 `server/book-files.mjs` 落地 `isBackupChapterFile(name)`（submissions 校验侧已用）；T-2 把它收敛为 `chapterFiles`/`findChapterFile`/`syncChapters` 的统一现役稿判定（`isChapterBodyFile = 匹配章号模式 && !isBackupChapterFile`），不再另起名字
-   - Python 侧：`scripts/pipeline_spec.py` 定义 `is_valid_chapter_file()`，`inline_runner.py` 7 处调用（941/965/1120/1155/1528/1538/1569）——在 Python 侧对齐前，T-1 校验器对「全文混入备份稿」按不一致拒批（fail-closed，属预期）
-2. `server/sync.mjs` 收集章节时先过滤，再决定是否 upsert
-3. 备份落位改为 `_pipeline/backups/正文/`（`book-files.mjs:87-104` 已有该机制，对齐即可）
+**Green（2026-11-05 已实现，tdd-002 转正进闸门）**
+1. 新增**单一**判定函数（两侧各一份、规则逐条等价，避免再次漂移）：
+   - Node 侧：`server/book-files.mjs` 的 `isBackupChapterFile(name)`（排除 `_原稿_` 中缀 / `.bak`/`.backup` 后缀 / `_backup` / `~` 尾缀）与 `parseChapterFileName(name)`（章号 1–4 位 + 分隔符 `_`/空格/`：`/`:`，返回 `{number, title}`）、`chapterBodyFiles(bookDir)`（现役正文列表，按章号升序、同章多候选全返回）、`chapterNumberInBody(text)`（正文前 400 字内声明的章号，无则 null）
+   - Python 侧：`scripts/pipeline_spec.py` 的 `is_backup_body_file` / `parse_body_file_name` / `chapter_number_in_body` / `body_files` / `body_files_in` / `body_file_for_chapter`——与 Node 侧逐条等价
+   - `inline_runner.py`（N17/N17g/N18/N19/N21/找章/改稿）、`commit_chapter.py`（定稿找章/脏稿统计）、`autopilot.py`（卷内实际章数）全部改走统一助手，不再各自 glob
+2. `server/sync.mjs` 收集章节时先过滤备份稿，再决定是否 upsert
+3. 备份落位沿用 `_pipeline/backups/正文/`（`book-files.mjs` 已有该机制）
 
-**验收**：`_原稿_` 文件不进 chapters 表、不进全文.md、不进字数统计。
-**工作量**：M（80–120 行 + 迁移脏数据）
+**验收**：`_原稿_` 文件不进 chapters 表、不进全文.md、不进字数统计；JS 与 Python 对同一目录给出**完全一致**的章节列表与顺序（有用例钉住）。
+**工作量**：M（80–120 行 + 迁移脏数据）——实际约 260 行 + 11 条用例
 **依赖**：T-1（两者都动 sync 的章节收集，同批改减少冲突）
 
 ---
@@ -108,20 +109,23 @@ M0 的环境与测试基线记录在 `.task/20261101-baseline.md`。T-6 后 `npm
 **与 DL-01 叠加 = 完整的静默缺章链**：导入未补零章节 → sync 认不到（0 行）
 → preflight 读 state 缓存仍报"字数达标 / 全部已定稿" → 打包"成功"但缺章 → 唯一一次签约评估作废。
 
-**Red**
-- 三本书各测：`第1章…第12章`（未补零）/ `第001章…`（补零）/ 分隔符混用（`_`、空格、`：`、`:`）
-- 断言 `syncBook` 后 `chapters` 行数 == 目录内正文件数（未补零那本现在是 **0 行**）
+**Red（tdd-002b，2026-11-05 已实现）**
+- 三本书各测：`第1章…第12章`（未补零）/ `第001章…`（补零）/ 分隔符混用（`_`、空格、`：`）
+  - 注：半角 `:` 在 Windows 上是 NTFS 备用数据流分隔符——写「第4章:标题4.md」会落成「第4章」，标题与 `.md` 一起被吞，故 Windows 上只测能真实存在的分隔符
+- 断言 `syncBook` 后 `chapters` 行数 == 目录内正文件数（未补零那本原来是 **0 行**）
 - 断言"有 `.md` 但零匹配"时 syncBook **必须报警**，不得静默返回
-- 断言未补零那本走 preflight 时，缺章必须让 `ready=false`
+- 断言正文里声明的「第N章」与文件名冲突时必须报歧义（不猜）
+- 断言 JS 与 Python 对同一目录给出完全一致的章节列表与顺序（两侧算出不同正文 = 全文明细不一致）
 
-**Green**
-1. 放宽为 `^第(\d{1,4})章` 并兼容四种分隔符（四处共用一个判定，勿各写一遍——T-2 已定此纪律）
-2. **章号以标题内的「第N章」为准**，文件名前缀只作辅助；前缀与标题冲突 → 视为歧义，列候选报错不猜
-   （与对方 `chapter_check.py` 同规则，避免两侧算出不同正文）
-3. fail-closed：目录有文件但一章都没匹配上 = 错误，不是"0 章且成功"
+**Green（2026-11-05 已实现）**
+1. 章号放宽为 1–4 位、分隔符认 `_`/空格/`：`/`:`，四处（sync 章节收集 / sync 版本目录 / run-manager AI 写记录 / inline_runner 章号）**共用一个判定**，不各写一遍——T-2 已定此纪律
+2. **章号以正文标题内的「第N章」为准**，文件名前缀只作辅助；正文声明的章号与文件名冲突 → 视为歧义，报错不猜
+   （正文前 400 字内无「第N章」则不冲突——真实夹具首行常是「# 榜上换了名」这种纯标题）
+3. fail-closed：目录有 `.md` 但一章都没匹配上 = 错误，不是"0 章且成功"
+4. **同章多份现役稿**（`第001章_标题.md` 与 `第001章_标题_v2.md`——作者改稿版本，不是备份稿）：sync 选与 tracking 封板 `body_sha256` 一致的那份；未定稿则取文件名排序末位（确定性，不依赖 readdir 顺序）；歧义本身由 T-1 预检的「同章多份磁盘正文」显式阻断
 
 **验收**：三本书行数都等于文件数；未补零书的缺章能被 preflight 拦住；两侧规则对齐。
-**工作量**：M
+**工作量**：M——与 T-2 同批实现（共用判定），实际 11 条用例全绿，全量 `npm test` 157/157（2026-11-05）
 **依赖**：T-2（同一套文件判定，必须一起改，否则两拨修复互相覆盖）
 
 ---

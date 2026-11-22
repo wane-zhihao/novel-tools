@@ -138,6 +138,7 @@ async function handleRun(options) {
       config.roles[role].provider = "mock";
       config.roles[role].model = `mock-${role}`;
     }
+    if (config.roles?.writer) config.roles.writer.omit_tracking = true;
     console.error("警告：--mock 使用占位 provider，不会调用真实模型，产物不可用于投稿。");
   }
 

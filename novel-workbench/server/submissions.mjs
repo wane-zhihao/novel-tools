@@ -3,7 +3,9 @@ import {
   copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync,
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { countVisibleChars, isBackupChapterFile, resolveInsideBook } from "./book-files.mjs";
+import {
+  countCjkChars, countVisibleChars, isBackupChapterFile, parseChapterFileName, resolveInsideBook,
+} from "./book-files.mjs";
 
 const DEFAULT_MIN_WORDS = 20000;   // target_words 缺失（老书/未同步）时的回退线
 const CONFIRMATION_COUNT = 4;      // 与 submit.js HUMAN_CONFIRM 一一对应
@@ -70,9 +72,11 @@ function checkBodyIntegrity(db, book) {
     errors.push("正文目录不存在、越界或无法读取");
   }
   for (const name of diskFiles) {
-    const match = /^第(\d{3})章_(.*)\.md$/.exec(name);
-    if (!match || isBackupChapterFile(name)) continue;   // 备份稿不参与现役/重复判定
-    const number = Number(match[1]);
+    // T-2/T-2b：与 sync 同一判定（排除 _原稿_ 备份稿，章号认 1–4 位）。
+    // 两端口径必须一致，否则未补零命名的合法书会被这里误判成「缺章」。
+    const parsed = parseChapterFileName(name);
+    if (!parsed || isBackupChapterFile(name)) continue;
+    const number = parsed.number;
     const names = diskByNumber.get(number) ?? [];
     names.push(name);
     diskByNumber.set(number, names);
@@ -98,6 +102,7 @@ function checkBodyIntegrity(db, book) {
   }
   const committedNumbers = new Set();
   let verifiedWords = 0;
+  let verifiedCjkWords = 0;
   const largestValidCount = Math.max(
     validCount(committedCount) ? committedCount : 0,
     validCount(trackingCommittedCount) ? trackingCommittedCount : 0,
@@ -137,7 +142,9 @@ function checkBodyIntegrity(db, book) {
       errors.push(`第${String(number).padStart(3, "0")}章磁盘正文与章节记录不一致`);
     }
     const actualWords = countVisibleChars(body);
+    const actualCjk = countCjkChars(body);
     verifiedWords += actualWords;
+    verifiedCjkWords += actualCjk;
     if (Number(row.words) !== actualWords) {
       errors.push(`第${String(number).padStart(3, "0")}章字数记录 ${row.words} 与正文复算 ${actualWords} 不一致`);
     }
@@ -156,8 +163,15 @@ function checkBodyIntegrity(db, book) {
     // 并容忍「裸全文」与「冠书名全文」两种生成产物，其余任何出入都算不一致。
     const norm = (text) => text.replace(/\r\n?/g, "\n").replaceAll("﻿", "");
     try {
+      // 排序与 Python body_files() 一致：先章号后文件名（码点比较，与 Python str 同语义）。
+      // 字符串序会把「第10章」排在「第2章」前面——那会让全文的章节顺序错乱。
       const chapterFiles = diskFiles
-        .filter((name) => /^第\d{3}章_.*\.md$/.test(name) && !isBackupChapterFile(name)).sort();
+        .filter((name) => parseChapterFileName(name) && !isBackupChapterFile(name))
+        .sort((a, b) => {
+          const na = parseChapterFileName(a).number;
+          const nb = parseChapterFileName(b).number;
+          return na - nb || (a < b ? -1 : a > b ? 1 : 0);
+        });
       const body = chapterFiles
         .map((name) => norm(readFileSync(join(book.path, "正文", name), "utf8")).trim())
         .join("\n\n");
@@ -190,6 +204,8 @@ function checkBodyIntegrity(db, book) {
   const words = verifiedWords;
   return {
     words,
+    words_visible: words,
+    words_cjk: verifiedCjkWords,
     ok: errors.length === 0,
     detail: errors.length ? errors.join("；") : `已核对 ${committedNumbers.size} 章定稿正文，数据库 ${rows.length} 行与磁盘正文一致`,
     fix: errors.length ? "恢复缺失正文，或同步并重新定稿后再次预检" : null,
@@ -200,8 +216,13 @@ export function preflightSubmission(db, book) {
   const checks = [];
   const integrity = checkBodyIntegrity(db, book);
   const words = integrity.words;
+  const wordsVisible = integrity.words_visible ?? words;
+  const wordsCjk = integrity.words_cjk ?? 0;
   // 0.9：门槛跟随这本书自己的目标字数，不再写死 2 万
-  const minWords = Number(book.target_words) > 0 ? Number(book.target_words) : DEFAULT_MIN_WORDS;
+  const hasTarget = Number(book.target_words) > 0;
+  const minWords = hasTarget ? Number(book.target_words) : DEFAULT_MIN_WORDS;
+  const isProvisional = !hasTarget;
+
   checks.push({
     id: "body_integrity",
     label: "定稿正文与章节记录一致",
@@ -209,12 +230,21 @@ export function preflightSubmission(db, book) {
     detail: integrity.detail,
     fix: integrity.fix,
   });
+
+  const divergence = wordsVisible > 0 ? (wordsVisible - wordsCjk) / wordsVisible : 0;
+  const visibleOk = wordsVisible >= minWords;
+  const cjkOk = wordsCjk >= minWords;
+  // 分歧超过 10% 且汉字未达标时，不得只凭 visible 放行
+  const wordsOk = visibleOk && (divergence <= 0.1 || cjkOk);
+
   checks.push({
     id: "words",
-    label: `已定稿正文 ≥ ${minWords.toLocaleString("zh-CN")} 字`,
-    ok: words >= minWords,
-    detail: `当前 ${words.toLocaleString("zh-CN")} 字`,
-    fix: words >= minWords ? null : "继续写并定稿，或在开书时把目标字数改成实际计划",
+    label: `已定稿正文 ≥ ${minWords.toLocaleString("zh-CN")} 字${isProvisional ? "（暂定观测值）" : ""}`,
+    ok: wordsOk,
+    cjk_ok: cjkOk,
+    detail: `当前 ${wordsVisible.toLocaleString("zh-CN")} 字（纯汉字 ${wordsCjk.toLocaleString("zh-CN")}）${isProvisional ? " · 暂定观测值" : ""}`,
+    fix: wordsOk ? null : (visibleOk ? "纯汉字数未达到门槛（与可见字符分歧超过 10%），继续补写正文汉字至达标" : "继续写并定稿，或在开书时把目标字数改成实际计划"),
+    provisional: isProvisional,
   });
   const dirty = db.prepare("SELECT COUNT(*) AS n FROM chapters WHERE book_id = ? AND dirty = 1").get(book.id).n;
   checks.push({
@@ -256,7 +286,16 @@ export function preflightSubmission(db, book) {
     fix: last && !["已投稿", "待回复", "已读"].includes(last.status) ? null
       : "同一本书同时只投一位编辑；等上一位出结果或明确拒绝后再投",
   });
-  return { ready: checks.every((check) => check.ok), checks, words, dirty, blocking, min_words: minWords };
+  return {
+    ready: checks.every((check) => check.ok),
+    checks,
+    words,
+    words_visible: wordsVisible,
+    words_cjk: wordsCjk,
+    dirty,
+    blocking,
+    min_words: minWords,
+  };
 }
 
 function safeSegment(value) {

@@ -1,0 +1,48 @@
+{
+    "schema_version":  2,
+    "book":  "接力状态机验收书",
+    "genre":  "dushi",
+    "target_words":  6000,
+    "max_chapters":  3,
+    "platform":  "zongheng",
+    "plan":  {
+                 "vol_size":  22,
+                 "vol_llm_cap":  80
+             },
+    "uncontrollable":  [
+
+                       ],
+    "created_at":  "2026-10-26T03:47:05+0800",
+    "current_chapter":  0,
+    "chapters_committed":  0,
+    "words_total":  0,
+    "cursor":  "N01",
+    "nodes":  {
+
+              },
+    "budget":  {
+
+               },
+    "fix_rounds":  {
+
+                   },
+    "global_fix_rounds":  {
+
+                          },
+    "n20_rounds":  0,
+    "degraded_volumes":  [
+
+                         ],
+    "volume_advisories":  {
+
+                          },
+    "decisions_taken":  [
+
+                        ],
+    "pending_questions":  [
+
+                          ],
+    "blocked_reason":  null,
+    "relay_count":  0,
+    "run_started_at":  "2026-10-26T03:47:05+0800"
+}

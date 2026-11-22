@@ -31,6 +31,7 @@ import secrets
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # 主控进程的 stdout 直接交给宿主读取（subagent_prompt 全是中文）。
@@ -369,9 +370,78 @@ from inline_runner import (          # noqa: E402
     snapshot_chapter, snapshot_body, extract_json,
     record_snapshot_manifest, restore_best_snapshot,
 )
+from pipeline_spec import body_files_in  # noqa: E402  (正文文件判定的单一事实源)
 
 
 # ─── 子命令 ───────────────────────────────────────────────────────────────────
+
+def _scaffold_book_files(book: Path) -> list[str]:
+    """新书开箱即具备「检测能力」所需的基准文件（2026-11-19 加）。
+
+    **为什么要有**：四轮红队挖出 28 项 B 级缺陷，其中「日期网断裂」占 8+ 项，
+    而它**可自动检出**——前提是书里有两样东西：
+      1. `追踪/时间线/日链.md`：把每章钉到绝对日 + 逐字锚句（校验基准）
+      2. `追踪/复沓锚句.md`：登记**刻意**的跨章呼应（白名单）
+    此前这两样只在被调试过的书里手工长出来——**新书一开就没有**，
+    于是这些检测对新书全部失效（冷启动实测：日链检测静默返回 0 条）。
+
+    修法：init 时生成骨架模板。模板里日链表是空的（等正文写出来再填），
+    但**校验器立刻生效**——一旦填了锚句，改日期就会被检出。
+    """
+    made: list[str] = []
+    daychain = book / "追踪" / "时间线" / "日链.md"
+    if not daychain.exists():
+        daychain.parent.mkdir(parents=True, exist_ok=True)
+        daychain.write_text(
+            "# 日链（绝对日锚）\n\n"
+            "> **怎么用**：正文每写完一章，就在下表补一行——\n"
+            "> `| 章 | 绝对日 | 该章锚句（逐字） | 该章发生了什么 |`\n"
+            ">\n"
+            "> 锚句必须是**正文里的原句**（12 字以上，能唯一标定这一天的位置）。\n"
+            "> 校验脚本会逐条核对；任何一条被改写而没同步本表 → 报 fail。\n"
+            ">\n"
+            "> **为什么必须有**：2026-11-18 四轮红队挖出 28 项缺陷，其中「日期网断裂」\n"
+            "> 占 8+ 项——同一份单据的落款日在相隔数天的两章里都叫「前天」；\n"
+            "> 封条贴于「事故前一天」而实际是「事故后一天」；签字权 4 天前才拿到却写成\n"
+            "> 「这两年」。这些**全部可计算**，前提是每章钉到一个绝对日。\n\n"
+            "## 日链\n\n"
+            "| 章 | 绝对日 | 该章锚句（逐字） | 该章发生了什么 |\n"
+            "|---|---|---|---|\n\n"
+            "## 绝对参照点（不可改）\n\n"
+            "| 绝对日 | 事件 | 依据 |\n"
+            "|---|---|---|\n"
+            "| （待填） | | |\n\n"
+            "## 校验脚本\n\n"
+            "```\n"
+            "python -X utf8 \"F:\\\\小说\\\\platforms\\\\_core\\\\tools\\\\daychain_check.py\" "
+            f"--book \"{book}\"\n```\n",
+            encoding="utf-8")
+        made.append("追踪/时间线/日链.md")
+    anchors = book / "追踪" / "复沓锚句.md"
+    if not anchors.exists():
+        anchors.write_text(
+            "# 复沓锚句登记\n\n"
+            "> **复沓锚句**是**刻意**的跨章呼应——同一句话（或同一动作）在不同章出现，\n"
+            "> 第二次有升级、回响或对照。这类重复是手法，不是缺陷。\n"
+            ">\n"
+            "> 跨章逐字重复检测会读本文件，命中白名单的片段不报为缺陷。\n"
+            ">\n"
+            "> **登记标准**：① 细纲「复沓锚句」明确指定；② 同一技术动作的必然重复\n"
+            "> （同一故障现象两次出现，且第二次有升级）；③ 跨章照应同一句台词。\n"
+            ">\n"
+            "> **不登记**：纯粹的无意识复制（同一段落两次出现且第二次无升级）——那是缺陷。\n\n"
+            "## 锚句\n\n"
+            "- （待填）\n\n"
+            "## 相对日锚句\n\n"
+            "> 同一件事在不同章用**不同措辞**表达同一个相对日时，字面可能相同但语义\n"
+            "> 不冲突。相对日互斥检测只比字面，会误报——这类锚句登记在这里，检查时跳过。\n\n"
+            "- （待填）\n\n"
+            "## 登记规范\n\n"
+            "新增锚句时写清：① 引文（逐字）；② 出现在哪几章；③ 为什么是刻意的。\n",
+            encoding="utf-8")
+        made.append("追踪/复沓锚句.md")
+    return made
+
 
 def cmd_init(a) -> int:
     book = Path(a.book).resolve()
@@ -379,16 +449,73 @@ def cmd_init(a) -> int:
         print(json.dumps({"error": "already_initialized",
                           "hint": "用 resume 续跑，或删除 _pipeline/ 后重来"}, ensure_ascii=False))
         return 2
+    # genre 必须在 init 时就校验（2026-11-15 修）：
+    # genre 决定 N11 上下文组装时的题材基准区间，而 inline_runner.genre_baseline()
+    # 对「平台白名单里没有的 genre」是**硬报错**。此前 init 不校验，坏 genre 能一路
+    # 跑到 C1.N11 才炸（RuntimeError: GENRE_BASELINE_MISSING），此时设定、卷纲、
+    # 细纲都已产出，只能靠手改 state.json 补救——正是铁律禁止的动作。
+    platform = getattr(a, "platform", None) or "qimao"
+    allowed = ((CFG.get("PLATFORMS") or {}).get(platform) or {}).get("GENRES") or []
+    if allowed and a.genre not in allowed:
+        print(json.dumps({"error": "unknown_genre", "genre": a.genre,
+                          "platform": platform, "allowed": allowed,
+                          "hint": f"用 set-genre 子命令改成白名单内的题材，或删掉 _pipeline/ 重新 init"},
+                         ensure_ascii=False))
+        return 2
+    template_id = getattr(a, "template", "") or ""
+    tmpl_data = None
+    if template_id:
+        tmpl_paths = [
+            Path(CFG.get("QIMAO_TEMPLATES_DIR") or r"F:\小说\platforms\qimao\templates") / f"{template_id}.json",
+            Path(__file__).resolve().parent.parent / "templates" / f"{template_id}.json",
+        ]
+        for tp in tmpl_paths:
+            if tp.is_file():
+                try:
+                    tmpl_data = json.loads(tp.read_text(encoding="utf-8"))
+                    break
+                except Exception:
+                    pass
+        if tmpl_data:
+            if not getattr(a, "one_line", None) and tmpl_data.get("one_line"):
+                a.one_line = tmpl_data["one_line"]
+            if not getattr(a, "title", None) and tmpl_data.get("recommended_titles"):
+                a.title = tmpl_data["recommended_titles"][0]
+
     for sub in ("正文", "大纲", "设定", "追踪", "投稿包", "_pipeline"):
         (book / sub).mkdir(parents=True, exist_ok=True)
+    _scaffold_book_files(book)
+
+    if tmpl_data:
+        plan_file = book / "大纲" / "_商业策划方案.md"
+        plan_content = [
+            f"# 商业策划方案（{tmpl_data.get('name', template_id)}）",
+            f"- 题材：{tmpl_data.get('genre', a.genre)}",
+            f"- 一句话主线：{tmpl_data.get('one_line', '')}",
+            "\n## 吸量书名候选：",
+            "\n".join(f"{i}. 《{t}》" for i, t in enumerate(tmpl_data.get("recommended_titles", []), 1)),
+            "\n## 核心爽点与压迫设定：",
+            f"- 开篇受辱压迫：{tmpl_data.get('core_hooks', {}).get('opening_injustice', '')}",
+            f"- 金手指机制：{tmpl_data.get('core_hooks', {}).get('gold_finger', '')}",
+            f"- 首次反杀兑现：{tmpl_data.get('core_hooks', {}).get('immediate_catharsis', '')}",
+            "\n## 黄金三章生死节拍：",
+        ]
+        for ch_key, ch_val in (tmpl_data.get("golden_three_chapters") or {}).items():
+            plan_content.append(f"### {ch_key}：{ch_val.get('title', '')}")
+            for k, v in ch_val.items():
+                if k != "title":
+                    plan_content.append(f"- {k}: {v}")
+        plan_file.write_text("\n".join(plan_content) + "\n", encoding="utf-8")
+
     st = {
         "schema_version": 2,
         "book": a.title or book.name,
         "genre": a.genre,
+        "template": template_id if tmpl_data else None,
         "target_words": int(a.target_words),
         "max_chapters": int(a.max_chapters),
         # 平台与卷计划：老书没有这两个键，代码里一律用 .get() 回落（七猫兼容）
-        "platform": getattr(a, "platform", None) or "qimao",
+        "platform": platform,
         "plan": ({"vol_size": int(a.vol_size), "vol_llm_cap": int(getattr(a, "vol_llm_cap", 0) or 80)} if getattr(a, "vol_size", 0) else None),
         # 作者原话，N05 通过 {ONE_LINE} 拿到；空字符串一律存 null，避免 prompt 里
         # 出现「卖点：」后面什么都没有
@@ -416,6 +543,43 @@ def cmd_init(a) -> int:
     write_workbench_manifest(book)
     print(json.dumps({"ok": True, "book": st["book"], "cursor": st["cursor"],
                       "nodes_total": len(GLOBAL_NODES)}, ensure_ascii=False))
+    return 0
+
+
+def cmd_set_genre(a) -> int:
+    """修正已开书的题材（2026-11-15 新增）。
+
+    **为什么要有**：init 曾不校验 genre，坏 genre（如 urban 不在七猫白名单
+    shuangwen/niandai 内）会一路跑到 C1.N11 才以 GENRE_BASELINE_MISSING 硬报错，
+    此时设定/卷纲/细纲已产出，唯一补救是手改 state.json——违反「不许手改 state」
+    铁律。本命令提供受控的修正入口：只改 genre 一个字段，校验白名单，留痕。
+    """
+    book = Path(a.book).resolve()
+    st = load_state(book)
+    if not st:
+        print(json.dumps({"error": "not_initialized"}, ensure_ascii=False))
+        return 2
+    platform = st.get("platform") or "qimao"
+    allowed = ((CFG.get("PLATFORMS") or {}).get(platform) or {}).get("GENRES") or []
+    if allowed and a.genre not in allowed:
+        print(json.dumps({"error": "unknown_genre", "genre": a.genre,
+                          "platform": platform, "allowed": allowed},
+                         ensure_ascii=False))
+        return 2
+    old = st.get("genre")
+    if old == a.genre:
+        print(json.dumps({"ok": True, "changed": False, "genre": a.genre},
+                         ensure_ascii=False))
+        return 0
+    st["genre"] = a.genre
+    st.setdefault("decisions_taken", []).append({
+        "at_node": st.get("cursor") or "set-genre",
+        "issue": f"genre {old!r} 不在平台 {platform} 白名单 {allowed} 内",
+        "applied_rule": f"set-genre 修正为 {a.genre!r}",
+    })
+    save_state(book, st, f"set-genre：{old} → {a.genre}")
+    print(json.dumps({"ok": True, "changed": True, "old": old, "genre": a.genre},
+                     ensure_ascii=False))
     return 0
 
 
@@ -612,6 +776,15 @@ def cmd_doctor(a) -> int:
     return 0 if not issues else 1
 
 
+def _ledger_truncated(book: Path) -> list[str]:
+    """账本里被静默截断的字符串（以「…」结尾）。见 commands._ledger_integrity。"""
+    try:
+        from commands import _ledger_integrity
+    except ImportError:
+        return []
+    return _ledger_integrity(book)
+
+
 def cmd_status(a) -> int:
     book = Path(a.book).resolve()
     st = load_state(book)
@@ -648,6 +821,11 @@ def cmd_status(a) -> int:
         "degraded_volumes": st.get("degraded_volumes") or [],
         "volume_shortfall": st.get("volume_shortfall") or {},
         "words_total_drift": drift,
+        # 账本完整性（2026-11-17）：被静默截断的字符串（以「…」结尾）。
+        # 封板前的旧压缩器用固定长度 +「…」后缀截断 objective_fact / summary，
+        # 「…」被当成原文写进账本——**截断伪装成了原始内容**。新写入不再有这问题，
+        # 但历史遗留还在，需要能一眼看见。
+        "ledger_truncated": _ledger_truncated(book),
     }, ensure_ascii=False))
     return 0
 
@@ -672,7 +850,13 @@ def resolve_evidence(book: Path, patterns: list[str]) -> tuple[list[str], list[s
         elif not hits:
             errors.append(f"证据通配符无匹配：{pattern}")
         else:
-            errors.append(f"证据通配符匹配到 {len(hits)} 个文件（应唯一）：{pattern}")
+            # 2026-11-17 改：列出**具体文件名**。此前只说「匹配到 2 个文件」，
+            # 编排者得自己去翻目录才知道是哪两个（实测第 4 章因此多花一轮）。
+            names = "、".join(sorted(h.name for h in hits))
+            errors.append(
+                f"证据通配符匹配到 {len(hits)} 个文件（应唯一）：{pattern}"
+                f"；实际命中：{names}。"
+                "同一章只能有一个正文文件——把废弃草稿删掉或改名后再提交。")
     return out, errors
 
 
@@ -842,6 +1026,134 @@ def cmd_relay(a) -> int:
     return 0
 
 
+def _evidence_ready(book: Path, spec: dict) -> list[str]:
+    """该节点的证据文件是否**已经产出**（subagent 干完了，只是没人调 done）。
+
+    2026-11-19 实测：冷启动书的 N04 闸门 judge 已经把裁决写进
+    `judgments_N04.json`，但编排者没调 `done`，状态机就一直停在 N04，
+    直到僵死检测报出来——**闸门明明产出了结论，流水线却当没这回事**。
+    这个字段让「产出已在盘上、只差提交」变成机器可判的事实。
+    """
+    ev = spec.get("evidence")
+    ev = ev if isinstance(ev, list) else [ev]
+    ready = []
+    for e in ev:
+        if not e:
+            continue
+        for cand in (book / e, book / "_pipeline" / Path(e).name):
+            try:
+                if cand.is_file() and cand.stat().st_size > 0:
+                    ready.append(str(e))
+                    break
+            except OSError:
+                pass
+    return ready
+
+
+def _running_hint(book: Path, spec: dict, age_s, stale_after: int) -> str:
+    """node_running 时的提示：区分「subagent 还在跑」与「产出已在盘上、只差提交」。"""
+    ready = _evidence_ready(book, spec)
+    if ready:
+        return (f"证据已在盘上（{', '.join(ready)}）——subagent 很可能已完成，"
+                "只是没人调 done。请直接调 `autopilot.py done --node "
+                f"{spec['id']} --token <token> --evidence ...` 提交它。"
+                "（提交时会做证据新鲜度检查：文件早于本轮 token 会被拒，"
+                "那就让 subagent 重跑一遍再提交。）")
+    if age_s is not None and age_s > stale_after * 0.6:
+        return (f"该节点已 running {int(age_s)} 秒（僵死阈值 {stale_after}）。"
+                "若磁盘上确认没有产出，用 "
+                f"`autopilot.py resume --book <书> --force --reset-budget --scope {spec['id']}` 解锁。")
+    return "先调 done 完成当前节点"
+
+
+def cmd_rejudge(a) -> int:
+    """带外重判裁决闸门——**不动流水线游标**。
+
+    两种目标：
+      · `--chapter N` → C{N}.N15（章级裁决）
+      · `--node N20`  → 全局裁决（N20 / N20g / V{v}.N20）
+
+    为什么需要它（2026-11-20/21 实测）：
+    裁决的依据是 judge 在裁决当时引用的原文。若这章在裁决之后被改写
+    （revision 定稿把正文和账本 sha 一起更新，漂移检测看不见），
+    裁决的依据就作废了，但节点状态仍写着 done——一份**过期绿灯**。
+    同理适用于全书终审：改了某章之后，N20 裁决里的引文同样会失效。
+
+    流水线是线性的，没法回头重跑某一章的 N15（游标一动就会重跑后面所有章），
+    更没法回头重跑 N20（那会重跑全书合成）。所以重判必须是**带外操作**：
+    单独签一枚令牌，judge 重写裁决文件，`done` 接受它但不推进游标。
+    """
+    from pipeline_spec import GLOBAL_NODES, chapter_nodes, volume_nodes
+
+    book = Path(a.book).resolve()
+    st = load_state(book)
+    if not st:
+        print(json.dumps({"error": "not_initialized"}, ensure_ascii=False)); return 2
+    if st.get("blocked_reason"):
+        print(json.dumps({"error": "blocked", "reason": st["blocked_reason"],
+                          "hint": "修复后调 resume"}, ensure_ascii=False)); return 2
+
+    node = None
+    spec = None
+    if getattr(a, "node", None):
+        node = str(a.node)
+        if node in GLOBAL_NODES:
+            spec = GLOBAL_NODES[node]
+        elif node.startswith("V") and node.endswith(".N20"):
+            try:
+                v = int(node[1:].split(".", 1)[0])
+            except ValueError:
+                v = 0
+            if v:
+                spec = volume_nodes(st, book, v).get(node)
+        if spec is None:
+            print(json.dumps({"error": "no_such_node", "node": node,
+                              "hint": "该节点不是可重判的裁决闸门"},
+                             ensure_ascii=False))
+            return 2
+    else:
+        ch = int(a.chapter)
+        if ch < 1:
+            print(json.dumps({"error": "invalid_chapter"}, ensure_ascii=False)); return 2
+        node = f"C{ch}.N15"
+        spec = chapter_nodes(st, book, ch).get(node)
+        if spec is None:
+            print(json.dumps({"error": "no_such_node", "node": node,
+                              "hint": "该章没有裁决闸门节点"}, ensure_ascii=False))
+            return 2
+
+    token = new_token()
+    write_token(book, token, node)
+    st["rejudge_node"] = node
+    save_state(book, st, f"带外重判 {node} 裁决闸门")
+
+    evidence = spec["evidence"]
+    evidence = evidence if isinstance(evidence, list) else [evidence]
+    evidence = _resolve_evidence(book, evidence)
+    done_cmd = (f'"{PYTHON}" "{HERE / "autopilot.py"}" done --book "{book}" '
+                f'--node {node} --token {token} '
+                + " ".join(f'--evidence "{e}"' for e in evidence))
+    prompt = render_prompt(spec["prompt"], book, st)
+    failure = st.get("last_failure")
+    if isinstance(failure, dict) and failure.get("node") == node:
+        detail = str(failure.get("detail") or "").strip()
+        if detail:
+            prompt = f"【上一轮失败反馈】\n{detail}\n\n{prompt}"
+    print(json.dumps({
+        "node": node,
+        "kind": spec["kind"],
+        "rejudge": True,
+        "chapter": (int(node.split(".")[0][1:]) if node.startswith("C") else None),
+        "evidence": evidence,
+        "_iron_rules": IRON_RULES,
+        "done_cmd_for_orchestrator_only": done_cmd,
+        "subagent_role": spec["role"],
+        "subagent_model": spec.get("model", "default"),
+        "subagent_prompt": prompt,
+    }, ensure_ascii=False))
+    return 0
+
+
 def cmd_next(a) -> int:
     book = Path(a.book).resolve()
     # 每次推进前先以账本校正派生字段（漂移会让字数检查/卷预算/里程碑全失真）
@@ -965,8 +1277,7 @@ def cmd_next(a) -> int:
             planned_chapters = max(0, volume_end - volume_start + 1)
             committed_in_volume = max(0, min(volume_end, st["chapters_committed"]) - volume_start + 1)
             actual_chapters = min(committed_in_volume,
-                                   len([p for p in book.glob(f"正文/第[0-9][0-9][0-9]章_*.md")
-                                        if volume_start <= int(p.name[1:4]) <= volume_end]))
+                                   len([p for p in body_files_in(book, volume_start, volume_end)]))
             st["volume_degradation"] = {**(st.get("volume_degradation") or {}),
                                          str(current_vol): {"at": now(), "used": used,
                                                             "cap": cap, "skipped_to": f"V{current_vol}.N17"}}
@@ -986,8 +1297,43 @@ def cmd_next(a) -> int:
     if spec is None:
         print(json.dumps({"done": True}, ensure_ascii=False)); return 0
     if st["nodes"].get(spec["id"], {}).get("status") == "running" and read_token(book).get("token"):
+        # 僵死检测（2026-11-17 加）。
+        # **为什么要有**：subagent 中途死掉时，节点会永远停在 running + 持有 token，
+        # 于是 `next` 一直回「先调 done 完成当前节点」——但**没有任何人会再调 done**，
+        # 因为那个 subagent 已经死了。实测第 8 章细纲的 subagent 直接死亡后，
+        # 整个流程卡死在这个提示上，编排者只能靠猜去调 `resume --force`。
+        # 现在：节点 running 超过阈值就明确报 stale，并给出可执行的下一步。
+        node_rec = st["nodes"].get(spec["id"]) or {}
+        started = node_rec.get("started_at")
+        age_s = None
+        if started:
+            try:
+                age_s = (datetime.now(timezone.utc) -
+                         datetime.strptime(started, "%Y-%m-%dT%H:%M:%S%z").astimezone(timezone.utc)
+                         ).total_seconds()
+            except (TypeError, ValueError):
+                age_s = None
+        stale_after = int(os.environ.get("WB_NODE_STALE_SECONDS", "1800"))
+        if age_s is not None and age_s > stale_after:
+            print(json.dumps({
+                "error": "node_stale",
+                "node": spec["id"],
+                "attempts": node_rec.get("attempts", 0),
+                "running_seconds": int(age_s),
+                "stale_after": stale_after,
+                "hint": (f"该节点已 running {int(age_s)} 秒（超过 {stale_after} 秒阈值），"
+                         "判定为僵死：上一个 subagent 中途死亡，没有人会再调 done。"
+                         "确认磁盘上确实没有产出后，用 "
+                         f"`autopilot.py resume --book <书> --force` 解锁，"
+                         "并用 `--reset-budget --scope " + spec["id"] + "` 重置该节点预算。"),
+            }, ensure_ascii=False))
+            return 2
         print(json.dumps({"error": "node_running", "node": spec["id"],
-                          "hint": "先调 done 完成当前节点"}, ensure_ascii=False))
+                          "attempts": node_rec.get("attempts", 0),
+                          "running_seconds": int(age_s) if age_s is not None else None,
+                          "evidence_ready": _evidence_ready(book, spec),
+                          "hint": _running_hint(book, spec, age_s, stale_after)},
+                         ensure_ascii=False))
         return 2
 
     ch = st["current_chapter"] + 1
@@ -1000,8 +1346,26 @@ def cmd_next(a) -> int:
 
     token = new_token()
     write_token(book, token, spec["id"])
-    st["nodes"][spec["id"]] = {"status": "running", "attempts":
-                               st["nodes"].get(spec["id"], {}).get("attempts", 0) + 1,
+    prev_attempts = st["nodes"].get(spec["id"], {}).get("attempts", 0)
+    max_attempts = spec.get("max_attempts")
+    # 重试预算（2026-11-17 加）。此前 `max_attempts` 只是**输出给编排者看的一个数字**，
+    # 没有任何代码在 subagent 失败后消费它——失败后重新调 next 会无限重来，
+    # 而且看不出"这是第几次重试、还剩几次"。实测第 8 章细纲的 subagent 直接死掉，
+    # 磁盘上什么都没有，状态机却仍停在 C8.N09 静默等待。
+    # 现在：达到上限时明确报 node_exhausted，把「该人工介入」变成机器可判的事实。
+    if isinstance(max_attempts, int) and prev_attempts >= max_attempts:
+        print(json.dumps({
+            "error": "node_exhausted",
+            "node": spec["id"],
+            "attempts": prev_attempts,
+            "max_attempts": max_attempts,
+            "hint": ("该节点已重试到上限仍未产出。请检查 subagent 是否在写盘前就失败"
+                     "（常见于 prompt 过长 / 工具调用被中断）。修好后用 "
+                     "`autopilot.py resume --book <书> --reset-budget --scope "
+                     f"{spec['id']}` 重置该节点预算再跑。"),
+        }, ensure_ascii=False))
+        return 1
+    st["nodes"][spec["id"]] = {"status": "running", "attempts": prev_attempts + 1,
                                "started_at": now()}
     save_state(book, st)
 
@@ -1010,6 +1374,17 @@ def cmd_next(a) -> int:
     done_cmd = (f'"{PYTHON}" "{HERE / "autopilot.py"}" done --book "{book}" '
                 f'--node {spec["id"]} --token {token} '
                 + " ".join(f'--evidence "{e}"' for e in evidence))
+    # 上一轮失败反馈回灌（2026-11-19 加）。P2 无人值守运行时本来就有这条回路
+    # （server/agent/runtime.mjs 把 done 被拒的理由作为「上一轮失败反馈」拼到
+    # subagent_prompt 前面）；对话路径此前没有——执行方看不到自己上一轮为什么
+    # 被拒，只能靠人肉转述，于是同一份坏裁决反复重派。
+    # 这里用与 P2 相同的抬头与格式，两条路径行为一致。
+    prompt = render_prompt(spec["prompt"], book, st)
+    failure = st.get("last_failure")
+    if isinstance(failure, dict) and failure.get("node") == spec["id"]:
+        detail = str(failure.get("detail") or "").strip()
+        if detail:
+            prompt = f"【上一轮失败反馈】\n{detail}\n\n{prompt}"
     print(json.dumps({
         "node": spec["id"],
         "kind": spec["kind"],
@@ -1021,7 +1396,7 @@ def cmd_next(a) -> int:
         "max_attempts": spec.get("max_attempts"),
         "subagent_role": spec["role"],
         "subagent_model": spec.get("model", "default"),
-        "subagent_prompt": render_prompt(spec["prompt"], book, st),
+        "subagent_prompt": prompt,
     }, ensure_ascii=False))
     return 0
 
@@ -1056,6 +1431,7 @@ def main():
     # 不落 设定/题材定位.md——那是 N05 的 evidence 文件（min_size 300），
     # 开书时种一个 20 字的文件会让证据校验误判为已产出。
     p.add_argument("--one-line", default="", help="一句话卖点（可空）")
+    p.add_argument("--template", default="", help="七猫商业模版 ID (如 niandai_regret_counterattack)")
 
     for name in ("next", "status", "doctor"):
         p = sub.add_parser(name); p.add_argument("--book", required=True)
@@ -1106,6 +1482,24 @@ def main():
     tf.add_argument("--book", required=True)
     tf.add_argument("--apply", action="store_true", help="真正写盘（不加则只预演）")
 
+    sg = sub.add_parser("set-genre",
+                        help="修正已开书的题材（校验平台白名单，留痕 decisions_taken）")
+    sg.add_argument("--book", required=True)
+    sg.add_argument("--genre", required=True)
+
+    lr = sub.add_parser("ledger-repair",
+                        help="查出账本里被截断的字符串（封板旧压缩器留下的「…」）")
+    lr.add_argument("--book", required=True)
+
+    rj = sub.add_parser(
+        "rejudge",
+        help="带外重判裁决闸门（正文改写后，裁决依据已失效时用）")
+    rj.add_argument("--book", required=True)
+    rj.add_argument("--chapter", type=int)
+    rj.add_argument("--node", help="全局裁决节点（N20 / N20g / V1.N20）")
+    rj.add_argument("--force", action="store_true",
+                    help="目标节点已有在途令牌时也强制签发")
+
     a = ap.parse_args()
     os.environ.update(utf8_env())
 
@@ -1117,6 +1511,11 @@ def main():
         return cmd_doctor(a)
     if a.cmd == "tracking-fill":
         return cmd_tracking_fill(a)
+    if a.cmd == "ledger-repair":
+        from commands import _cmd_ledger_repair
+        return _cmd_ledger_repair(a)
+    if a.cmd == "set-genre":
+        return cmd_set_genre(a)
     if a.cmd == "next":
         book = Path(a.book).resolve()
         lock = acquire_next_lock(book)
@@ -1131,6 +1530,17 @@ def main():
             release_next_lock(lock)
     if a.cmd == "relay":
         return cmd_relay(a)
+    if a.cmd == "rejudge":
+        lock = acquire_next_lock(Path(a.book).resolve())
+        if lock is None:
+            print(json.dumps({"error": "driver_locked",
+                              "hint": "另一个驱动正在执行 next，稍后重试或先 resume"},
+                             ensure_ascii=False))
+            return 2
+        try:
+            return cmd_rejudge(a)
+        finally:
+            release_next_lock(lock)
     if a.cmd == "commit":
         # 锁由 commit_chapter 自己取（它要在锁内做备份/回滚，粒度比这里更细）
         from commit_chapter import CommitError, commit_chapter

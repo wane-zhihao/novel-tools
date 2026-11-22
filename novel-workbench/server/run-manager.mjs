@@ -194,7 +194,8 @@ export class RunManager {
 
   recordAiWrite(run, change) {
     const normalized = String(change?.relativePath ?? "").replaceAll("\\", "/");
-    const match = /^正文\/第(\d{3})章_/.exec(normalized);
+    // T-2b：章号解析走统一判定（1–4 位 + 四种分隔符），不再只认 `第001章_`。
+    const match = /^正文\/第(\d{1,4})章(?:[_ 　:：]|$)/.exec(normalized);
     if (!match) return;
     const chapter = Number(match[1]);
     const node = change.node || "ai";

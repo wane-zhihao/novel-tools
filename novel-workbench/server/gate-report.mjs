@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { defaultDataDir } from "./paths.mjs";
 import { ensurePipelineConfig } from "./settings.mjs";
 import { HttpError } from "./http.mjs";
+import { chapterFile } from "./book-files.mjs";
 
 function run(command, args, { cwd, timeoutMs = 60_000, env = {} } = {}) {
   return new Promise((accept) => {
@@ -50,11 +51,7 @@ function pipelineTools(bookPath, dataDir) {
 }
 
 export function findChapterFile(bookPath, chapter) {
-  const bodyDir = join(bookPath, "正文");
-  if (!existsSync(bodyDir)) return null;
-  const prefix = `第${String(chapter).padStart(3, "0")}章`;
-  const hits = readdirSync(bodyDir).filter((name) => name.startsWith(prefix) && name.endsWith(".md"));
-  return hits.length === 1 ? resolve(bodyDir, hits[0]) : null;
+  return chapterFile(bookPath, chapter);
 }
 
 export async function buildChapterReport(bookPath, chapter, { genre = null, dataDir = defaultDataDir() } = {}) {

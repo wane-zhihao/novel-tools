@@ -1,0 +1,27 @@
+{
+ "schema": 1,
+ "at": "2026-10-26T03:47:05+0800",
+ "run_id": null,
+ "book": "接力状态机验收书",
+ "cursor": "N01",
+ "next_node": "N01",
+ "current_chapter": 0,
+ "chapters_committed": 0,
+ "words_total": 0,
+ "stop_reason": "自动检查点",
+ "blocked_reason": null,
+ "volume_shortfall": {},
+ "last_node": null,
+ "vol_budget": {
+  "vol": 1,
+  "start": 1,
+  "end": 3,
+  "used": 0,
+  "cap": 80
+ },
+ "last_volume": 1,
+ "degraded_volumes": [],
+ "budgets": {},
+ "open_findings": [],
+ "next_hint": "继续执行 N01"
+}

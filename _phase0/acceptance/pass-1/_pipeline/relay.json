@@ -1,0 +1,32 @@
+{
+ "schema": 1,
+ "at": "2026-10-26T04:15:35+0800",
+ "run_id": "acceptance-pass-1",
+ "book": "三章真实模型验收-pass-1",
+ "cursor": "C1.N12",
+ "next_node": "C1.N12",
+ "current_chapter": 0,
+ "chapters_committed": 0,
+ "words_total": 0,
+ "stop_reason": "failed",
+ "blocked_reason": null,
+ "volume_shortfall": {},
+ "last_node": {
+  "id": "C1.N11",
+  "at": "2026-10-26T04:10:31+0800",
+  "evidence": [],
+  "sha256": []
+ },
+ "vol_budget": {
+  "vol": 1,
+  "start": 1,
+  "end": 3,
+  "used": 4,
+  "cap": 80
+ },
+ "last_volume": 1,
+ "degraded_volumes": [],
+ "budgets": {},
+ "open_findings": [],
+ "next_hint": "继续执行 C1.N12"
+}

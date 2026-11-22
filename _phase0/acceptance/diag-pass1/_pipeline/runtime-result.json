@@ -1,0 +1,99 @@
+{
+  "status": "failed",
+  "error": "C1.N12 连续 2 次未通过",
+  "relay_error": null,
+  "book": {
+    "title": "三章真实模型验收-pass-1",
+    "cursor": "C1.N12",
+    "chapters_committed": 0,
+    "words_total": 0,
+    "blocked_reason": null
+  },
+  "steps": [
+    {
+      "node": "N03",
+      "role": "scout",
+      "model": "default",
+      "attempts": 1,
+      "usage": {
+        "prompt": 39018,
+        "completion": 4391
+      }
+    },
+    {
+      "node": "N04",
+      "role": "judge",
+      "model": "reasoning",
+      "attempts": 1,
+      "usage": {
+        "prompt": 35405,
+        "completion": 5204
+      }
+    },
+    {
+      "node": "N05",
+      "role": "writer",
+      "model": "default",
+      "attempts": 1,
+      "usage": {
+        "prompt": 59249,
+        "completion": 6183
+      }
+    },
+    {
+      "node": "N06",
+      "role": "judge",
+      "model": "reasoning",
+      "attempts": 1,
+      "usage": {
+        "prompt": 97679,
+        "completion": 29737
+      }
+    },
+    {
+      "node": "V1.N07",
+      "role": "writer",
+      "model": "default",
+      "attempts": 1,
+      "usage": {
+        "prompt": 68120,
+        "completion": 6251
+      }
+    },
+    {
+      "node": "V1.N08",
+      "role": "judge",
+      "model": "reasoning",
+      "attempts": 1,
+      "usage": {
+        "prompt": 22557,
+        "completion": 3142
+      }
+    },
+    {
+      "node": "V1.N09d",
+      "role": "writer",
+      "model": "default",
+      "attempts": 1,
+      "usage": {
+        "prompt": 9873,
+        "completion": 1275
+      }
+    },
+    {
+      "node": "C1.N09",
+      "role": "writer",
+      "model": "default",
+      "attempts": 1,
+      "usage": {
+        "prompt": 65370,
+        "completion": 5090
+      }
+    }
+  ],
+  "llm_rounds": 90,
+  "usage": {
+    "prompt": 1111558,
+    "completion": 115310
+  }
+}
